@@ -1,0 +1,442 @@
+{
+  "_readme": [
+    "ARIA api_queries.json: every Active IQ endpoint and query ARIA sends is defined in this file. The program has no endpoint URLs or query text of its own.",
+    "HOW IT IS USED: server.py (and launcher.py in the packaged app) read this file when they start and again whenever it changes on disk; the browser receives the same content from /aria-api.js (reload the page to pick up a change).",
+    "WHERE IT IS LOOKED FOR: a copy next to the executable is used first, then the copy bundled with the program.",
+    "SECTIONS: endpoints (base URLs), proxy (how local /api/... paths are forwarded), rest (named REST calls), graphql (named queries and mutations), fragments (reusable field lists), arguments (optional request arguments), rest_diagnostics (paths tried by the Settings diagnostics page).",
+    "PLACEHOLDERS: <<name>> is replaced by the value ARIA supplies when it sends the request (a cursor, a watchlist id, a serial number...). <<@NAME>> inserts the fragment NAME from \"fragments\". A placeholder with no value becomes empty text.",
+    "OPTIONAL ARGUMENTS: \"arguments\" holds snippets such as , after: \"<<value>>\". ARIA adds a snippet to the query only when it has a value for it (for example the cursor is empty on the first page).",
+    "TO CHANGE A FIELD LIST: edit the matching entry under \"fragments\". The systems queries are sent in three sizes (SYSTEMS_FIELDS_TAM, then _EFFICIENCY, then _MINIMAL): ARIA falls back to the next size when Active IQ rejects the larger one or its field-count limit is exceeded, so keep the smaller ones small.",
+    "TO ADD A QUERY: add an entry under \"graphql\" with a name, a description and the query text. Existing names are looked up by ARIA; a new name is only used by code that asks for it, so it is for experiments and for the diagnostics tools until a feature uses it.",
+    "TO POINT A CALL AT ANOTHER ENDPOINT: change \"endpoints\" (graphql, rest_base, graphql_v2) or the \"path\" of a \"rest\" entry.",
+    "AFTER EDITING: check that the file is valid JSON, then start a new sync. A syntax error in this file stops the server from calling Active IQ, and the server log names the file it loaded (\"[API] Loaded API definitions from ...\").",
+    "The \"description\" fields describe each entry; the program ignores them.",
+    "SCHEMA REFERENCE: these queries are written against the public Active IQ GraphQL schema reference on Apollo GraphOS Studio (see \"schema_reference\"). The engine reads them from this file; the program holds no query text. Run tools/validate_api_queries.py after editing a query to check it against the reference."
+  ],
+  "schema_reference": {
+    "description": "The public Active IQ GraphQL schema reference (Apollo GraphOS Studio). The queries in this file are written against it and the engine reads them from here; every entry was validated against the reference. Run tools/validate_api_queries.py to repeat the check.",
+    "url": "https://studio.apollographql.com/public/ActiveIQ-Graph-Prd-API/variant/current/schema/reference",
+    "graph": "ActiveIQ-Graph-Prd-API",
+    "variant": "current",
+    "result": "Every query is validated against the public reference with tools/validate_api_queries.py, which reports the version of the reference it used each time it runs. The only entry that does not validate is \"watchlists\", a field the reference does not contain; the REST call rest.watchlist_list is used instead."
+  },
+  "endpoints": {
+    "graphql": "https://gql.aiq.netapp.com/graphql",
+    "rest_base": "https://api.activeiq.netapp.com",
+    "graphql_v2": "https://api.activeiq.netapp.com/v2/graphql",
+    "description": "graphql: main GraphQL endpoint used by the server. rest_base: REST host. graphql_v2: GraphQL endpoint on the REST host, used by the in-app query console."
+  },
+  "proxy": {
+    "graphql_paths": [
+      "/graphql",
+      "/api/graphql"
+    ],
+    "default_rest_version": "/v1",
+    "description": "The local server forwards /api/... requests from the browser to Active IQ. Paths in graphql_paths go to endpoints.graphql; other paths go to rest_base, with default_rest_version added when the path has no /vN prefix."
+  },
+  "rest": {
+    "access_token": {
+      "description": "Exchanges the refresh token (<<refresh_token>>, stored in the local aiq_config.json) for a short-lived access token. Every GraphQL call then sends it as a Bearer token.",
+      "method": "POST",
+      "path": "/v1/tokens/accessToken",
+      "auth": "none",
+      "body": {
+        "refresh_token": "<<refresh_token>>"
+      }
+    },
+    "watchlist_list": {
+      "description": "Lists the account watchlists. The raw access token is sent in a header named authorizationToken (no Bearer prefix). The reply has the list under results.watchlist, with snake_case fields.",
+      "method": "GET",
+      "path": "/v2/watchlist/list",
+      "auth": "authorizationToken"
+    }
+  },
+  "arguments": {
+    "after": ", after: \"<<value>>\"",
+    "scope": ", watchlistId: \"<<value>>\"",
+    "product_types": ", productTypes: [<<value>>]",
+    "all_product_types": ", productTypes: [FILER, SWApp, NON_FILER, UNKNOWN, SWITCH, AIDE_DCN]",
+    "nested_after": ", after: \"<<value>>\"",
+    "sustainability_call": "sustainabilityScore",
+    "sustainability_call_scoped": "sustainabilityScore(watchlistId: \"<<value>>\")"
+  },
+  "arguments_descriptions": {
+    "after": "Paging cursor returned by the previous page.",
+    "scope": "Limits the query to one watchlist.",
+    "product_types": "Adds a productTypes filter with the list ARIA supplies.",
+    "all_product_types": "Adds all six product types: FILER, SWApp, NON_FILER, UNKNOWN, SWITCH, AIDE_DCN.",
+    "nested_after": "Offset for paging a nested list (LUNs, volumes, namespaces).",
+    "sustainability_call": "Unscoped sustainabilityScore field.",
+    "sustainability_call_scoped": "sustainabilityScore field limited to one watchlist."
+  },
+  "fragments": {
+    "SYSTEMS_FIELDS_MINIMAL": "                  hostName systemId serialNumber osVersion recommendedOSVersion\n                  type platformType ageInYears serviceTier incumbentResellerCompany\n                  customer { id name }\n                  site { id name city countryCode postalCode state }\n                  hardwareModel { name endOfAvailability endOfSupport }\n                  contactPerson { firstName lastName phone email }\n                  contract {\n                    softwareContractStartDate hardwareContractStartDate\n                    expiryDate softwareContractEndDate hardwareContractEndDate\n                    overallContractEndDate isContractActive\n                    hardwareServiceLevel hardwareWarrantyEndDate\n                  }\n                  softwareVersion { fullVersionString endOfVersionDetails { releaseDate endOfVersionFullSupport endOfVersionLimitedSupport endOfSelfServiceSupport } }\n                  endOfSupport { earliestEndOfSupportDate earliestShelfEndOfSupportDate earliestDiskEndOfSupportDate latestPVRDate latestEndOfSupportDate }\n                  swRecommendationDetails { minRecommendedVersion latestRecommendedVersion cqvDetails { qualifiedVersion } }\n                  latestAsup { asupId generatedDate receivedDate subject type isManual }\n                  latestAsupOfEachType { asupId generatedDate receivedDate subject type isManual }\n                  autoSupports { asupId generatedDate receivedDate subject type isManual }",
+    "SYSTEMS_FIELDS_TAM": "                  hostName systemId serialNumber osVersion recommendedOSVersion\n                  type platformType productType ageInYears serviceTier\n                  techRefreshStatus incumbentResellerCompany\n                  isFabricPool hasPvr\n                  systemState lastRebootTime originalShipDate marketingType storageConfiguration\n                  customer { id name }\n                  site { id name city countryCode postalCode state }\n                  nagp { id name }\n                  hardwareModel { name modelRevision endOfAvailability endOfSupport }\n                  contactPerson { firstName lastName phone email }\n                  salesRepresentative { name emailAddress managerEmailAddress }\n                  csm { name emailAddress }\n                  sam { name emailAddress }\n                  gard { worldwide geo area region district territory }\n                  authorizedSupportPartner { name endDate }\n                  domesticParent { id name }\n                  contract {\n                    softwareContractId hardwareContractId\n                    softwareContractStartDate hardwareContractStartDate\n                    expiryDate softwareContractEndDate hardwareContractEndDate\n                    nrdContractEndDate overallContractEndDate isContractActive\n                    hardwareServiceLevel hardwareWarrantyEndDate hardwareWarrantyStartDate\n                  }\n                  autoSupportConfig { autoSupportStatus isAutoSupportOnDemandEnabled isAutoSupportOnDemandCapable autoSupportTransport systemDomain }\n                  softwareVersion { fullVersionString endOfVersionDetails { releaseDate endOfVersionFullSupport endOfVersionLimitedSupport endOfSelfServiceSupport } }\n                  endOfSupport { earliestEndOfSupportDate earliestShelfEndOfSupportDate earliestDiskEndOfSupportDate latestPVRDate latestEndOfSupportDate }\n                  swRecommendationDetails { minRecommendedVersion latestRecommendedVersion cqvDetails { qualifiedVersion } }\n                  latestAsup { asupId generatedDate receivedDate subject type isManual }\n                  latestAsupOfEachType { asupId generatedDate receivedDate subject type isManual }\n                  autoSupports { asupId generatedDate receivedDate subject type isManual }\n                  ... on ONTAPSystem {\n                    isMetroCluster isAllFlashOptimized operatingMode\n                    drCluster { id name }\n                    healthScore { overallHealthScore calculatedAt }\n                    propensityCategory serviceProcessorIPAddress\n                    isARPEnabled autoUpdateEnabled nextBestAction\n                    lifecycleEvents { workflowCategory typeCode typeName criticalityCode daysToEvent talkingPoint }\n                    systemFirmware { type currentVersion recommendedVersion }\n                    motherboardFirmware { currentVersion recommendedVersion }\n                    diskQualificationPackage { currentVersion recommendedVersion autoUpdateEligible }\n                    shelves {\n                      serialNumber shelfId\n                      hardwareModel { name endOfAvailability endOfHwSupport }\n                      moduleHardwareModel { name }\n                      drives(pageSize: 1000) { totalCount drives { firmwareRevision vendor hardwareModel { name } } }\n                    }\n                    storageAggregates { totalCount }\n                    storageVolumes { totalCount }\n                    luns { totalCount }\n                    autoUpdateSettings { storageFirmware spbmc systemFile securityFile }\n                    sustainabilityScores { scorePercentage percentageChange changeFactors generatedDate }\n                    vcenters { id name version }\n                    licenses { licenseSerialNumber package type description name }\n                    capacity {\n                      physical { rawMarketingKiB usedKiB usedWithoutSnapshotsKiB usablePerformanceTierKiB qoqUtilizationPercentage yoyUtilizationPercentage utilizationPercentage }\n                      logical { usedKiB usedWithoutSnapshotsClonesKiB }\n                      efficiency {\n                        ratio { efficiencyRatio dataReductionRatio withSnapshotRatio }\n                        saved { savedKiB deDuplicationSavedKiB compactionSavedKiB }\n                      }\n                      reportedOn\n                    }\n                    monthlyCapacity {\n                      month\n                      physical { rawMarketingKiB usedKiB utilizationPercentage qoqUtilizationPercentage }\n                      logical { usedKiB }\n                      efficiency { ratio { efficiencyRatio dataReductionRatio } }\n                    }\n                    networkPorts {\n                      totalCount\n                      networkPorts { port role link type broadcastDomain ipspaceName speedOperationalMbps macAddress maxTransmissionUnitBytes interfaceGroupOwner }\n                    }\n                  }",
+    "SYSTEMS_FIELDS_EFFICIENCY": "                  hostName systemId serialNumber osVersion recommendedOSVersion\n                  type platformType productType ageInYears serviceTier\n                  techRefreshStatus incumbentResellerCompany\n                  isFabricPool hasPvr\n                  systemState lastRebootTime originalShipDate marketingType storageConfiguration\n                  customer { id name }\n                  site { id name city countryCode postalCode state }\n                  nagp { id name }\n                  hardwareModel { name modelRevision endOfAvailability endOfSupport }\n                  contactPerson { firstName lastName phone email }\n                  salesRepresentative { name emailAddress managerEmailAddress }\n                  csm { name emailAddress }\n                  sam { name emailAddress }\n                  gard { worldwide geo area region district territory }\n                  authorizedSupportPartner { name endDate }\n                  domesticParent { id name }\n                  contract {\n                    softwareContractId hardwareContractId\n                    softwareContractStartDate hardwareContractStartDate\n                    expiryDate softwareContractEndDate hardwareContractEndDate\n                    nrdContractEndDate overallContractEndDate isContractActive\n                    hardwareServiceLevel hardwareWarrantyEndDate hardwareWarrantyStartDate\n                  }\n                  autoSupportConfig { autoSupportStatus isAutoSupportOnDemandEnabled isAutoSupportOnDemandCapable autoSupportTransport systemDomain }\n                  softwareVersion { fullVersionString endOfVersionDetails { releaseDate endOfVersionFullSupport endOfVersionLimitedSupport endOfSelfServiceSupport } }\n                  endOfSupport { earliestEndOfSupportDate earliestShelfEndOfSupportDate earliestDiskEndOfSupportDate latestPVRDate latestEndOfSupportDate }\n                  swRecommendationDetails { minRecommendedVersion latestRecommendedVersion cqvDetails { qualifiedVersion } }\n                  latestAsup { asupId generatedDate receivedDate subject type isManual }\n                  latestAsupOfEachType { asupId generatedDate receivedDate subject type isManual }\n                  autoSupports { asupId generatedDate receivedDate subject type isManual }\n                  ... on ONTAPSystem {\n                    isMetroCluster isAllFlashOptimized operatingMode\n                    drCluster { id name }\n                    healthScore { overallHealthScore calculatedAt }\n                    propensityCategory serviceProcessorIPAddress\n                    isARPEnabled autoUpdateEnabled nextBestAction\n                    lifecycleEvents { workflowCategory typeCode typeName criticalityCode daysToEvent talkingPoint }\n                    systemFirmware { type currentVersion recommendedVersion }\n                    motherboardFirmware { currentVersion recommendedVersion }\n                    diskQualificationPackage { currentVersion recommendedVersion autoUpdateEligible }\n                    shelves {\n                      serialNumber shelfId\n                      hardwareModel { name endOfAvailability endOfHwSupport }\n                      moduleHardwareModel { name }\n                      drives(pageSize: 1000) { totalCount drives { firmwareRevision vendor hardwareModel { name } } }\n                    }\n                    capacity {\n                      physical { rawMarketingKiB usedKiB usedWithoutSnapshotsKiB usablePerformanceTierKiB }\n                      logical { usedKiB usedWithoutSnapshotsClonesKiB }\n                      efficiency {\n                        ratio { efficiencyRatio dataReductionRatio withSnapshotRatio }\n                        saved { savedKiB deDuplicationSavedKiB compactionSavedKiB }\n                      }\n                      reportedOn\n                    }\n                    storageAggregates { totalCount }\n                    storageVolumes { totalCount }\n                    luns { totalCount }\n                    autoUpdateSettings { storageFirmware spbmc systemFile securityFile }\n                    sustainabilityScores { scorePercentage percentageChange changeFactors generatedDate }\n                    vcenters { id name version }\n                    licenses { licenseSerialNumber package type description name }\n                    pvrs { id info validFrom validTo }\n                    downtimeEvents { totalCount events { category code emsDate summary outageSeconds } }\n                    networkPorts {\n                      totalCount\n                      networkPorts { port role link type broadcastDomain ipspaceName speedOperationalMbps macAddress maxTransmissionUnitBytes interfaceGroupOwner }\n                    }\n                  }",
+    "ESERIES_CAP_FIELDS": "                  serialNumber\n                  ... on ONTAPSystem {\n                    supportAddOns systemShipmentDate utcOffset latestSalesOrder\n                    hardwareCapabilities { maxSupportedCapacityKiB driveClassLimits { class maxSupportedDrives } shelfModelLimits { model maxSupportedShelves } }\n                    energyConsumptionMetrics {\n                      actualEnergyConsumptions { powerW carbonKg heatBTU powerEfficiencyWTB carbonEfficiencyKgTB ambientTemperatureCelsius generatedDate }\n                      projectedEnergyConsumption { powerW carbonKg heatBTU }\n                      publishedPowerConsumption { typicalPowerW worstPowerW medianPowerW } }\n                    drivesSummary { driveModel driveType count driveCapacityKiB revolutionsPerMinute endOfSupportDate firmware { currentVersion recommendedVersion } }\n                    isFlexPod isNodar\n                    osUpgradeHistory { fromVersion toVersion postUpgradeAsupGenDate }\n                    securityFiles { type currentVersion recommendedVersion autoUpdateEligible }\n                    systemFiles { type currentVersion recommendedVersion autoUpdateEligible }\n                  }\n                  ... on SantricitySystem {\n                    supportAddOns systemShipmentDate utcOffset latestSalesOrder\n                    hardwareCapabilities { maxSupportedCapacityKiB driveClassLimits { class maxSupportedDrives } shelfModelLimits { model maxSupportedShelves } }\n                    energyConsumptionMetrics {\n                      actualEnergyConsumptions { powerW carbonKg heatBTU powerEfficiencyWTB carbonEfficiencyKgTB ambientTemperatureCelsius generatedDate }\n                      projectedEnergyConsumption { powerW carbonKg heatBTU }\n                      publishedPowerConsumption { typicalPowerW worstPowerW medianPowerW } }\n                    drivesSummary { driveModel driveType count driveCapacityKiB revolutionsPerMinute endOfSupportDate firmware { currentVersion recommendedVersion } }\n                    nvsRAM { currentVersion recommendedVersion }\n                    parentGrid { gridName }\n                    eCapacity: capacity { updatedOn totalKiB unconfiguredKiB configured { allocatedKiB freeKiB } }\n                  }\n                  ... on StorageGrid {\n                    supportAddOns systemShipmentDate utcOffset latestSalesOrder\n                    hardwareCapabilities { maxSupportedCapacityKiB driveClassLimits { class maxSupportedDrives } shelfModelLimits { model maxSupportedShelves } }\n                    energyConsumptionMetrics {\n                      actualEnergyConsumptions { powerW carbonKg heatBTU powerEfficiencyWTB carbonEfficiencyKgTB ambientTemperatureCelsius generatedDate }\n                      projectedEnergyConsumption { powerW carbonKg heatBTU }\n                      publishedPowerConsumption { typicalPowerW worstPowerW medianPowerW } }\n                    gridId gridName installedNodeCount licenseCapacity\n                    primaryAdminNodeName primaryAdminNodeSiteName licenseType softwareSupportTermEndDate\n                    gridSites { name nodes { hostName serialNumber storageNodeType applianceType applianceModel raidMode driveType driveSizeGB osVersion }\n                      siteCapacity { reportedOn configured { usableKiB usedDataKiB usedMetadataKiB reservedMetadataKiB } physical { rawMarketingKiB actualKiB } }\n                      monthlyCapacity { month configured { usableKiB usedDataKiB } physical { actualKiB } } }\n                    tenants { tenantId buckets { bucketId bucketName isLegacyComplianceEnabled isS3ObjectLockingEnabled isCorsEnabled isNotificationsEnabled isCloudMirror isSearchEnabled isBucketTaggingEnabled versioning } }\n                    ILMDetails { rules { ruleName filter isDefaultRule referenceTime ingestBehavior timePeriodsAndPlacements { start end placements { schema placementType storagePool { name sitesAndGrades { siteName grades } } } } } }\n                    gridCapacity {\n                      reportedOn\n                      configured { usableKiB usedDataKiB usedMetadataKiB reservedMetadataKiB }\n                      physical { rawMarketingKiB actualKiB qoqUtilizationPercentage yoyUtilizationPercentage }\n                    }\n                  }",
+    "ONTAP_EXTRA2_FIELDS": "                  serialNumber\n                  ... on ONTAPSystem {\n                    propensityTalkingPoints nextBestActionTalkingPoints\n                    cloudInsightsHosts { name operatingSystem isHypervisor isActive virtualMachines { name } }\n                    cloudInsightsTenants { application { name version status } }\n                    adapterInterface { slots { slotNumber adapters { __typename name type marketingPartNumber serialNumber\n                      ... on FibreChannelAdapter { firmwareRevision interfaces { name state fcNodeName portAddress } }\n                      ... on EthernetAdapter { firmwareRevision deviceType interfaces { name macAddress mediaType } } } } }\n                  }",
+    "LUN_VOLUME_FIELDS": "                  serialNumber\n                  ... on ONTAPSystem {\n                    luns(pageSize: 100000<<nested_after>>) { totalCount luns { capacity { usableKiB } } }\n                    storageVolumes(pageSize: 100000<<nested_after>>) {\n                      totalCount\n                      volumes {\n                        isRoot\n                        name state isEncrypted isARPEnabled snapLockMode tieringPolicy isAutoSizeEnabled usedCapacityPercentage\n                        protocols\n                        snapshotCount\n                        snapshotReserveUsedPercentage\n                        capacity { sizeKB availableKB logical { usedSnapshotsKiB } efficiency { saved { totalSavedPercentage } } }\n                        provisioning { isThinProvisioned }\n                      }\n                    }\n                  }",
+    "SHELVES_SUMMARY_FIELDS": "                  serialNumber\n                  ... on ONTAPSystem {\n                    shelvesSummary {\n                      shelfModuleName shelfModuleCount count\n                      moduleHardwareModel { name }\n                      firmware { currentVersion recommendedVersion postingDate autoUpdateEligible }\n                    }\n                  }",
+    "OTHER_PRODUCT_FIELDS": "                  hostName systemId serialNumber type platformType productType serviceTier\n                  customer { id name }\n                  site { id name city countryCode }\n                  hardwareModel { name endOfAvailability endOfSupport }\n                  contract { expiryDate overallContractEndDate softwareContractEndDate hardwareContractEndDate isContractActive hardwareServiceLevel hardwareWarrantyEndDate }",
+    "SUCCESS_PLAN_FIELDS": "nagpId nagpName successPlans {\n                    id name title status lifecycleStage health tamOwnerEmail\n                    source templateUsed customerChallengesAndGoals objectiveOther\n                    successMetrics keyStakeholders { name email role }\n                    internalTeamMembers notes { name email date message } linkedAifId lastUpdated\n                    scope { id name } lastUpdatedBy accountPlanId\n                    objectives { name milestones { id name status blockerNotes lifecycleStage\n                        actions { id name actionOwner dueDate actionStatus objective } } }\n                }",
+    "OS_VERSION_FIELDS": "osVersion majorOsVersion osType operatingMode\n                releaseDate endOfVersionFullSupport endOfVersionLimitedSupport endOfSelfServiceSupport\n                supportState progressionPath\n                bundledSystemFirmwares { type version biosVersion systemModel }\n                bundledDriveFirmwares { driveModel version }\n                bundledShelfFirmwares { shelfName shelfModuleName firmwareType shelfModuleFirmwareVersion sysShelfModuleFirmwareVersion }\n                bundledSecurityFiles { fileType version }",
+    "CLUSTER_FIELDS": "                  id\n                  name\n                  managementIPAddress\n                  osVersion\n                  isHAConfigured\n                  ageInYears\n                  osRecommendation { recommendedVersion }\n                  snapMirrorRelationships { totalCount }\n                  systems { serialNumber }\n                  switches {\n                    switchSerialNumber\n                    deviceName\n                    role\n                    network\n                    vendor\n                    model\n                    ipAddress\n                    isDiscovered\n                    isMonitored\n                    versionInfo { fwVersion rcfVersion }\n                    snmpConfiguration { version }\n                    supportContract { startDate endDate offerDescription }\n                  }\n                  shelves {\n                    serialNumber shelfId\n                    hardwareModel { name endOfAvailability endOfHwSupport }\n                    moduleHardwareModel { name }\n                    drives(pageSize: 1000) { totalCount drives { firmwareRevision vendor hardwareModel { name } } }\n                  }\n                  vservers { id name type subType logicalInterfaces { name ipAddress worldWidePortName status { administrative operation } serviceConfiguration { servicePolicy dataProtocols } failoverConfiguration { homeNode { hostName serialNumber } homePort currentNode { hostName serialNumber } currentPort failoverPolicy } } }\n                  capacity {\n                    physical { usedKiB rawMarketingKiB usablePerformanceTierKiB qoqUtilizationPercentage yoyUtilizationPercentage }\n                    logical { usedKiB }\n                    reportedOn\n                  }\n                  monthlyCapacity {\n                    month\n                    physical { usedKiB rawMarketingKiB qoqUtilizationPercentage }\n                  }\n",
+    "REPLACEMENT_FIELDS": "serialNumber\n                  retentionSpecialist { name emailAddress }\n                  solutionEngineerSpecialist { name emailAddress }\n                  ... on ONTAPSystem {\n                    lifecycleEvents { typeCode eventDate }\n                  }",
+    "MONTHLY_STATS_FIELDS": "serialNumber\n                  ... on ONTAPSystem {\n                    monthlyUptimeStats { month totalSeconds plannedDowntimeSeconds unplannedDowntimeSeconds }\n                    monthlyArpStats { month totalVolumesCount totalVolumesWithArpEnabled }\n                    monthlyResolvedRisksStats { month totalRisksFoundCount totalRisksResolvedCount criticalRisksFoundCount criticalRisksResolvedCount cveRisksFoundCount cveRisksResolvedCount }\n                    monthlyCarbonStats { month expectedCarbonKg actualEmittedCarbonKg }\n                    monthlyAutoResolvedCases { month totalCasesCount totalAutoResolvedCasesCount }\n                  }",
+    "CAPACITY_ENERGY_FIELDS": "serialNumber\n                  ... on ONTAPSystem {\n                    capacity {\n                      physical { usedNASKiB usedSANKiB usedSnapshotsKiB }\n                      logical { usedNASKiB usedSANKiB usedSnapshotsKiB }\n                    }\n                    energyConsumptionMetrics { forecastedEnergyConsumptions { powerW carbonKg heatBTU forecastDate } }\n                  }\n                  ... on SantricitySystem {\n                    energyConsumptionMetrics { forecastedEnergyConsumptions { powerW carbonKg heatBTU forecastDate } }\n                  }\n                  ... on StorageGrid {\n                    energyConsumptionMetrics { forecastedEnergyConsumptions { powerW carbonKg heatBTU forecastDate } }\n                  }"
+  },
+  "fragment_descriptions": {
+    "SYSTEMS_FIELDS_MINIMAL": "Smallest systems field list: identity, customer, site, contract, software version, end of support and AutoSupport. Last fallback when the larger lists are rejected.",
+    "SYSTEMS_FIELDS_TAM": "Full systems field list, including capacity, efficiency, firmware, shelves, licenses and network ports for ONTAP systems. Tried first.",
+    "SYSTEMS_FIELDS_EFFICIENCY": "Medium systems field list: the full list without the utilization percentages and monthly capacity that can fail with null Float values, plus PVRs and downtime events. Second choice.",
+    "ESERIES_CAP_FIELDS": "Extra platform data fetched as its own pass (E-Series and StorageGRID capacity, power and heat, drives, upgrade history). Kept separate so the main query stays under Active IQ's field-count limit.",
+    "ONTAP_EXTRA2_FIELDS": "ONTAP-only second extra pass: adapter and FC inventory, Cloud Insights hosts, talking points. Separate because combined with the first extra pass it exceeds the field-count limit.",
+    "LUN_VOLUME_FIELDS": "LUN and volume inventory for ONTAP systems (counts, sizes, snapshot reserve, thin provisioning flag). The nested lists use pageSize 100000; <<nested_after>> pages them when a system has more. Volume sizes are in KiB. Active IQ has no igroup or LUN-to-host mapping data. Also requests per-volume protection settings (state, encryption, ARP, SnapLock mode, tiering policy, auto-size, percent used); ARIA turns them into per-system counts.",
+    "SHELVES_SUMMARY_FIELDS": "Shelf module counts and firmware currency. Fetched on its own because adding it to the main query exceeded the field-count limit.",
+    "OTHER_PRODUCT_FIELDS": "Fields for non-controller records (switches and similar products) that Active IQ also tracks.",
+    "SUCCESS_PLAN_FIELDS": "Success Plan fields: plan, objectives, milestones, actions, stakeholders and notes.",
+    "OS_VERSION_FIELDS": "OS version catalog fields: dates, support state, upgrade path and bundled firmware.",
+    "CLUSTER_FIELDS": "Cluster fields: identity, switches, shelves, SVMs with interfaces, capacity and monthly capacity.",
+    "REPLACEMENT_FIELDS": "Fields that replace deprecated ones: retentionSpecialist and solutionEngineerSpecialist (replace csm) and lifecycle eventDate (replaces daysToEvent). Fetched as its own pass because adding them to SYSTEMS_FIELDS_TAM exceeds Active IQ's field-count limit. The deprecated csm and daysToEvent stay in the main field lists as the fallback.",
+    "MONTHLY_STATS_FIELDS": "Monthly history for each ONTAP system: uptime and downtime seconds, volumes with ARP enabled, risks found and resolved (all, critical, CVE), carbon, and automatically resolved cases. Fetched as its own pass (the main systems field list is at the field-count limit). Months with no data come back empty or with zero totals.",
+    "CAPACITY_ENERGY_FIELDS": "Used capacity split into NAS, SAN and snapshots (ONTAP) and Active IQ's forecast power, carbon and heat (all platforms). A separate small pass, because adding them to the main lists exceeds Active IQ's field-count limit."
+  },
+  "graphql": {
+    "summary_watchlist": {
+      "description": "Fleet counts (systems, clusters, sites) for one watchlist. Used only for the log line at the start of a sync. Needs <<watchlist_id>>.",
+      "type": "query",
+      "query": "{ summary(watchlistId: \"<<watchlist_id>>\") { system cluster site } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "summary": {
+      "description": "Fleet counts for the whole account. Fails with a privilege error on accounts that lack unfiltered_system_access; the sync then counts from the data it fetches instead.",
+      "type": "query",
+      "query": "{ summary { system cluster site } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "watchlists": {
+      "description": "Watchlist list through GraphQL. This field is not in the current GraphQL schema, so the call normally fails and is ignored; the REST call rest.watchlist_list is the one that works. Kept in case the field is added.",
+      "type": "query",
+      "query": "{ watchlists { id name } }",
+      "schema_check": "field not in the public schema reference"
+    },
+    "systems_page": {
+      "description": "One page (100) of systems, including StorageGRID nodes. <<fields>> is a field list from \"fragments\"; <<after>> is the paging cursor, <<scope>> a watchlist, <<product_types>> an optional product-type filter. The first page is requested with no cursor.",
+      "type": "query",
+      "query": "{\n  systems(pageSize: 100, includeStorageGridNodes: true<<after>><<scope>>) {\n    totalCount cursor\n    systems {<<fields>>\n    }\n  }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "asar2_systems_page": {
+      "description": "Provisioned LUN and namespace size for ASA r2 systems only (ontapPersonalities: [ASAR2]). usableKiB on these objects reports bytes, not KiB; ARIA converts it. <<nested_after>> pages the nested lists (the value is an offset).",
+      "type": "query",
+      "query": "{\n  systems(pageSize: 50, ontapPersonalities: [ASAR2]<<scope>><<after>>) {\n    cursor\n    systems {\n      serialNumber\n      ... on ONTAPSystem {\n        ontapPersonality\n        luns(pageSize: 100000<<nested_after>>) { totalCount luns { capacity { usableKiB } } }\n        namespaces(pageSize: 100000<<nested_after>>) { totalCount namespaces { capacity { usableKiB } } }\n      }\n    }\n  }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "clusters_page": {
+      "description": "One page (100) of clusters with switches, shelves, SVMs and capacity. Fields come from the CLUSTER_FIELDS fragment.",
+      "type": "query",
+      "query": "{\n  clusters(pageSize: 100<<after>>) {\n    cursor\n    clusters {<<@CLUSTER_FIELDS>>}\n  }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "clusters_page_watchlist": {
+      "description": "Same as clusters_page, limited to one watchlist. Run for every watchlist to recover clusters the unscoped call does not return.",
+      "type": "query",
+      "query": "{ clusters(pageSize: 100, watchlistId: \"<<watchlist_id>>\"<<after>>) { cursor clusters {<<@CLUSTER_FIELDS>>} } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "risk_instances_page": {
+      "description": "One page (500) of risk instances with the risk details, the affected system and any acknowledgement.",
+      "type": "query",
+      "query": "{\n  riskInstances(pageSize: 500<<after>><<scope>>) {\n    cursor\n    riskInstances {\n      risk {\n        riskId\n        severity\n        category\n        shortName\n        riskDetail\n        potentialImpact\n        impactArea\n        correctiveAction { url displayName }\n        cves { id cvssScore description summary lastUpdated }\n      }\n      system { serialNumber hostName }\n      systemRiskDetail\n      riskTriggeredDate riskLastTriggeredDate\n      fixedVersions { displayName url }\n      riskAcknowledgementInfo { acknowledgedBy acknowledgementDate justification comments acknowledgementExpiryDate }\n    }\n  }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "cases_page": {
+      "description": "One page (200) of support cases. <<product_types>> adds all six product types (a plain query returns only controller records); ARIA retries without it if Active IQ rejects the argument.",
+      "type": "query",
+      "query": "{ cases(pageSize: 200<<after>><<product_types>><<scope>>) {\n  totalCount cursor\n  cases {\n    caseId symptom description status priority highestPriority\n    created lastUpdated closed type category subCategory\n    caseReceivedVia bugIds resolution\n    rmaParts { partNumber partDescription partRequestDeliveryDate }\n    reporterContact { name }\n    system { serialNumber hostName }\n  }\n} }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "customers_page": {
+      "description": "One page (100) of customers with their sustainability score.",
+      "type": "query",
+      "query": "{ customers(pageSize: 100<<after>><<scope>>) { cursor customers {\n  id cmatId name\n  sustainabilityScorePercentage { overall }\n  quarterlyOntapFeatureUsageStats { quarter year totalSystemsCount calculatedAt mostUsedFeatures { name systemCount } leastUsedFeatures { name systemCount } }\n} } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "recommendations": {
+      "description": "Top key recommendations (up to 1000) for a scope.",
+      "type": "query",
+      "query": "{ recommendations(isTopKeyRecommendation: true, limit: 1000<<scope>>) {\n  recommendation rank category subCategory score\n} }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "recommendations_customer": {
+      "description": "Top key recommendations for one customer id.",
+      "type": "query",
+      "query": "{ recommendations(isTopKeyRecommendation: true, limit: 1000, customerId: \"<<customer_id>>\") { recommendation rank category subCategory score } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "sites_page": {
+      "description": "One page (100) of sites with address and propensity counts.",
+      "type": "query",
+      "query": "{ sites(pageSize: 100<<after>><<scope>>) { cursor sites {\n  id cmatId name countryCode postalCode city state streetAddress\n  vmwareFlag systemsWithCriticalPropensity systemsWithHighPropensity\n  operationalDate ageInYears\n} } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "sustainability_score": {
+      "description": "Sustainability score history. <<call>> is sustainabilityScore, or sustainabilityScore(watchlistId: \"...\") for a scope (see \"arguments\").",
+      "type": "query",
+      "query": "{ <<call>> { sustainabilityScores {\n  scorePercentage percentageChange generatedDate changeFactors\n} } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "health_score_scope": {
+      "description": "The official Active IQ health score and its KPI breakdown for an account or watchlist scope.",
+      "type": "query",
+      "query": "{ summary(pageSize: 1<<scope>>) { healthScore {\n  overallHealthScore calculatedAt\n  kpis {\n      asup { gainedPercentage improvementPercentage }\n      osFreshness { gainedPercentage improvementPercentage }\n      firmware { gainedPercentage improvementPercentage }\n      securityHardening { gainedPercentage improvementPercentage }\n      sustainability { gainedPercentage improvementPercentage }\n      uptime { gainedPercentage improvementPercentage }\n      eos { gainedPercentage improvementPercentage }\n      addon { gainedPercentage improvementPercentage }\n      techRefresh { gainedPercentage improvementPercentage }\n  }\n} } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "health_score_customer": {
+      "description": "The official health score for one customer group, identified by its NAGP id.",
+      "type": "query",
+      "query": "{ summary(pageSize: 1, nagpId: \"<<nagp_id>>\") { healthScore { overallHealthScore calculatedAt } } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "success_plans_page": {
+      "description": "One page (200) of Success Plans grouped by customer group. The field list is the SUCCESS_PLAN_FIELDS fragment.",
+      "type": "query",
+      "query": "{ successPlan(pageSize: 200<<after>>) { cursor details { <<@SUCCESS_PLAN_FIELDS>> } } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "os_versions_page": {
+      "description": "One page (500) of the ONTAP OS version catalog with bundled firmware. Field list: OS_VERSION_FIELDS.",
+      "type": "query",
+      "query": "{ osVersions(pageSize: 500<<after>>) { cursor osVersions { <<@OS_VERSION_FIELDS>> } } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "os_versions_by_name": {
+      "description": "OS catalog entries for specific versions that were not on the catalog pages. <<versions>> is a JSON list of version strings (ARIA sends 50 at a time).",
+      "type": "query",
+      "query": "{ osVersions(osVersions: <<versions>>, pageSize: 500) { osVersions {\n    <<@OS_VERSION_FIELDS>>\n} } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "contract_renewals_page": {
+      "description": "One page (200) of systems with contract renewal data, for contracts ending between 2024-01-01 and 2030-12-31, across all six product types. Change the dates here to widen or narrow the window.",
+      "type": "query",
+      "query": "{ systemContractRenewals(pageSize: 200, beginDate: \"2024-01-01\", endDate: \"2030-12-31\", productTypes: [FILER, SWApp, NON_FILER, UNKNOWN, SWITCH, AIDE_DCN]<<after>><<scope>>) { cursor totalCount systems {\n  serialNumber hostName platformType serviceTier techRefreshStatus\n  contract { expiryDate isContractActive hardwareServiceLevel hardwareContractEndDate softwareContractEndDate overallContractEndDate hardwareWarrantyEndDate }\n  hardwareModel { name endOfAvailability endOfSupport }\n  endOfSupport { earliestEndOfSupportDate latestPVRDate latestEndOfSupportDate }\n} } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "aggregates_page": {
+      "description": "One page (200) of aggregates for one system (<<serial>>): name, root flag, FabricPool flag, storage efficiency and Active IQ's capacity forecast (monthly trend points, past and projected; the value is a fraction of allocated space, so 0.8 is 80%).",
+      "type": "query",
+      "query": "{ aggregates(pageSize: 200<<after>>, systemSerialNumber: \"<<serial>>\") { cursor aggregates { name isRoot raidType storageType offlineVolumesCount maxRaidSize snapLockMode isFabricPoolEnabled sisDisabledVolumesCount storageEfficiencyRatio { withoutSnapshot } capacityForecast { trend { year month tense usedAsPercentageOfAllocatedKB } } } } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "watchlist_system_serials_page": {
+      "description": "One page (100) of system serial numbers in a watchlist. Used to build the watchlist membership list.",
+      "type": "query",
+      "query": "{\n  systems(pageSize: 100, watchlistId: \"<<watchlist_id>>\"<<after>>) {\n    totalCount cursor\n    systems { serialNumber }\n  }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "probe_per_system_firmware": {
+      "description": "Diagnostic: firmware fields for the first two systems. Used by the firmware probe button, not by a normal sync.",
+      "type": "query",
+      "query": "{\n    systems(pageSize: 2) {\n        systems {\n            serialNumber hostName platformType type\n            ... on ONTAPSystem {\n                systemFirmware { type currentVersion recommendedVersion }\n                motherboardFirmware { currentVersion recommendedVersion }\n                diskQualificationPackage { currentVersion recommendedVersion autoUpdateEligible }\n                shelves {\n                    serialNumber shelfId\n                    hardwareModel { name }\n                    moduleHardwareModel { name }\n                    drives(pageSize: 1000) { totalCount drives { firmwareRevision vendor hardwareModel { name } } }\n                }\n            }\n        }\n    }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "probe_system_firmwares": {
+      "description": "Diagnostic: top-level systemFirmwares list (5 rows). Firmware probe only.",
+      "type": "query",
+      "query": "{\n    systemFirmwares(pageSize: 5) {\n        firmwareType firmwareVersion status priority creationDate\n    }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "probe_drive_firmwares": {
+      "description": "Diagnostic: top-level driveFirmwares list (5 rows). Firmware probe only.",
+      "type": "query",
+      "query": "{\n    driveFirmwares(pageSize: 5) {\n        driveModel firmwareVersion status priority creationDate\n    }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "probe_shelf_firmwares": {
+      "description": "Diagnostic: top-level shelfFirmwares list (5 rows). Firmware probe only.",
+      "type": "query",
+      "query": "{\n    shelfFirmwares(pageSize: 5) {\n        shelfModuleName firmwareVersion status priority creationDate\n    }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "probe_disk_qualification_packages": {
+      "description": "Diagnostic: top-level diskQualificationPackages list (5 rows). Firmware probe only.",
+      "type": "query",
+      "query": "{\n    diskQualificationPackages(pageSize: 5) {\n        version status priority creationDate\n    }\n}",
+      "schema_check": "validated against the public schema reference"
+    },
+    "AckRisk": {
+      "description": "Write-back. Acknowledges a risk on a system in Active IQ. Sent only after the user confirms in the dialog and enters a justification.",
+      "type": "mutation",
+      "query": "mutation AckRisk($riskId: String!, $systemKeys: [SystemKey!]!, $ackBy: String!, $justification: JustificationType!, $comments: String) {\n    riskAcknowledge(riskId: $riskId, systemKeys: $systemKeys, acknowledgedBy: $ackBy, riskAcknowledgementFlag: true, justification: $justification, comments: $comments) {\n      status message updatedCount\n    }\n  }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "MitigateRisk": {
+      "description": "Write-back. Records a risk mitigation. The schema accepts only the statuses SUCCESS and FAILURE and the tool CLOUD_MANAGER. Sent only after the user confirms. Active IQ marks the Risk Mitigation component as decommissioned, so this call may be rejected.",
+      "type": "mutation",
+      "query": "mutation MitigateRisk($riskId: String!, $systemKeys: [SystemKey!]!, $mitigationDate: DateTime!, $status: RiskMitigationStatus!, $tool: RiskMitigationTool!, $toolUser: String!) {\n    riskMitigation(riskId: $riskId, systemKeys: $systemKeys, mitigationDate: $mitigationDate, status: $status, mitigationTool: $tool, mitigationToolUser: $toolUser) {\n      status message\n    }\n  }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "UpdateCQV": {
+      "description": "Write-back. Sets the Customer Qualified Version for a system. Sent only after the user confirms and gives a justification.",
+      "type": "mutation",
+      "query": "mutation UpdateCQV($systemKeys: [SystemKey!]!, $qualifiedVersion: String, $justification: String!) {\n    updateQualifiedVersion(systemKeys: $systemKeys, qualifiedVersion: $qualifiedVersion, justification: $justification) {\n      status message numberOfSystemsUpdated\n    }\n  }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "CreateCSP": {
+      "description": "Write-back. Creates a Success Plan. Sent only after the user confirms.",
+      "type": "mutation",
+      "query": "mutation CreateCSP($accountPlan: AccountPlanCreateInput!) {\n        createSuccessPlan(accountPlan: $accountPlan) { success id accountId errors }\n      }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "UpdateCSP": {
+      "description": "Write-back. Updates a Success Plan. Sent only after the user confirms.",
+      "type": "mutation",
+      "query": "mutation UpdateCSP($nagpId: String!, $accountPlanId: String!, $accountPlan: AccountPlanUpdateInput) {\n        updateSuccessPlan(nagpId: $nagpId, accountPlanId: $accountPlanId, accountPlan: $accountPlan) { success results { id type success errors } }\n      }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "CloseCSP": {
+      "description": "Write-back. Closes a Success Plan by setting its status to CLOSED (the API has no delete). Sent only after the user confirms.",
+      "type": "mutation",
+      "query": "mutation CloseCSP($nagpId: String!, $accountPlanId: String!, $accountPlan: AccountPlanUpdateInput) {\n      updateSuccessPlan(nagpId: $nagpId, accountPlanId: $accountPlanId, accountPlan: $accountPlan) { success results { id type success errors } }\n    }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "risk_metadata_page": {
+      "description": "Metadata for risks by id (<<risk_ids>> is a JSON list, up to 100 ids): the kind of mitigation (configuration change, firmware or OS upgrade, hardware change or replacement), whether it is disruptive, whether it is public, playbook and fix-it availability, and bug references.",
+      "type": "query",
+      "query": "{ riskMeta(riskIds: <<risk_ids>>, pageSize: 100) { cursor riskMetadata { riskId mitigationAction mitigationActionSub mitigationCategory isPublic playbook hasUMFixit hasCloudManagerFixit burtReferences } } }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "case_summary": {
+      "description": "Support case counts (open and closed, by highest priority) and the trend over time, for an account or watchlist scope.",
+      "type": "query",
+      "query": "{ caseSummary(pageSize: 1, productTypes: [FILER, SWApp, NON_FILER, UNKNOWN, SWITCH, AIDE_DCN]<<scope>>) {\n  countByHighestPriority { duration caseCount { highestPriority totalCount open closed } }\n  trendByHighestPriority { highestPriority caseTrend { fromDate toDate count } }\n} }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "risks_count": {
+      "description": "Active IQ's own risk, action, resolved-risk and system counts for an account or watchlist scope, in total and grouped by severity and by impact area.",
+      "type": "query",
+      "query": "{ risksCount(pageSize: -1, productTypes: [FILER, SWApp, NON_FILER, UNKNOWN, SWITCH, AIDE_DCN], systemStates: [ACTIVE], includeAllStates: false, includeStorageGridNodes: true<<scope>>) {\n  name systemCount riskCount actionCount riskResolvedCount\n  bySeverity: groupBy(groupBy: Severity) { name systemCount riskCount actionCount riskResolvedCount }\n  byImpactArea: groupBy(groupBy: ImpactArea) { name systemCount riskCount actionCount riskResolvedCount }\n} }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "workload_summary": {
+      "description": "Volume counts and capacity by workload for an account or watchlist scope (data volumes only; ASA R2 systems are not included).",
+      "type": "query",
+      "query": "{ workloadSummary(isRoot: false<<scope>>) {\n  name systemCount volumeCount totalCapacity { usedKiB usableKiB } totalTieredKB totalUnmonitoredKB\n  groupBy(groupBy: WORKLOAD) { name systemCount volumeCount totalCapacity { usedKiB usableKiB } }\n} }",
+      "schema_check": "validated against the public schema reference"
+    },
+    "sg_capacity_forecast": {
+      "description": "How many StorageGRID sites will pass 80% used capacity within 3, 6 and 12 months (Active IQ's forecast), with the site names.",
+      "type": "query",
+      "query": "{ StorageGridCapacityExceededForecast(thresholdCapacityPercentage: 80, capacityForecastIntervalMonth: [3, 6, 12]<<scope>>) {\n  monthsInFuture count sites { name }\n} }",
+      "schema_check": "validated against the public schema reference"
+    }
+  },
+  "rest_diagnostics": [
+    {
+      "label": "Watchlist All",
+      "path": "/watchlist/all"
+    },
+    {
+      "label": "Search v3 system (wildcard)",
+      "path": "/v3/search/system?searchText=*&limit=10"
+    },
+    {
+      "label": "Search v3 system (no text)",
+      "path": "/v3/search/system?limit=10"
+    },
+    {
+      "label": "Search v2 customer (wild)",
+      "path": "/v2/search/system/level/customer?searchText=*&limit=10"
+    },
+    {
+      "label": "Search v1 customer (wild)",
+      "path": "/v1/search/system/level/customer?searchText=*&limit=10"
+    },
+    {
+      "label": "Search v1 watchlist (wild)",
+      "path": "/v1/search/system/level/watchlist?searchText=*&limit=10"
+    },
+    {
+      "label": "v3 Search Aggregate",
+      "path": "/v3/search/aggregate?searchText=*&limit=10"
+    },
+    {
+      "label": "v3 Search Parent",
+      "path": "/v3/search/parent?searchText=*&limit=10"
+    },
+    {
+      "label": "v3 Search Location",
+      "path": "/v3/search/location?searchText=*&limit=10"
+    },
+    {
+      "label": "v3 Count Aggregate",
+      "path": "/v3/search/count/aggregate"
+    },
+    {
+      "label": "v3 Count Parent",
+      "path": "/v3/search/count/parent"
+    },
+    {
+      "label": "v1 Aggregate customer",
+      "path": "/v1/search/aggregate/level/customer?searchText=*&limit=10"
+    },
+    {
+      "label": "v1 Parent customer",
+      "path": "/v1/search/parent/level/customer?searchText=*&limit=10"
+    },
+    {
+      "label": "v1 Location customer",
+      "path": "/v1/search/location/level/customer?searchText=*&limit=10"
+    },
+    {
+      "label": "v1 Count Agg customer",
+      "path": "/v1/search/count/aggregate/level/customer"
+    },
+    {
+      "label": "Health Summary v1 customer",
+      "path": "/v1/health/summary/level/customer?searchText=*&limit=10"
+    },
+    {
+      "label": "Health Details v1 customer",
+      "path": "/v1/health/details/level/customer?searchText=*&limit=10"
+    },
+    {
+      "label": "Health Risks v2",
+      "path": "/v2/health/risks"
+    },
+    {
+      "label": "EoS Details",
+      "path": "/eos/details"
+    },
+    {
+      "label": "EoS Contracts Details",
+      "path": "/eos/contracts/details"
+    },
+    {
+      "label": "Capacity2 Usage",
+      "path": "/capacity2/usage"
+    },
+    {
+      "label": "Firmware Details",
+      "path": "/firmware/details"
+    },
+    {
+      "label": "Keystone Customers",
+      "path": "/keystone/customers"
+    },
+    {
+      "label": "Upgrade Summary (customer)",
+      "path": "/upgrade/summary/level/customer?searchText=*"
+    }
+  ],
+  "rest_diagnostics_per_watchlist": [
+    {
+      "label": "Search watchlist: <<name>>",
+      "path": "/v1/search/system/level/watchlist?id=<<id>>&limit=10"
+    },
+    {
+      "label": "Health watchlist: <<name>>",
+      "path": "/health/details/level/watchlist/id/<<id>>"
+    }
+  ]
+}

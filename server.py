@@ -1,0 +1,11388 @@
+"""
+AIQ Proxy Server with SQLite Cache Layer
+=========================================
+Drop-in replacement for server.py. Adds a persistent SQLite cache
+(aiq_cache.db) so that subsequent page loads serve cached data instantly
+while a background thread re-syncs from the AIQ GraphQL API.
+
+Endpoints:
+  GET /api/harvest           — returns cached data if available, triggers background sync
+  GET /api/harvest?force=1   — bypasses cache, full re-harvest from API
+  GET /api/sync-status       — returns sync metadata (last sync time, counts, is_syncing)
+  GET /api/bulletins         — returns dynamic security bulletin DB (data/security_bulletins.json)
+  POST /api/bulletins        — add/update bulletin entries (called by daily scan agent)
+  POST /api/asup/import      — import an ASUP bundle (multipart or raw bytes + X-Filename header)
+  GET /api/asup/imports      — list all ASUP-imported systems
+  DELETE /api/asup/imports   — remove an ASUP import by serial number
+  GET /api/*                 — proxy to api.activeiq.netapp.com
+  POST /api/*                — proxy to api.activeiq.netapp.com
+  POST /api/app/update       — git pull
+"""
+
+import http.server
+import urllib.request
+import urllib.error
+import sys
+
+# ── Force UTF-8 output so Unicode chars in print() don't crash on Windows
+# cp1252 consoles (e.g. when server is run directly without log redirection).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+import json
+import ssl
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import time
+import subprocess
+import os
+import re
+import tempfile
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+import html
+import urllib.parse
+import perf_integration
+import aria_auth
+
+
+# ASUP offline import parser (stdlib-only core, py7zr optional)
+try:
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent / "tools"))
+    import asup_parser
+    _ASUP_AVAILABLE = True
+except ImportError:
+    _ASUP_AVAILABLE = False
+    print("[ASUP] asup_parser.py not found — offline import disabled", flush=True)
+
+PORT = int(os.environ.get("ARIA_PORT") or 8080)
+BIND_ADDRESS = os.environ.get("ARIA_BIND") or "127.0.0.1"
+SCRIPT_DIR = Path(__file__).parent
+# Where the account configuration (Active IQ tokens), the cache database and the user accounts live. By default next to the program;
+# in a container set ARIA_DATA_DIR to a persistent volume.
+DATA_ROOT = Path(os.environ.get("ARIA_DATA_DIR") or SCRIPT_DIR)
+DB_PATH = DATA_ROOT / "aiq_cache.db"
+CONFIG_PATH = DATA_ROOT / "aiq_config.json"
+aria_auth.apply_cli_flags(DATA_ROOT, sys.argv)     # --sign-in / --no-sign-in
+AUTH = aria_auth.Auth(DATA_ROOT)
+BULLETINS_PATH = SCRIPT_DIR / "data" / "security_bulletins.json"
+# ---- Active IQ API definitions ---------------------------------------------------------------------------------------
+# Every Active IQ endpoint and query lives in api_queries.json (see its "_readme"). Nothing about the API is stored in this
+# program: the file is read when the server starts and again whenever it changes on disk, so an endpoint or query can be
+# edited or added by hand and used without rebuilding anything. A copy next to the executable overrides the bundled one.
+API_QUERIES_NAME = "api_queries.json"
+_api_cfg_state = {"path": None, "mtime": None, "cfg": None}
+
+
+def _api_queries_candidates():
+    c = []
+    if getattr(sys, "frozen", False):
+        c.append(Path(sys.executable).parent / API_QUERIES_NAME)
+    c.append(SCRIPT_DIR / API_QUERIES_NAME)
+    return c
+
+
+def _api_cfg():
+    for p in _api_queries_candidates():
+        if p.exists():
+            m = p.stat().st_mtime
+            st = _api_cfg_state
+            if st["cfg"] is None or st["path"] != str(p) or st["mtime"] != m:
+                st["cfg"] = json.loads(p.read_text(encoding="utf-8"))
+                st["path"], st["mtime"] = str(p), m
+                print(f"  [API] Loaded API definitions from {p}", flush=True)
+            return st["cfg"]
+    raise RuntimeError(f"{API_QUERIES_NAME} not found. It holds every Active IQ endpoint and query; put it next to the program.")
+
+
+_PLACEHOLDER = re.compile(r"<<(@?)([A-Za-z0-9_]+)>>")
+
+
+def _expand(text, params):
+    """Fill <<name>> from params and <<@NAME>> from the fragments of api_queries.json; repeated so fragments may use placeholders."""
+    cfg = _api_cfg()
+    for _ in range(6):
+        def sub(m):
+            if m.group(1):
+                return cfg["fragments"][m.group(2)]
+            return str(params.get(m.group(2), ""))
+        new = _PLACEHOLDER.sub(sub, text)
+        if new == text:
+            break
+        text = new
+    return text
+
+
+def _Q(name, **params):
+    """The text of the named GraphQL query or mutation from api_queries.json, with its placeholders filled."""
+    return _expand(_api_cfg()["graphql"][name]["query"], params)
+
+
+def _frag(name, **params):
+    return _expand(_api_cfg()["fragments"][name], params)
+
+
+def _A(name, value):
+    """Optional request argument (cursor, scope...) from "arguments"; empty when value is empty."""
+    return _expand(_api_cfg()["arguments"][name], {"value": value}) if value else ""
+
+
+def _gql_url():
+    return _api_cfg()["endpoints"]["graphql"]
+
+
+def _rest_base():
+    return _api_cfg()["endpoints"]["rest_base"]
+
+
+def _rest_host():
+    return urllib.parse.urlparse(_rest_base()).hostname
+
+
+def __getattr__(name):
+    # GQL_URL / REST_BASE are no longer constants: the endpoints come from api_queries.json (the dev tools still import these names)
+    if name == "GQL_URL":
+        return _gql_url()
+    if name == "REST_BASE":
+        return _rest_base()
+    raise AttributeError(name)
+
+
+def _rest(name, token=None, **params):
+    """Call a REST endpoint defined under "rest" in api_queries.json. Returns (status, raw bytes)."""
+    d = _api_cfg()["rest"][name]
+    headers = {"Accept": "application/json"}
+    body = None
+    if d.get("auth") == "authorizationToken":
+        headers["authorizationToken"] = token
+    elif d.get("auth") == "bearer":
+        headers["Authorization"] = f"Bearer {token}"
+    if d.get("body") is not None:
+        headers["Content-Type"] = "application/json"
+        body = {k: _expand(v, params) if isinstance(v, str) else v for k, v in d["body"].items()}
+    return _http(d.get("method", "GET"), _rest_base() + _expand(d["path"], params), headers, body)
+
+
+# Global sync state
+_sync_lock = threading.Lock()
+_is_syncing = False
+_last_sync_error = None
+_current_token = None  # Last-used access token for debug probes
+
+# ─────────────────────────────────────────────────────────────────────
+# Multi-account (multi-customer) support
+#
+# aiq_config.json historically held exactly one refresh token at the top
+# level ("refreshToken"). To support multiple customers each with their own
+# separate Active IQ credential, the config now ALSO supports an "accounts"
+# array: [{"id", "label", "refreshToken", "watchlistId", "enabled"}, ...].
+#
+# Backward compatibility: the legacy top-level "refreshToken"/"watchlistId"
+# fields are left untouched and still work everywhere they're read directly
+# (dozens of call sites across this file) — they're treated as account
+# id="default" whenever no "accounts" array is present. Every account's
+# harvest is cached separately (see harvest_cache_accounts table) and merged
+# at read time in handle_harvest(), so no existing single-account code path
+# needs to change to keep working.
+# ─────────────────────────────────────────────────────────────────────
+
+def _load_config():
+    """Read aiq_config.json, creating a blank template if it doesn't exist."""
+    if not CONFIG_PATH.exists():
+        blank = {"accounts": [], "refreshToken": "", "watchlistId": "", "tamName": "", "tamEmail": ""}
+        CONFIG_PATH.write_text(json.dumps(blank, indent=2), encoding="utf-8")
+        return blank
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _get_accounts(cfg=None):
+    """Return the list of enabled accounts to harvest.
+
+    If cfg["accounts"] exists, use it (only entries with enabled != False).
+    Otherwise, synthesize a single "default" account from the legacy flat
+    refreshToken/watchlistId fields, so existing single-token configs work
+    unchanged.
+    """
+    cfg = cfg if cfg is not None else _load_config()
+    accounts = cfg.get("accounts")
+    if accounts:
+        return [
+            {
+                "id": a.get("id") or a.get("label") or f"account{i}",
+                "label": a.get("label") or a.get("id") or f"Account {i+1}",
+                "refreshToken": a.get("refreshToken") or a.get("refresh_token") or "",
+                "watchlistId": a.get("watchlistId", ""),
+                "enabled": a.get("enabled", True),
+            }
+            for i, a in enumerate(accounts)
+            if a.get("enabled", True) and (a.get("refreshToken") or a.get("refresh_token"))
+        ]
+    legacy_token = cfg.get("refreshToken") or cfg.get("refresh_token")
+    if legacy_token:
+        return [{
+            "id": "default",
+            "label": cfg.get("tamName") or "Default Account",
+            "refreshToken": legacy_token,
+            "watchlistId": cfg.get("watchlistId", ""),
+            "enabled": True,
+        }]
+    return []
+
+# Enrichment scanner state
+_enrichment_scheduler = None  # Set during server startup
+_harvest_scheduler = None  # Set during server startup -- see HarvestScheduler
+# Guards concurrent read-modify-write access to BULLETINS_PATH — scanners 1-4
+# (CISA KEV, PSIRT, NVD, EPSS) all upsert into the same security_bulletins.json
+# and now run concurrently via a thread pool, so each must hold this lock for
+# its own load→modify→write span to avoid clobbering another scanner's update.
+_bulletins_lock = threading.Lock()
+KEV_PATH = SCRIPT_DIR / "data" / "cisa_kev.json"
+KNOWLEDGE_PATH = SCRIPT_DIR / "data" / "knowledge_base.json"
+VERSION_CATALOG_PATH = SCRIPT_DIR / "data" / "version_catalog.json"
+DISCOVERED_PRODUCTS_PATH = SCRIPT_DIR / "data" / "discovered_products.json"
+EOA_DATABASE_PATH = SCRIPT_DIR / "data" / "eoa_database.json"
+PLATFORM_HW_PATH = SCRIPT_DIR / "data" / "platform_hardware.json"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# TLS Certificate Auto-Scraping
+# Detects corporate SSL-inspection proxies (Zscaler, BlueCoat, etc.)
+# by catching TLS handshake failures, scraping the Windows cert store
+# and Firefox NSS database, injecting found CAs, and retrying.
+# Requires zero third-party packages — uses certutil.exe (Windows
+# built-in) and Firefox's own certutil.exe for NSS databases.
+# ─────────────────────────────────────────────────────────────────────
+
+_ssl_ctx_lock = threading.Lock()
+_ssl_ctx_cache = None          # shared ssl.SSLContext, rebuilt on demand
+_ssl_extra_certs = []          # list of PEM strings injected so far
+_ssl_probe_done = False        # True once the startup probe has run
+
+# Known corporate proxy CA patterns (CN/O substrings, case-insensitive)
+_CORP_PROXY_HINTS = [
+    "zscaler", "bluecoat", "netskope", "symantec web gateway",
+    "cisco umbrella", "forcepoint", "palo alto", "checkpoint",
+    "mcafee web gateway", "iboss", "menlo security", "contentkeeper",
+    "broadcom", "websense"
+]
+
+
+def _scrape_win_certs():
+    """Return list of PEM strings from the Windows Root + CA certificate stores.
+    Uses ssl.enum_certificates() — built into Python's ssl module on Windows.
+    This is the correct stdlib approach: reads the Windows cert store directly
+    in DER format and converts each certificate to PEM. No certutil parsing needed."""
+    pems = []
+    if sys.platform != "win32":
+        return pems
+
+    import base64
+
+    stores = ["ROOT", "CA", "AUTHROOT", "MY"]
+    for store in stores:
+        try:
+            for cert_der, encoding, trust in ssl.enum_certificates(store):
+                if encoding == "x509_asn":
+                    # Convert DER → PEM
+                    b64 = base64.encodebytes(cert_der).decode("ascii")
+                    pem = f"-----BEGIN CERTIFICATE-----\n{b64}-----END CERTIFICATE-----\n"
+                    pems.append(pem)
+        except Exception as exc:
+            print(f"  [TLS] ssl.enum_certificates store={store}: {exc}", flush=True)
+
+    # Deduplicate by content
+    seen = set()
+    unique = []
+    for p in pems:
+        key = p.strip()
+        if key not in seen:
+            seen.add(key)
+            unique.append(key)
+    print(f"  [TLS] Windows cert store: found {len(unique)} certificates", flush=True)
+    return unique
+
+
+
+def _scrape_firefox_certs():
+    """Return list of PEM strings from Firefox's NSS certificate database.
+    Uses Firefox's bundled certutil.exe (NSS tool) to export from cert9.db.
+    Falls back gracefully if Firefox is not installed."""
+    pems = []
+    if sys.platform != "win32":
+        return pems
+
+    # Find Firefox certutil.exe (NSS certutil, not Windows certutil)
+    firefox_dirs = [
+        r"C:\Program Files\Mozilla Firefox",
+        r"C:\Program Files (x86)\Mozilla Firefox",
+    ]
+    nss_certutil = None
+    for d in firefox_dirs:
+        candidate = Path(d) / "certutil.exe"
+        if candidate.exists():
+            nss_certutil = str(candidate)
+            break
+
+    if not nss_certutil:
+        return pems  # Firefox not installed
+
+    # Find Firefox profile directory (cert9.db)
+    appdata = os.environ.get("APPDATA", "")
+    ff_profiles_root = Path(appdata) / "Mozilla" / "Firefox" / "Profiles"
+    if not ff_profiles_root.exists():
+        return pems
+
+    profile_dirs = list(ff_profiles_root.glob("*.default*"))
+    if not profile_dirs:
+        profile_dirs = [d for d in ff_profiles_root.iterdir() if d.is_dir()]
+    if not profile_dirs:
+        return pems
+
+    profile = profile_dirs[0]  # Use the first profile found
+    print(f"  [TLS] Firefox profile: {profile.name}", flush=True)
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # List all certs in the Firefox NSS DB
+            list_result = subprocess.run(
+                [nss_certutil, "-L", "-d", f"sql:{profile}", "-h", "all"],
+                capture_output=True, text=True, timeout=20,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            # Each line: "Nickname                                         Trust Attributes"
+            nicknames = []
+            for line in list_result.stdout.splitlines():
+                # Lines look like: "DigiCert Global Root CA                  CT,C,C"
+                if line.strip() and not line.startswith("Certificate") and ',' in line:
+                    # Nick is everything before the last whitespace-padded trust field
+                    parts = line.rsplit(None, 1)
+                    if len(parts) == 2:
+                        nicknames.append(parts[0].strip())
+
+            # Export each cert as PEM
+            for nick in nicknames[:200]:  # cap at 200 to avoid slowness
+                try:
+                    exp = subprocess.run(
+                        [nss_certutil, "-L", "-d", f"sql:{profile}",
+                         "-n", nick, "-a"],
+                        capture_output=True, text=True, timeout=10,
+                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                    )
+                    found = re.findall(
+                        r'(-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----)',
+                        exp.stdout
+                    )
+                    pems.extend(found)
+                except Exception:
+                    pass
+    except Exception as exc:
+        print(f"  [TLS] Firefox NSS export error: {exc}", flush=True)
+
+    print(f"  [TLS] Firefox NSS store: found {len(pems)} certificates", flush=True)
+    return pems
+
+
+def _build_ssl_ctx(extra_pems=None):
+    """Build a new ssl.SSLContext loaded with system defaults plus any extra PEM certs."""
+    ctx = ssl.create_default_context()
+    _bundle = os.environ.get("ARIA_CA_BUNDLE")   # extra trusted CAs (for example a corporate TLS inspection CA) in a container
+    if _bundle and os.path.exists(_bundle):
+        try:
+            ctx.load_verify_locations(cafile=_bundle)
+        except Exception as e:
+            print(f"  [TLS] Could not load ARIA_CA_BUNDLE {_bundle}: {e}", flush=True)
+    if extra_pems:
+        for pem in extra_pems:
+            try:
+                ctx.load_verify_locations(cadata=pem)
+            except Exception as e:
+                pass  # Malformed cert — skip silently
+    return ctx
+
+
+def _ssl_ctx():
+    """Return the current shared SSL context. Thread-safe."""
+    global _ssl_ctx_cache
+    with _ssl_ctx_lock:
+        if _ssl_ctx_cache is None:
+            _ssl_ctx_cache = _build_ssl_ctx(_ssl_extra_certs)
+    return _ssl_ctx_cache
+
+
+def _refresh_ssl_ctx():
+    """Scrape Windows + Firefox cert stores, inject new CAs, rebuild SSL context.
+    Logs a summary of any corporate proxy CAs detected."""
+    global _ssl_ctx_cache, _ssl_extra_certs
+
+    print("  [TLS] Scanning certificate stores for proxy/enterprise CAs...", flush=True)
+    win_pems = _scrape_win_certs()
+    ff_pems  = _scrape_firefox_certs()
+    all_pems = win_pems + ff_pems
+
+    # Log any corporate proxy CA hits
+    corp_found = []
+    for pem in all_pems:
+        # Try to find CN/O in the pem text (certutil -store embeds subject info above the PEM block)
+        pass  # Detection is done via the probe pattern — PEM itself is binary-encoded
+
+    with _ssl_ctx_lock:
+        _ssl_extra_certs = all_pems
+        _ssl_ctx_cache = _build_ssl_ctx(all_pems)
+
+    print(f"  [TLS] SSL context rebuilt with {len(all_pems)} extra CA certificates", flush=True)
+    return _ssl_ctx_cache
+
+
+def _tls_probe_and_refresh(host=None, port=443):
+    """Probe the target host for TLS errors at startup.
+    If the default SSL context fails, auto-scrape cert stores and retry.
+    This runs once at server startup and logs the result clearly."""
+    global _ssl_probe_done
+    if _ssl_probe_done:
+        return
+    _ssl_probe_done = True
+    host = host or _rest_host()
+
+    import socket
+    print(f"  [TLS] Startup probe: {host}:{port}", flush=True)
+
+    # Step 1: Try with default SSL context
+    default_ok = False
+    default_err = None
+    try:
+        default_ctx = ssl.create_default_context()
+        with socket.create_connection((host, port), timeout=10) as sock:
+            with default_ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                cert = ssock.getpeercert()
+                issuer = dict(x[0] for x in cert.get('issuer', []))
+                subject = dict(x[0] for x in cert.get('subject', []))
+                issuer_org = issuer.get('organizationName', '')
+                issuer_cn  = issuer.get('commonName', '')
+                subject_cn = subject.get('commonName', '')
+                print(f"  [TLS] Direct TLS OK — cert issuer: {issuer_cn or issuer_org}", flush=True)
+
+                # Check if issuer looks like a corporate proxy
+                issuer_str = (issuer_cn + ' ' + issuer_org).lower()
+                for hint in _CORP_PROXY_HINTS:
+                    if hint in issuer_str:
+                        print(f"  [TLS] WARN Corporate SSL inspection detected: '{issuer_cn}'", flush=True)
+                        print(f"  [TLS]   Proxy is intercepting TLS for {host}", flush=True)
+                        print(f"  [TLS]   Triggering cert store scrape to ensure full trust chain...", flush=True)
+                        _refresh_ssl_ctx()
+                        break
+                else:
+                    # Legitimate cert — still build ctx normally (no corporate proxy detected)
+                    _refresh_ssl_ctx()  # builds ctx from stores without forcing it
+                default_ok = True
+    except ssl.SSLError as e:
+        default_err = e
+        print(f"  [TLS] Default context FAILED: {e}", flush=True)
+    except Exception as e:
+        default_err = e
+        print(f"  [TLS] Probe connection FAILED: {e}", flush=True)
+
+    if not default_ok:
+        # Step 2: TLS failed — scrape stores and try again
+        print("  [TLS] Attempting cert store scrape and retry...", flush=True)
+        new_ctx = _refresh_ssl_ctx()
+        retry_ok = False
+        try:
+            import socket
+            with socket.create_connection((host, port), timeout=10) as sock:
+                with new_ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                    print(f"  [TLS] OK Retry succeeded after injecting enterprise CAs", flush=True)
+                    retry_ok = True
+        except Exception as e2:
+            print(f"  [TLS] FAIL Retry also failed: {e2}", flush=True)
+            print(f"  [TLS]   If on a corporate network, ask IT to add '{host}' to SSL inspection bypass", flush=True)
+
+# ─────────────────────────────────────────────────────────────────────
+# SQLite Cache Layer
+# ─────────────────────────────────────────────────────────────────────
+
+_db_schema_ready = False
+_db_init_lock = threading.Lock()
+_last_enrich_purge_at = 0.0
+_enrich_purge_lock = threading.Lock()
+
+
+def _init_db():
+    """Open a SQLite connection for this call/thread.
+
+    The one-time schema setup (CREATE TABLE, column migrations, the
+    enrich_cache purge, the legacy-harvest-cache migration) used to run on
+    EVERY call to this function -- and this function is called on nearly
+    every request. Under ThreadingHTTPServer that meant every concurrent
+    request re-ran the full setup script and contended for the same
+    write lock, which is exactly the ~3s-per-request slowdown observed
+    during an active harvest. It only ever needs to run once per process,
+    so it's now guarded by a flag + lock (double-checked, so the common
+    case after startup is a single cheap boolean check, not a lock
+    acquisition on every request).
+    """
+    global _db_schema_ready
+    # timeout / busy_timeout: a request that writes (history annotate, tracker, config) while a harvest is saving its cache
+    # waits for the write lock instead of failing after sqlite's default 5 s with "database is locked"
+    db = sqlite3.connect(str(DB_PATH), timeout=120, check_same_thread=False)
+    db.execute("PRAGMA busy_timeout=120000")
+    # WAL is persistent in the file: only switch when it is not already on (re-issuing the pragma on every request needs the lock)
+    if str(db.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+        db.execute("PRAGMA journal_mode=WAL")  # Better concurrent read/write
+    db.execute("PRAGMA synchronous=NORMAL")
+    if not _db_schema_ready:
+        with _db_init_lock:
+            if not _db_schema_ready:
+                _run_db_schema_setup(db)
+                _db_schema_ready = True
+    else:
+        # aiq_cache.db lives in a Google Drive sync folder by design (dark-site
+        # dev setup) -- Drive can replace the file out from under this
+        # long-running process on a sync conflict (observed live: harvest_cache
+        # survived but harvest_cache_accounts and every reporting_* table
+        # vanished mid-session, silently breaking every multi-account harvest
+        # with "no such table" until the process was restarted). The full
+        # schema script is too expensive to re-run on every request (that's
+        # the whole reason for the _db_schema_ready flag -- see docstring),
+        # but this existence check is a single indexed lookup, cheap enough to
+        # run every call. If the file was swapped underneath us, re-run setup
+        # once (CREATE TABLE IF NOT EXISTS is idempotent) instead of failing
+        # every query against the table until someone notices and restarts.
+        _tbl = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='harvest_cache_accounts'"
+        ).fetchone()
+        if not _tbl:
+            with _db_init_lock:
+                _tbl = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='harvest_cache_accounts'"
+                ).fetchone()
+                if not _tbl:
+                    print("  [DB] harvest_cache_accounts missing on a schema-ready connection "
+                          "-- aiq_cache.db was likely replaced underneath this process (Google "
+                          "Drive sync conflict). Re-running schema setup.", flush=True)
+                    _run_db_schema_setup(db)
+    _maybe_purge_enrich_cache(db)
+    return db
+
+
+def _maybe_purge_enrich_cache(db):
+    """Delete stale enrich_cache rows, but at most once per hour -- this
+    used to run on every _init_db() call (i.e. nearly every request), which
+    was needless write-lock contention. A cache with day-scale TTLs doesn't
+    need sub-second purge granularity."""
+    global _last_enrich_purge_at
+    now = time.time()
+    if now - _last_enrich_purge_at < 3600:
+        return
+    with _enrich_purge_lock:
+        if now - _last_enrich_purge_at < 3600:
+            return
+        db.execute("""
+            DELETE FROM enrich_cache WHERE
+                (source = 'nvd' AND fetched_at < datetime('now', '-1 day')) OR
+                (source != 'nvd' AND fetched_at < datetime('now', '-7 days'))
+        """)
+        db.commit()
+        _last_enrich_purge_at = now
+
+
+def _run_db_schema_setup(db):
+    """One-time schema creation + migrations. See _init_db()."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS harvest_cache (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            result_json TEXT NOT NULL,
+            harvested_at TEXT NOT NULL,
+            duration_ms INTEGER DEFAULT 0,
+            system_count INTEGER DEFAULT 0,
+            cluster_count INTEGER DEFAULT 0,
+            risk_count INTEGER DEFAULT 0,
+            case_count INTEGER DEFAULT 0,
+            risk_instance_count INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS harvest_cache_accounts (
+            account_id TEXT PRIMARY KEY,
+            account_label TEXT DEFAULT '',
+            result_json TEXT NOT NULL,
+            harvested_at TEXT NOT NULL,
+            duration_ms INTEGER DEFAULT 0,
+            system_count INTEGER DEFAULT 0,
+            cluster_count INTEGER DEFAULT 0,
+            risk_count INTEGER DEFAULT 0,
+            case_count INTEGER DEFAULT 0,
+            risk_instance_count INTEGER DEFAULT 0
+        );
+        -- ── Normalized reporting tables ──────────────────────────────────
+        -- The full harvest result is already stored as JSON in
+        -- harvest_cache_accounts.result_json (nothing shown in the tool is
+        -- browser-only), but a JSON blob is painful to query directly with
+        -- SQL. These tables mirror the same data into real columns for
+        -- direct reporting -- refreshed (DELETE+INSERT) on every harvest,
+        -- so they always reflect current state. For point-in-time history,
+        -- use system_snapshots instead (one dated row per system per day).
+        CREATE TABLE IF NOT EXISTS reporting_systems (
+            serial_number       TEXT NOT NULL,
+            account_id          TEXT NOT NULL DEFAULT '',
+            account_label       TEXT DEFAULT '',
+            system_name         TEXT DEFAULT '',
+            cluster_name        TEXT DEFAULT '',
+            customer_name       TEXT DEFAULT '',
+            site_name           TEXT DEFAULT '',
+            site_city           TEXT DEFAULT '',
+            site_country        TEXT DEFAULT '',
+            platform            TEXT DEFAULT '',
+            model               TEXT DEFAULT '',
+            os_version          TEXT DEFAULT '',
+            recommended_os_version TEXT DEFAULT '',
+            system_state        TEXT DEFAULT '',
+            is_ha_configured    INTEGER,
+            is_arp_enabled      INTEGER,
+            is_metrocluster     INTEGER,
+            is_fabricpool       INTEGER,
+            efficiency_ratio    TEXT DEFAULT '',
+            snapmirror_count    INTEGER DEFAULT 0,
+            capacity_used_kb    INTEGER,
+            capacity_allocated_kb INTEGER,
+            capacity_available_kb INTEGER,
+            contract_active     INTEGER,
+            contract_end_date   TEXT DEFAULT '',
+            warranty_end_date   TEXT DEFAULT '',
+            service_level       TEXT DEFAULT '',
+            latest_asup_date    TEXT DEFAULT '',
+            risk_critical       INTEGER DEFAULT 0,
+            risk_high           INTEGER DEFAULT 0,
+            risk_medium         INTEGER DEFAULT 0,
+            risk_low            INTEGER DEFAULT 0,
+            open_case_count     INTEGER DEFAULT 0,
+            sales_rep_name      TEXT DEFAULT '',
+            tam_name            TEXT DEFAULT '',
+            sam_name            TEXT DEFAULT '',
+            age_in_years        REAL,
+            original_ship_date  TEXT DEFAULT '',
+            updated_at          TEXT NOT NULL,
+            PRIMARY KEY (serial_number, account_id)
+        );
+        CREATE TABLE IF NOT EXISTS reporting_risks (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            serial_number   TEXT NOT NULL,
+            system_name     TEXT DEFAULT '',
+            account_id      TEXT DEFAULT '',
+            risk_id         TEXT DEFAULT '',
+            severity        TEXT DEFAULT '',
+            category        TEXT DEFAULT '',
+            short_name      TEXT DEFAULT '',
+            risk_detail     TEXT DEFAULT '',
+            cve_ids         TEXT DEFAULT '',
+            acknowledged    INTEGER DEFAULT 0,
+            updated_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_reporting_risks_serial ON reporting_risks(serial_number);
+        CREATE INDEX IF NOT EXISTS idx_reporting_risks_severity ON reporting_risks(severity);
+        CREATE TABLE IF NOT EXISTS reporting_cases (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            serial_number   TEXT NOT NULL,
+            system_name     TEXT DEFAULT '',
+            account_id      TEXT DEFAULT '',
+            case_id         TEXT DEFAULT '',
+            status          TEXT DEFAULT '',
+            priority        TEXT DEFAULT '',
+            highest_priority TEXT DEFAULT '',
+            created          TEXT DEFAULT '',
+            last_updated     TEXT DEFAULT '',
+            closed           TEXT DEFAULT '',
+            symptom          TEXT DEFAULT '',
+            updated_at       TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_reporting_cases_serial ON reporting_cases(serial_number);
+        CREATE INDEX IF NOT EXISTS idx_reporting_cases_status ON reporting_cases(status);
+        CREATE TABLE IF NOT EXISTS system_snapshots (
+            serial_number   TEXT NOT NULL,
+            snapshot_date   TEXT NOT NULL,
+            customer_name   TEXT DEFAULT '',
+            system_name     TEXT DEFAULT '',
+            snapshot_json   TEXT NOT NULL,
+            captured_at     TEXT NOT NULL,
+            PRIMARY KEY (serial_number, snapshot_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_serial ON system_snapshots(serial_number);
+        CREATE TABLE IF NOT EXISTS asup_imports (
+            serial_number TEXT PRIMARY KEY,
+            system_json   TEXT NOT NULL,
+            coverage_json TEXT NOT NULL,
+            customer_name TEXT DEFAULT '',
+            site_name     TEXT DEFAULT '',
+            notes         TEXT DEFAULT '',
+            filename      TEXT DEFAULT '',
+            imported_at   TEXT NOT NULL,
+            matched_serial TEXT DEFAULT '',
+            match_type     TEXT DEFAULT 'new'
+        );
+    """)
+    db.commit()
+    # Migrate existing asup_imports rows that lack the new columns (safe no-op if cols exist)
+    for col, default in [("site_name","''"), ("notes","''"), ("matched_serial","''"), ("match_type","'new'")]:
+        try:
+            db.execute(f"ALTER TABLE asup_imports ADD COLUMN {col} TEXT DEFAULT {default}")
+            db.commit()
+        except Exception:
+            pass  # column already exists
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS enrich_cache (
+            cache_key   TEXT PRIMARY KEY,
+            result_json TEXT NOT NULL,
+            fetched_at  TEXT NOT NULL,
+            source      TEXT DEFAULT ''
+        );
+    """)
+    # ── Remediation Tracker ──────────────────────────────────────────────
+    # Every deliverable/report in this tool regenerates a fresh point-in-time
+    # snapshot from the current Active IQ pull -- there was no persistent
+    # record of a finding's remediation status that survives a re-harvest.
+    # item_key is a stable hash of (source_type, system_serial, finding
+    # identity) computed client-side, so re-harvesting the same real finding
+    # upserts onto the SAME row (preserving status/owner/due_date) instead of
+    # creating a duplicate or losing tracked progress.
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS tracked_items (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_key      TEXT UNIQUE NOT NULL,
+            account_id    TEXT DEFAULT '',
+            customer_name TEXT DEFAULT '',
+            system_serial TEXT DEFAULT '',
+            system_name   TEXT DEFAULT '',
+            source_type   TEXT DEFAULT '',
+            severity      TEXT DEFAULT '',
+            title         TEXT NOT NULL,
+            detail        TEXT DEFAULT '',
+            advisory_url  TEXT DEFAULT '',
+            status        TEXT NOT NULL DEFAULT 'open',
+            owner         TEXT DEFAULT '',
+            due_date      TEXT DEFAULT '',
+            notes         TEXT DEFAULT '',
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            last_seen_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tracked_items_status ON tracked_items(status);
+        CREATE INDEX IF NOT EXISTS idx_tracked_items_account ON tracked_items(account_id);
+    """)
+    # Migrate existing tracked_items rows created before advisory_url existed
+    # (safe no-op if the column is already present).
+    try:
+        db.execute("ALTER TABLE tracked_items ADD COLUMN advisory_url TEXT DEFAULT ''")
+        db.commit()
+    except Exception:
+        pass  # column already exists
+
+    # Local-only progress baselines for Success Plans adopted from a
+    # suggestion. Active IQ's real Success Plan object has no progress/
+    # percentage field beyond status+health, so "tracked and measured"
+    # progress is implemented here: record the real trigger metric's value
+    # at adoption time (e.g. "3 critical risks"), and the frontend recomputes
+    # the same metric from the live harvest on every view to show the delta.
+    # This is purely local bookkeeping about a real Active IQ plan (keyed by
+    # its real plan_id) -- it never writes anything back to Active IQ itself.
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS success_plan_progress (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_id         TEXT UNIQUE NOT NULL,
+            nagp_id         TEXT DEFAULT '',
+            template_key    TEXT DEFAULT '',
+            metric_label    TEXT DEFAULT '',
+            baseline_value  REAL,
+            target_direction TEXT DEFAULT 'down',
+            created_at      TEXT NOT NULL
+        );
+    """)
+    # StoragePerf (Plumb) performance integration -- see perf_integration.py
+    perf_integration.init_tables(db)
+    # enrich_cache purge now happens in _maybe_purge_enrich_cache(), rate-
+    # limited to once/hour rather than on every _init_db() call -- see there.
+    # One-time migration: copy the legacy singleton harvest (id=1) into the
+    # new per-account table under account_id="default", so existing users
+    # keep their cached fleet data after upgrading to multi-account support.
+    try:
+        has_default = db.execute(
+            "SELECT 1 FROM harvest_cache_accounts WHERE account_id = 'default'"
+        ).fetchone()
+        if not has_default:
+            legacy_row = db.execute(
+                "SELECT result_json, harvested_at, duration_ms, system_count, cluster_count, "
+                "risk_count, case_count, risk_instance_count FROM harvest_cache WHERE id = 1"
+            ).fetchone()
+            if legacy_row:
+                db.execute("""
+                    INSERT OR REPLACE INTO harvest_cache_accounts
+                    (account_id, account_label, result_json, harvested_at, duration_ms,
+                     system_count, cluster_count, risk_count, case_count, risk_instance_count)
+                    VALUES ('default', 'Default Account', ?, ?, ?, ?, ?, ?, ?, ?)
+                """, legacy_row)
+                db.commit()
+                print("  [DB] Migrated legacy singleton harvest cache into per-account table (account_id=default)", flush=True)
+    except Exception as _mig_err:
+        print(f"  [DB] Legacy harvest cache migration skipped: {_mig_err}", flush=True)
+
+
+def _save_harvest(db, result, duration_ms=0):
+    """Write the full harvest result to the cache."""
+    now = datetime.now(timezone.utc).isoformat()
+    result_json = json.dumps(result, default=str)
+    db.execute("""
+        INSERT OR REPLACE INTO harvest_cache
+        (id, result_json, harvested_at, duration_ms, system_count, cluster_count,
+         risk_count, case_count, risk_instance_count)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        result_json,
+        now,
+        duration_ms,
+        result.get("totalSystems", 0),
+        result.get("totalClusters", 0),
+        result.get("totalRisks", 0),
+        result.get("totalCases", 0),
+        result.get("totalRiskInstances", result.get("riskInstances", 0)),
+    ))
+    db.commit()
+    print(f"  [CACHE] Saved harvest to DB ({len(result_json)} bytes, {result.get('totalSystems', 0)} systems)", flush=True)
+
+
+def _load_cached(db):
+    """Load the cached harvest result from DB. Returns (result_dict, meta_dict) or (None, None)."""
+    row = db.execute(
+        "SELECT result_json, harvested_at, duration_ms, system_count, cluster_count, risk_count, case_count, risk_instance_count FROM harvest_cache WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return None, None
+    result = json.loads(row[0])
+    meta = {
+        "harvested_at": row[1],
+        "duration_ms": row[2],
+        "system_count": row[3],
+        "cluster_count": row[4],
+        "risk_count": row[5],
+        "case_count": row[6],
+        "risk_instance_count": row[7],
+    }
+    return result, meta
+
+
+def _get_sync_meta(db):
+    """Return sync metadata for the /api/sync-status endpoint."""
+    row = db.execute(
+        "SELECT harvested_at, duration_ms, system_count, cluster_count, risk_count, case_count FROM harvest_cache WHERE id = 1"
+    ).fetchone()
+    if not row:
+        return {
+            "lastSync": None,
+            "durationMs": 0,
+            "systemCount": 0,
+            "clusterCount": 0,
+            "riskCount": 0,
+            "caseCount": 0,
+            "isSyncing": _is_syncing,
+            "lastError": _last_sync_error,
+        }
+    return {
+        "lastSync": row[0],
+        "durationMs": row[1],
+        "systemCount": row[2],
+        "clusterCount": row[3],
+        "riskCount": row[4],
+        "caseCount": row[5],
+        "isSyncing": _is_syncing,
+        "lastError": _last_sync_error,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Multi-account cache layer
+# ─────────────────────────────────────────────────────────────────────
+
+def _save_harvest_account(db, account_id, account_label, result, duration_ms=0):
+    """Write one account's harvest result to its own cache row. Also mirrors
+    the 'default' account into the legacy singleton harvest_cache table so
+    every existing single-account code path (dozens of call sites reading
+    `WHERE id = 1` directly) keeps working unchanged."""
+    now = datetime.now(timezone.utc).isoformat()
+    result_json = json.dumps(result, default=str)
+    db.execute("""
+        INSERT OR REPLACE INTO harvest_cache_accounts
+        (account_id, account_label, result_json, harvested_at, duration_ms,
+         system_count, cluster_count, risk_count, case_count, risk_instance_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        account_id, account_label, result_json, now, duration_ms,
+        result.get("totalSystems", 0), result.get("totalClusters", 0),
+        result.get("totalRisks", 0), result.get("totalCases", 0),
+        result.get("totalRiskInstances", result.get("riskInstances", 0)),
+    ))
+    db.commit()
+    print(f"  [CACHE] Saved harvest for account '{account_id}' ({len(result_json)} bytes, {result.get('totalSystems', 0)} systems)", flush=True)
+    if account_id == "default":
+        _save_harvest(db, result, duration_ms)
+
+
+def _load_cached_account(db, account_id):
+    """Load one account's cached harvest result. Returns (result, meta) or (None, None)."""
+    row = db.execute(
+        "SELECT result_json, account_label, harvested_at, duration_ms, system_count, "
+        "cluster_count, risk_count, case_count, risk_instance_count "
+        "FROM harvest_cache_accounts WHERE account_id = ?", (account_id,)
+    ).fetchone()
+    if not row:
+        return None, None
+    result = json.loads(row[0])
+    meta = {
+        "accountId": account_id, "accountLabel": row[1], "harvested_at": row[2],
+        "duration_ms": row[3], "system_count": row[4], "cluster_count": row[5],
+        "risk_count": row[6], "case_count": row[7], "risk_instance_count": row[8],
+    }
+    return result, meta
+
+
+def _load_all_accounts_meta(db):
+    """Load every account's harvest METADATA only -- no result_json, no
+    JSON parsing. Use this instead of _load_all_accounts_cached() whenever
+    the caller only needs counts/timestamps (e.g. /api/sync-status), not
+    the actual systems/risks/cases. The full result_json blob can be tens
+    of megabytes across two accounts; parsing it just to read
+    system_count off the metadata columns (which are already stored
+    separately) was the dominant cost of every /api/sync-status poll.
+    Returns list of (account_id, meta) -- no result payload.
+    """
+    rows = db.execute(
+        "SELECT account_id, account_label, harvested_at, duration_ms, "
+        "system_count, cluster_count, risk_count, case_count, risk_instance_count "
+        "FROM harvest_cache_accounts"
+    ).fetchall()
+    out = []
+    for row in rows:
+        meta = {
+            "accountId": row[0], "accountLabel": row[1], "harvested_at": row[2],
+            "duration_ms": row[3], "system_count": row[4], "cluster_count": row[5],
+            "risk_count": row[6], "case_count": row[7], "risk_instance_count": row[8],
+        }
+        out.append((row[0], meta))
+    return out
+
+
+def _load_all_accounts_cached(db):
+    """Load every account's cached harvest. Returns list of (account_id, result, meta)."""
+    rows = db.execute(
+        "SELECT account_id, account_label, result_json, harvested_at, duration_ms, "
+        "system_count, cluster_count, risk_count, case_count, risk_instance_count "
+        "FROM harvest_cache_accounts"
+    ).fetchall()
+    out = []
+    for row in rows:
+        try:
+            result = json.loads(row[2])
+        except Exception:
+            continue
+        meta = {
+            "accountId": row[0], "accountLabel": row[1], "harvested_at": row[3],
+            "duration_ms": row[4], "system_count": row[5], "cluster_count": row[6],
+            "risk_count": row[7], "case_count": row[8], "risk_instance_count": row[9],
+        }
+        out.append((row[0], result, meta))
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Historical trend snapshots
+# ─────────────────────────────────────────────────────────────────────
+# One row per (system, calendar day). Re-syncing multiple times in the same
+# UTC day overwrites that day's row rather than accumulating noise — the
+# point is week/month/quarter/year-over-year comparison, not intraday
+# tracking. Retention is capped (see _SNAPSHOT_RETENTION_DAYS) so the table
+# doesn't grow unbounded on a fleet that syncs daily for years.
+_SNAPSHOT_RETENTION_DAYS = 400
+
+
+def _capture_snapshots(db, result):
+    """Extract a small per-system metrics record from a completed harvest and
+    store it as today's dated snapshot, for later trend comparison (vs last
+    week/month/quarter/year). Cheap and best-effort: never raises, since a
+    snapshot-capture failure must not take down the harvest it's attached to.
+    """
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        systems = result.get("systems") or []
+        rows = []
+        for s in systems:
+            serial = s.get("serialNumber")
+            if not serial:
+                continue
+            risks = s.get("risks") or []
+            cases = s.get("cases") or []
+            risk_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+            for r in risks:
+                sev = str(r.get("severity") or "").lower()
+                if sev in risk_counts:
+                    risk_counts[sev] += 1
+            open_critical_cases = sum(
+                1 for c in cases
+                if str(c.get("status") or "").upper() not in ("CLOSED", "CANCELLED")
+                and str(c.get("highestPriority") or c.get("priority") or "").upper().startswith(("S1", "P1", "S2", "P2", "CRITICAL", "HIGH"))
+            )
+            snap = {
+                "systemName": s.get("systemName", ""),
+                "customerName": s.get("customerName", ""),
+                "platform": s.get("platform", ""),
+                "osVersion": s.get("osVersion", ""),
+                "efficiencyRatio": s.get("efficiencyRatio"),
+                "fabricPoolTieredTB": (s.get("efficiency") or {}).get("fabricPoolTieredTB") if isinstance(s.get("efficiency"), dict) else None,
+                "riskCounts": risk_counts,
+                "caseCount": len(cases),
+                "openCriticalCases": open_critical_cases,
+                "isHAConfigured": s.get("isHAConfigured"),
+                "isARPEnabled": s.get("isARPEnabled"),
+                "snapMirrorCount": s.get("snapMirrorCount"),
+                "contractEndDate": s.get("contractEndDate", ""),
+                "contractActive": s.get("contractActive"),
+            }
+            rows.append((serial, today, s.get("customerName", ""), s.get("systemName", ""), json.dumps(snap), now_iso))
+        if not rows:
+            return
+        db.executemany("""
+            INSERT OR REPLACE INTO system_snapshots
+            (serial_number, snapshot_date, customer_name, system_name, snapshot_json, captured_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, rows)
+        db.execute(
+            "DELETE FROM system_snapshots WHERE snapshot_date < date('now', ?)",
+            (f"-{_SNAPSHOT_RETENTION_DAYS} days",)
+        )
+        db.commit()
+        print(f"  [SNAPSHOT] Captured {len(rows)} system snapshot(s) for {today}", flush=True)
+    except Exception as e:
+        print(f"  [SNAPSHOT] Capture failed (non-fatal): {e}", flush=True)
+
+
+def _get_system_history(db, serial_number, days=400):
+    """Return this system's dated snapshots, oldest first, each as
+    {date, ...snapshot fields}. Used for week/month/quarter/year trend
+    comparisons in the UI and in deliverables."""
+    rows = db.execute("""
+        SELECT snapshot_date, snapshot_json FROM system_snapshots
+        WHERE serial_number = ? AND snapshot_date >= date('now', ?)
+        ORDER BY snapshot_date ASC
+    """, (serial_number, f"-{days} days")).fetchall()
+    out = []
+    for date_str, snap_json in rows:
+        try:
+            rec = json.loads(snap_json)
+        except Exception:
+            continue
+        rec["date"] = date_str
+        out.append(rec)
+    return out
+
+
+def _maybe_send_webhook_alert(db, result, account_label):
+    """After a harvest completes, compare this account's fleet-wide critical
+    risk count and near-term contract expirations against the most recent
+    PRIOR day's system_snapshots to see if anything genuinely NEW appeared,
+    and POST a summary to a configured webhook URL if so. Everything else in
+    this tool is pull-based (open the app, generate a report) -- there was no
+    way to be told something changed without checking. Best-effort: never
+    raises, since a notification failure must not break the harvest it's
+    attached to. Uses only stdlib urllib -- no new dependency.
+    """
+    try:
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+        webhook_url = (cfg.get("webhookUrl") or "").strip()
+        if not webhook_url or not cfg.get("webhookEnabled"):
+            return
+
+        systems = result.get("systems") or []
+        today_critical = sum(1 for s in systems for r in (s.get("risks") or []) if str(r.get("severity") or "").lower() == "critical")
+        today_expiring30 = sum(
+            1 for s in systems
+            if (s.get("contracts") or {}).get("daysRemaining") is not None
+            and 0 <= (s.get("contracts") or {}).get("daysRemaining", 999) <= 30
+        )
+
+        # Most recent PRIOR distinct date's totals (excludes today, which
+        # _capture_snapshots already wrote before this function is called).
+        prev_date_row = db.execute("""
+            SELECT snapshot_date FROM system_snapshots
+            WHERE snapshot_date < date('now') ORDER BY snapshot_date DESC LIMIT 1
+        """).fetchone()
+        prev_critical, prev_expiring30 = None, None
+        if prev_date_row:
+            prev_rows = db.execute(
+                "SELECT snapshot_json FROM system_snapshots WHERE snapshot_date = ?",
+                (prev_date_row[0],)
+            ).fetchall()
+            prev_critical, prev_expiring30 = 0, 0
+            for (snap_json,) in prev_rows:
+                try:
+                    snap = json.loads(snap_json)
+                except Exception:
+                    continue
+                prev_critical += int((snap.get("riskCounts") or {}).get("critical") or 0)
+
+        critical_delta = (today_critical - prev_critical) if prev_critical is not None else None
+        # Only alert on a genuine INCREASE (or the very first harvest ever,
+        # where there's nothing to compare against and silence would hide a
+        # real critical count from a brand-new deployment) -- a decrease or
+        # unchanged count is not something anyone needs pinged about.
+        should_alert = (critical_delta is not None and critical_delta > 0) or (prev_critical is None and today_critical > 0)
+        if not should_alert:
+            return
+
+        lines = [f"ARIA Alert: {account_label}"]
+        if critical_delta is not None and critical_delta > 0:
+            lines.append(f"Critical risks increased by {critical_delta} (was {prev_critical}, now {today_critical}).")
+        else:
+            lines.append(f"{today_critical} critical risk(s) across {len(systems)} system(s) (first harvest, no prior baseline).")
+        if today_expiring30 > 0:
+            lines.append(f"{today_expiring30} system(s) with support contracts expiring within 30 days.")
+        payload = {
+            "text": "\n".join(lines),  # Slack/Teams-compatible top-level "text" field
+            "account": account_label,
+            "criticalRisks": today_critical,
+            "criticalRisksDelta": critical_delta,
+            "contractsExpiring30d": today_expiring30,
+            "systemCount": len(systems),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        req = urllib.request.Request(
+            webhook_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10).read()
+        print(f"  [WEBHOOK] Alert sent for {account_label}: critical={today_critical} (delta={critical_delta})", flush=True)
+    except Exception as e:
+        print(f"  [WEBHOOK] Alert failed (non-fatal): {e}", flush=True)
+
+
+def _get_fleet_trend(db, days=90, customer_name=None, serials=None):
+    """Aggregate system_snapshots across ALL systems (or one customer, if
+    given) into one row per date: total critical/high risks, total open
+    critical cases, and how many distinct systems were captured that day.
+
+    Per-system trend already existed (_get_system_history, used by the CSM
+    tab's history panel) but there was no fleet-wide or customer-wide view --
+    a TAM/MSP had no way to see "is my whole book of business trending up or
+    down in risk" over time, only one system at a time. Reuses the same
+    system_snapshots data already captured on every harvest; no new capture
+    logic needed.
+    """
+    if serials is not None:
+        # watchlist / group scope: restrict to that list of serial numbers
+        wanted = set(str(x) for x in serials)
+        rows = [r for r in db.execute("""
+            SELECT snapshot_date, snapshot_json, serial_number FROM system_snapshots
+            WHERE snapshot_date >= date('now', ?)
+            ORDER BY snapshot_date ASC
+        """, (f"-{days} days",)).fetchall() if r[2] in wanted]
+        rows = [(r[0], r[1]) for r in rows]
+    elif customer_name:
+        rows = db.execute("""
+            SELECT snapshot_date, snapshot_json FROM system_snapshots
+            WHERE snapshot_date >= date('now', ?) AND customer_name = ?
+            ORDER BY snapshot_date ASC
+        """, (f"-{days} days", customer_name)).fetchall()
+    else:
+        rows = db.execute("""
+            SELECT snapshot_date, snapshot_json FROM system_snapshots
+            WHERE snapshot_date >= date('now', ?)
+            ORDER BY snapshot_date ASC
+        """, (f"-{days} days",)).fetchall()
+
+    by_date = {}
+    for date_str, snap_json in rows:
+        try:
+            rec = json.loads(snap_json)
+        except Exception:
+            continue
+        d = by_date.setdefault(date_str, {"date": date_str, "critical": 0, "high": 0, "openCriticalCases": 0, "systemCount": 0})
+        rc = rec.get("riskCounts") or {}
+        d["critical"] += int(rc.get("critical") or 0)
+        d["high"] += int(rc.get("high") or 0)
+        d["openCriticalCases"] += int(rec.get("openCriticalCases") or 0)
+        d["systemCount"] += 1
+    return sorted(by_date.values(), key=lambda x: x["date"])
+
+
+def _populate_reporting_tables(db, account_id, account_label, result):
+    """Mirror one account's harvest result into the normalized reporting_*
+    tables, so the SQLite database can be queried directly with plain SQL
+    (SELECT/JOIN/GROUP BY) instead of requiring json_extract() on the
+    harvest_cache_accounts blob. This is a mirror, not a second source of
+    truth: result_json in harvest_cache_accounts remains authoritative,
+    and every column here is copied straight from the same harvest result
+    already used to render the live UI -- nothing computed differently.
+    Fully replaces this account's rows on every call (DELETE+INSERT), so
+    the tables always reflect current state; use system_snapshots for
+    point-in-time history instead.
+    """
+    try:
+        systems = result.get("systems") or []
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        sys_rows, risk_rows, case_rows = [], [], []   # built first; the write lock is only taken for delete + insert + commit below
+        for s in systems:
+            serial = s.get("serialNumber")
+            if not serial:
+                continue
+            risks = s.get("risks") or []
+            cases = s.get("cases") or []
+            risk_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+            for r in risks:
+                sev = str(r.get("severity") or "").lower()
+                if sev in risk_counts:
+                    risk_counts[sev] += 1
+                cve_ids = ",".join(
+                    c.get("id", "") for c in (r.get("cves") or []) if isinstance(c, dict) and c.get("id")
+                )
+                risk_rows.append((
+                    serial, s.get("systemName", ""), account_id,
+                    r.get("riskId", ""), sev, r.get("category", ""),
+                    r.get("shortName", ""), r.get("riskDetail", ""), cve_ids,
+                    1 if r.get("acknowledgement") else 0, now_iso,
+                ))
+            open_cases = 0
+            for c in cases:
+                status = str(c.get("status") or "")
+                if status.upper() not in ("CLOSED", "CANCELLED"):
+                    open_cases += 1
+                case_rows.append((
+                    serial, s.get("systemName", ""), account_id,
+                    c.get("caseId", ""), status, str(c.get("priority") or ""),
+                    str(c.get("highestPriority") or ""), c.get("created", ""),
+                    c.get("lastUpdated", ""), c.get("closed", ""), c.get("symptom", ""),
+                    now_iso,
+                ))
+            sys_rows.append((
+                serial, account_id, account_label,
+                s.get("systemName", ""), s.get("clusterName", ""), s.get("customerName", ""),
+                s.get("siteName", ""), s.get("siteCity", ""), s.get("siteCountry", ""),
+                s.get("platform", ""), s.get("model", ""), s.get("osVersion", ""),
+                s.get("recommendedOSVersion", ""), s.get("systemState", ""),
+                s.get("isHAConfigured"), s.get("isARPEnabled"), s.get("isMetroCluster"),
+                s.get("isFabricPool"), s.get("efficiencyRatio", ""), s.get("snapMirrorCount", 0),
+                s.get("capacityUsedKB"), s.get("capacityAllocatedKB"), s.get("capacityAvailableKB"),
+                s.get("contractActive"), s.get("contractEndDate", ""), s.get("warrantyEndDate", ""),
+                s.get("serviceLevel", ""), s.get("latestAsupDate", ""),
+                risk_counts["critical"], risk_counts["high"], risk_counts["medium"], risk_counts["low"],
+                open_cases, s.get("salesRepName", ""), s.get("csmName", ""), s.get("samName", ""),
+                s.get("ageInYears"), s.get("originalShipDate", ""), now_iso,
+            ))
+
+        if sys_rows:
+            db.execute("DELETE FROM reporting_systems WHERE account_id = ?", (account_id,))
+            db.execute("DELETE FROM reporting_risks WHERE account_id = ?", (account_id,))
+            db.execute("DELETE FROM reporting_cases WHERE account_id = ?", (account_id,))
+            db.executemany("""
+                INSERT INTO reporting_systems (
+                    serial_number, account_id, account_label, system_name, cluster_name, customer_name,
+                    site_name, site_city, site_country, platform, model, os_version, recommended_os_version,
+                    system_state, is_ha_configured, is_arp_enabled, is_metrocluster, is_fabricpool,
+                    efficiency_ratio, snapmirror_count, capacity_used_kb, capacity_allocated_kb,
+                    capacity_available_kb, contract_active, contract_end_date, warranty_end_date,
+                    service_level, latest_asup_date, risk_critical, risk_high, risk_medium, risk_low,
+                    open_case_count, sales_rep_name, tam_name, sam_name, age_in_years, original_ship_date,
+                    updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, sys_rows)
+        if risk_rows:
+            db.executemany("""
+                INSERT INTO reporting_risks (
+                    serial_number, system_name, account_id, risk_id, severity, category,
+                    short_name, risk_detail, cve_ids, acknowledged, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """, risk_rows)
+        if case_rows:
+            db.executemany("""
+                INSERT INTO reporting_cases (
+                    serial_number, system_name, account_id, case_id, status, priority,
+                    highest_priority, created, last_updated, closed, symptom, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """, case_rows)
+        db.commit()
+        print(f"  [REPORTING] Mirrored {len(sys_rows)} systems, {len(risk_rows)} risks, {len(case_rows)} cases into reporting_* tables for account '{account_id}'", flush=True)
+    except Exception as e:
+        print(f"  [REPORTING] Mirror failed (non-fatal): {e}", flush=True)
+
+
+# List-valued fields concatenated across accounts when merging harvests.
+# NOTE: "riskInstances" is deliberately excluded — despite the name, the
+# harvest result stores it as an integer count (len(all_risk_instances)),
+# not the actual list; the real per-risk-instance data lives inside each
+# entry of "risks".
+_MERGE_LIST_FIELDS = [
+    "systems", "clusters", "risks", "cases",
+    "tamSites", "tamRenewals", "otherProductSystems", "acknowledgedRisksNowExploited",
+    # tamRecommendations was previously left out of this list and treated as
+    # a "scalar/summary" field taken only from the largest account -- but
+    # recommendations are per-account TAM insights, not account-agnostic
+    # reference data (unlike firmwareBaselines/tamOsVersions). That meant a
+    # 2nd/3rd configured account's real recommendations were silently
+    # discarded whenever it wasn't the single largest account by system
+    # count, even though it had genuine (non-empty) recommendation data.
+    "tamRecommendations",
+    # Same bug class as tamRecommendations above, found in the same audit:
+    # tamSustainability is one score PER ACCOUNT (Active IQ has no per-customer
+    # sustainability query -- see sustainabilityScorePercentage on the systems
+    # query for the one field that actually is per-customer), so leaving it
+    # out of this list meant a 2nd/3rd configured account's real sustainability
+    # score was silently discarded whenever it wasn't the largest account.
+    "tamSustainability",
+    # Real per-customer Success Plan records -- same reasoning as tamRecommendations.
+    "tamSuccessPlans",
+    # Active IQ's own official Health Score is one score PER ACCOUNT/scope
+    # (queried via `summary(watchlistId: ...) { healthScore }`, same shape as
+    # tamSustainability above) -- must be merged per-account, not overwritten.
+    "tamOfficialHealthScore",
+    "tamCaseSummary", "tamRisksCount", "tamWorkloadSummary", "tamSgForecast",
+    # Per-customer health scores (one entry per real nagpId) -- same
+    # per-account merge reasoning as tamOfficialHealthScore above.
+    "tamCustomerHealthScores",
+    # Per-customer TAM recommendations (one entry per real customerId) --
+    # same per-account merge reasoning as tamRecommendations above.
+    "tamCustomerRecommendations",
+]
+
+
+def _merge_account_results(account_results):
+    """Combine multiple accounts' harvest results into one unified fleet view.
+
+    Each account's systems/clusters/risks/etc. are already tagged with
+    accountId/accountLabel (see _do_full_harvest). List-valued fields are
+    concatenated; scalar/summary fields (firmwareBaselines, tamOsVersions,
+    etc.) are taken from the account with the most systems, since those are
+    account-agnostic reference data, not per-customer telemetry.
+    """
+    if not account_results:
+        return None
+    if len(account_results) == 1:
+        return account_results[0][1]
+
+    account_results = sorted(account_results, key=lambda ar: len(ar[1].get("systems") or []), reverse=True)
+    merged = dict(account_results[0][1])  # start from the largest account's result as the base
+
+    for field in _MERGE_LIST_FIELDS:
+        combined = []
+        seen_keys = set()
+        for _acct_id, result, _meta in account_results:
+            for item in (result.get(field) or []):
+                if not isinstance(item, dict):
+                    combined.append(item)
+                    continue
+                if field == "tamRecommendations":
+                    # Recommendation items carry no serialNumber/id -- they're
+                    # identified by their content (recommendation/category/
+                    # subCategory/rank/score). When two configured accounts
+                    # point at overlapping Active IQ orgs, the same generic
+                    # recommendation comes back verbatim from both, which
+                    # showed up as literal duplicate cards in the Action
+                    # Planner (e.g. "ACTIVE_SUPPORT_CONTRACTS" listed twice
+                    # with identical scores). Dedupe by content instead of
+                    # by account, since a true content match means it's the
+                    # same underlying advisory, not two distinct issues.
+                    dedupe_key = (
+                        item.get("recommendation"), item.get("category"),
+                        item.get("subCategory"), item.get("rank"), item.get("score"),
+                    )
+                else:
+                    # Dedupe by serialNumber/id where present (NetApp serials are
+                    # globally unique, so this only guards against the same account
+                    # appearing twice, not against real cross-customer collisions).
+                    key = item.get("serialNumber") or item.get("id")
+                    dedupe_key = (item.get("accountId"), key) if key else None
+                if dedupe_key and dedupe_key in seen_keys:
+                    continue
+                if dedupe_key:
+                    seen_keys.add(dedupe_key)
+                combined.append(item)
+        merged[field] = combined
+
+    merged["totalSystems"] = len(merged.get("systems") or [])
+    merged["totalClusters"] = len(merged.get("clusters") or [])
+    merged["totalRisks"] = len(merged.get("risks") or [])
+    merged["totalCases"] = len(merged.get("cases") or [])
+    merged["totalRiskInstances"] = sum((result.get("totalRiskInstances") or 0) for _acct_id, result, _meta in account_results)
+    merged["riskInstances"] = merged["totalRiskInstances"]
+    merged["accounts"] = [
+        {"id": acct_id, "label": (result.get("accountLabel") or acct_id),
+         "systemCount": len(result.get("systems") or [])}
+        for acct_id, result, _meta in account_results
+    ]
+    return merged
+
+
+# ─────────────────────────────────────────────────────────────────────
+# API Harvest Logic (extracted from original handle_harvest)
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Proxy-aware opener cache ──────────────────────────────────────────
+# Built once per SSL context generation so we pick up both OS proxy
+# settings (Zscaler/WPAD inside corp) and direct routing (outside corp).
+_opener_lock  = threading.Lock()
+_opener_cache = None
+_opener_ssl_ctx_id = None  # tracks which ssl ctx the opener was built for
+
+def _build_opener(ctx):
+    """Build a urllib opener that honours OS/env proxy settings + the given SSL ctx."""
+    proxies = urllib.request.getproxies()  # reads env vars + Windows registry/WPAD
+    handlers = [urllib.request.HTTPSHandler(context=ctx)]
+    if proxies:
+        # ProxyHandler must come before HTTPSHandler
+        handlers.insert(0, urllib.request.ProxyHandler(proxies))
+        proxy_str = ", ".join(f"{k}={v}" for k, v in proxies.items() if k in ("http", "https"))
+        if proxy_str:
+            print(f"  [HTTP] Proxy detected: {proxy_str}", flush=True)
+    else:
+        # Explicit no-proxy handler — avoids urllib falling back to system defaults
+        # that might inject an unwanted proxy when env vars are cleared outside corp.
+        handlers.insert(0, urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(*handlers)
+
+
+def _get_opener():
+    """Return the cached opener, rebuilding if the SSL context changed."""
+    global _opener_cache, _opener_ssl_ctx_id
+    ctx = _ssl_ctx()
+    ctx_id = id(ctx)
+    with _opener_lock:
+        if _opener_cache is None or _opener_ssl_ctx_id != ctx_id:
+            _opener_cache = _build_opener(ctx)
+            _opener_ssl_ctx_id = ctx_id
+    return _opener_cache
+
+
+def _http(method, url, headers=None, body=None, _retry=True, _attempt=0):
+    """Make an HTTP/HTTPS request using the shared SSL context.
+
+    Works transparently inside and outside the corporate network:
+    - Inside (Zscaler/proxy): urllib.request.getproxies() reads the OS proxy
+      settings (env vars, Windows registry, WPAD) and routes via the proxy.
+    - Outside (direct): getproxies() returns {} and requests go direct.
+    - TLS: uses the shared ssl.SSLContext with corporate CA certs injected;
+      on any TLS failure auto-scrapes cert stores and retries once.
+    """
+    global _opener_cache
+    hdrs = headers or {}
+    data = None
+    if body is not None:
+        if isinstance(body, dict):
+            data = json.dumps(body).encode("utf-8")
+            hdrs.setdefault("Content-Type", "application/json")
+        elif isinstance(body, str):
+            data = body.encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    opener = _get_opener()
+    try:
+        with opener.open(req, timeout=120) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        # Rate limited or briefly unavailable: wait (Retry-After if given, else 2/4/8 s) and try again, at most three times.
+        if e.code in (429, 503) and _attempt < 3:
+            try: wait = float(e.headers.get('Retry-After', ''))
+            except Exception: wait = 2 ** (_attempt + 1)
+            wait = max(1.0, min(wait, 60.0))
+            print(f"  [HTTP] {e.code} from {url.split('?')[0]}; waiting {wait:.0f}s before retry {_attempt + 1}/3", flush=True)
+            time.sleep(wait)
+            return _http(method, url, headers=headers, body=body, _retry=_retry, _attempt=_attempt + 1)
+        return e.code, e.read()
+    except ssl.SSLError as e:
+        print(f"  [TLS] SSL error on {url}: {e}", flush=True)
+        if _retry:
+            print("  [TLS] Attempting cert store refresh and retry...", flush=True)
+            _refresh_ssl_ctx()
+            _opener_cache = None  # force rebuild
+            return _http(method, url, headers=headers, body=body, _retry=False, _attempt=_attempt)
+        return 0, f"SSL error: {e}".encode("utf-8")
+    except Exception as e:
+        err_str = str(e)
+        if _retry and any(k in err_str for k in (
+            'SSL', 'CERTIFICATE', 'certificate verify failed',
+            'UNABLE_TO_VERIFY', 'DEPTH_ZERO', 'CERT_UNTRUSTED'
+        )):
+            print(f"  [TLS] TLS-related error on {url}: {e}", flush=True)
+            print("  [TLS] Attempting cert store refresh and retry...", flush=True)
+            _refresh_ssl_ctx()
+            _opener_cache = None  # force rebuild
+            return _http(method, url, headers=headers, body=body, _retry=False, _attempt=_attempt)
+        return 0, str(e).encode("utf-8")
+
+
+def _build_platform_extras(r):
+    """Compact per-system extras from the ESERIES_CAP_FIELDS merge row (ONTAP / E-Series / StorageGRID)."""
+    if not isinstance(r, dict):
+        return None
+    out = {}
+    if r.get("supportAddOns"):
+        out["supportAddOns"] = r["supportAddOns"]
+    for k_in, k_out in (("systemShipmentDate", "shipDate"), ("utcOffset", "utcOffset"), ("latestSalesOrder", "salesOrder"),
+                        ("isFlexPod", "isFlexPod"), ("isNodar", "isNodar")):
+        if r.get(k_in) not in (None, "", False):
+            out[k_out] = r[k_in]
+    hw = r.get("hardwareCapabilities")
+    if hw:
+        out["hwLimits"] = {
+            "maxCapacityTB": round((hw.get("maxSupportedCapacityKiB") or 0) / (1024 ** 3), 1),
+            "driveLimits": [{"class": d.get("class"), "max": d.get("maxSupportedDrives")} for d in (hw.get("driveClassLimits") or [])],
+            "shelfLimits": [{"model": d.get("model"), "max": d.get("maxSupportedShelves")} for d in (hw.get("shelfModelLimits") or [])],
+        }
+    en = r.get("energyConsumptionMetrics")
+    if en:
+        acts = [a for a in (en.get("actualEnergyConsumptions") or []) if a]
+        acts.sort(key=lambda a: a.get("generatedDate") or "", reverse=True)
+        proj = en.get("projectedEnergyConsumption") or {}
+        pub = en.get("publishedPowerConsumption") or {}
+        pw = [a.get("powerW") for a in acts if a.get("powerW")]
+        out["energy"] = {
+            "latest": ({"powerW": acts[0].get("powerW"), "heatBTU": acts[0].get("heatBTU"), "effWTB": acts[0].get("powerEfficiencyWTB"),
+                        "ambientC": acts[0].get("ambientTemperatureCelsius"), "date": (acts[0].get("generatedDate") or "")[:10]} if acts else None),
+            "avgPowerW": round(sum(pw) / len(pw), 1) if pw else None,
+            "samples": len(acts),
+            "projectedPowerW": proj.get("powerW"), "projectedHeatBTU": proj.get("heatBTU"),
+            "typicalPowerW": pub.get("typicalPowerW"), "worstPowerW": pub.get("worstPowerW"),
+        }
+    drs = r.get("drivesSummary")
+    if drs:
+        out["drives"] = [{
+            "model": d.get("driveModel"), "type": d.get("driveType"), "count": d.get("count") or 0,
+            "capGB": round((d.get("driveCapacityKiB") or 0) * 1024 / 1e9, 0) if d.get("driveCapacityKiB") else None,
+            "rpm": d.get("revolutionsPerMinute"), "eos": (d.get("endOfSupportDate") or "")[:10] or None,
+            "fwCur": (d.get("firmware") or {}).get("currentVersion"), "fwRec": (d.get("firmware") or {}).get("recommendedVersion"),
+        } for d in drs if d]
+    hist = r.get("osUpgradeHistory")
+    if hist:
+        out["upgradeHistory"] = [{"from": h.get("fromVersion"), "to": h.get("toVersion"), "date": (h.get("postUpgradeAsupGenDate") or "")[:10]} for h in hist if h]
+    for k_in, k_out in (("securityFiles", "securityFiles"), ("systemFiles", "systemFiles")):
+        if r.get(k_in):
+            out[k_out] = [{"type": f.get("type"), "cur": f.get("currentVersion"), "rec": f.get("recommendedVersion"), "auto": f.get("autoUpdateEligible")} for f in r[k_in] if f]
+    if r.get("nvsRAM"):
+        out["nvsram"] = {"cur": r["nvsRAM"].get("currentVersion"), "rec": r["nvsRAM"].get("recommendedVersion")}
+    if (r.get("parentGrid") or {}).get("gridName"):
+        out["parentGrid"] = r["parentGrid"]["gridName"]
+    sc = []
+    for site in (r.get("gridSites") or []):
+        cap = site.get("siteCapacity") or {}
+        cf, ph = cap.get("configured") or {}, cap.get("physical") or {}
+        tb = lambda k: round((k or 0) / (1024 ** 3), 2)
+        total = ph.get("actualKiB") or ph.get("rawMarketingKiB") or 0
+        used = (cf.get("usedDataKiB") or 0) + (cf.get("usedMetadataKiB") or 0)
+        sc.append({"site": site.get("name"), "totalTB": tb(total), "usedTB": tb(used), "usableLeftTB": tb(cf.get("usableKiB")),
+                   "usedPct": round(used / total * 100, 1) if total else None, "reportedOn": (cap.get("reportedOn") or "")[:10],
+                   "monthly": [{"month": m.get("month"), "totalTB": tb((m.get("physical") or {}).get("actualKiB")),
+                                "usedTB": tb((m.get("configured") or {}).get("usedDataKiB"))} for m in (site.get("monthlyCapacity") or []) if m]})
+    if sc:
+        out["siteCapacity"] = sc
+    return out or None
+
+
+def _build_ontap_extras2(r):
+    """Adapter/FC inventory, Cloud Insights hosts/tenants and Active IQ talking points for one ONTAP system."""
+    if not isinstance(r, dict):
+        return None
+    out = {}
+    ads = []
+    for slot in ((r.get("adapterInterface") or {}).get("slots") or []):
+        for a in (slot.get("adapters") or []):
+            if not a:
+                continue
+            ifs = a.get("interfaces") or []
+            ent = {"slot": slot.get("slotNumber"), "name": a.get("name"), "type": a.get("type"), "pn": a.get("marketingPartNumber"),
+                   "serial": a.get("serialNumber"), "fw": a.get("firmwareRevision"), "ports": len(ifs)}
+            if a.get("__typename") == "FibreChannelAdapter":
+                ent["fc"] = [{"name": i.get("name"), "state": i.get("state"), "wwnn": i.get("fcNodeName"), "addr": i.get("portAddress")} for i in ifs]
+            ads.append(ent)
+    if ads:
+        out["adapters"] = ads
+    hosts = r.get("cloudInsightsHosts") or []
+    if hosts:
+        out["ciHosts"] = [{"name": h.get("name"), "os": h.get("operatingSystem"), "hypervisor": bool(h.get("isHypervisor")),
+                           "active": bool(h.get("isActive")), "vms": len(h.get("virtualMachines") or [])} for h in hosts if h]
+    tens = r.get("cloudInsightsTenants") or []
+    if tens:
+        out["ciTenants"] = [{"app": (t.get("application") or {}).get("name"), "version": (t.get("application") or {}).get("version"),
+                             "status": (t.get("application") or {}).get("status")} for t in tens if t]
+    if r.get("propensityTalkingPoints"):
+        out["talkingPoints"] = [str(x) for x in r["propensityTalkingPoints"]]
+    if r.get("nextBestActionTalkingPoints"):
+        out["nextBestActions"] = [str(x) for x in r["nextBestActionTalkingPoints"]]
+    return out or None
+
+
+def _aggregate_forecast(name, trend):
+    """Summarise Active IQ's capacity forecast for one aggregate. Each trend point has year, month, tense (PAST, REFERENCE or FUTURE) and
+    usedAsPercentageOfAllocatedKB (a fraction: 0.8 = 80%). Returns the current %, the months until the projection reaches 90% and 100%, and the end %."""
+    pts = [t for t in (trend or []) if t.get("usedAsPercentageOfAllocatedKB") is not None]
+    if not pts:
+        return None
+    now = datetime.now(timezone.utc)
+    cur = None
+    for t in pts:
+        if t.get("tense") != "FUTURE":
+            cur = t
+    if cur is None:
+        cur = pts[0]
+    fut = [t for t in pts if t.get("tense") == "FUTURE"]
+    def months_from_now(t):
+        return (int(t["year"]) - now.year) * 12 + (int(t["month"]) - now.month)
+    def first_at(limit):
+        for t in fut:
+            if t["usedAsPercentageOfAllocatedKB"] >= limit:
+                return max(0, months_from_now(t))
+        return None
+    return {"name": name, "currentPct": round(cur["usedAsPercentageOfAllocatedKB"] * 100, 1),
+            "monthsTo90": first_at(0.9), "monthsTo100": first_at(1.0),
+            "endPct": round(pts[-1]["usedAsPercentageOfAllocatedKB"] * 100, 1), "endMonth": f'{pts[-1]["year"]}-{int(pts[-1]["month"]):02d}'}
+
+
+def _normalize_lifecycle_events(events):
+    """daysToEvent is deprecated in Active IQ (use eventDate). Compute it from eventDate when the event has one; otherwise keep the value Active IQ sent.
+    Active IQ reports 0 for an event that is imminent or already under way, so the computed value is never negative."""
+    out = []
+    now = datetime.now(timezone.utc)
+    for e in (events or []):
+        e = dict(e)
+        ed = e.get("eventDate")
+        if ed:
+            try:
+                when = datetime.fromisoformat(str(ed).replace("Z", "+00:00"))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                e["daysToEvent"] = max(0, int(-(-(when - now).total_seconds() // 86400)))
+            except Exception:
+                pass
+        out.append(e)
+    return out
+
+
+def _gql(token, query, variables=None):
+    body = {"query": query}
+    if variables:
+        body["variables"] = variables
+    status, raw = _http("POST", _gql_url(), {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }, body)
+    raw_text = raw.decode("utf-8", errors="replace")
+    # ActiveIQ's GraphQL API occasionally returns literal NaN or Infinity in
+    # Float fields (e.g. qoqUtilizationPercentage, yoyUtilizationPercentage).
+    # These are valid JavaScript but invalid JSON — json.loads will raise
+    # JSONDecodeError. Sanitize before parsing.
+    raw_text = re.sub(r'\bNaN\b', 'null', raw_text)
+    raw_text = re.sub(r'\b-?Infinity\b', 'null', raw_text)
+    try:
+        parsed = json.loads(raw_text)
+        # json.loads("null") returns None — treat as empty response
+        if parsed is None:
+            parsed = {}
+        return status, parsed
+    except json.JSONDecodeError:
+        # Non-JSON body (e.g. HTML error page from proxy/Zscaler)
+        snippet = raw_text[:300].strip()
+        print(f"  [GQL] Non-JSON response (HTTP {status}): {snippet}", flush=True)
+        return status, {"errors": [{"message": f"Non-JSON response (HTTP {status}): {snippet}"}]}
+
+
+def _check_acknowledged_risks_vs_kev(risks_by_serial):
+    """Cross-reference every acknowledged risk's CVE(s) against the CISA KEV
+    (Known Exploited Vulnerabilities) catalog. Returns a list of
+    {serialNumber, riskId, riskTitle, cveId, acknowledgedBy, acknowledgementDate,
+     justification, kevDateAdded, kevDueDate, kevRequiredAction} for every match
+    — i.e. every case where a TAM accepted/deferred a risk that has since been
+    confirmed under active real-world exploitation. Returns [] if the KEV
+    catalog hasn't been fetched yet or contains no entries."""
+    flagged = []
+    try:
+        if not KEV_PATH.exists():
+            return flagged
+        kev_data = json.loads(KEV_PATH.read_text(encoding='utf-8'))
+        kev_by_cve = {v.get('cveID'): v for v in kev_data.get('vulnerabilities', []) if v.get('cveID')}
+        if not kev_by_cve:
+            return flagged
+
+        for serial, risks in risks_by_serial.items():
+            for r in risks:
+                ack = r.get('acknowledgement')
+                if not ack:
+                    continue
+                for cve in (r.get('cves') or []):
+                    cve_id = cve.get('id') if isinstance(cve, dict) else None
+                    if cve_id and cve_id in kev_by_cve:
+                        kev_entry = kev_by_cve[cve_id]
+                        flagged.append({
+                            'serialNumber': serial,
+                            'riskId': r.get('riskId', ''),
+                            'riskTitle': r.get('shortName') or r.get('riskDetail', ''),
+                            'cveId': cve_id,
+                            'acknowledgedBy': ack.get('acknowledgedBy', ''),
+                            'acknowledgementDate': ack.get('acknowledgementDate', ''),
+                            'justification': ack.get('justification', ''),
+                            'kevDateAdded': kev_entry.get('dateAdded', ''),
+                            'kevDueDate': kev_entry.get('dueDate', ''),
+                            'kevRequiredAction': kev_entry.get('requiredAction', ''),
+                        })
+    except Exception as e:
+        print(f'  [KEV-ACK] Cross-reference failed: {e}', flush=True)
+    return flagged
+
+
+def _do_full_harvest(watchlist_ids=None, account=None):
+    """Execute the full AIQ GraphQL harvest. Returns the result dict.
+    This is the core logic extracted from handle_harvest, now reusable
+    for both synchronous and background calls.
+
+    If watchlist_ids is provided (list of ID strings), only systems in those
+    watchlists are fetched and merged (deduplicated by serialNumber).
+    For backward compatibility, a bare string is also accepted.
+
+    If `account` is provided (dict with id/label/refreshToken/watchlistId —
+    see _get_accounts()), that account's credential is used instead of the
+    top-level aiq_config.json fields, its watchlistId is merged into
+    watchlist_ids, and every system/cluster/risk/case in the result is
+    tagged with accountId/accountLabel before being cached under that
+    account's own cache row (see _sync_all_accounts).
+    """
+    global _is_syncing, _last_sync_error
+
+    with _sync_lock:
+        if _is_syncing:
+            raise Exception("Sync already in progress")
+        _is_syncing = True
+        _last_sync_error = None
+
+    # Normalise: accept a bare string or a list of strings
+    if isinstance(watchlist_ids, str):
+        watchlist_ids = [w.strip() for w in watchlist_ids.split(",") if w.strip()]
+    watchlist_ids = list(watchlist_ids or [])  # empty list == no filter (all systems)
+    if account and account.get("watchlistId"):
+        for _wl in str(account["watchlistId"]).split(","):
+            _wl = _wl.strip()
+            if _wl and _wl not in watchlist_ids:
+                watchlist_ids.append(_wl)
+
+    start_time = time.time()
+    try:
+        # 1. Read refresh token — from the account override if given, else the
+        # legacy top-level aiq_config.json fields (unchanged single-account path).
+        if account:
+            refresh_token = account.get("refreshToken")
+            if not refresh_token:
+                raise Exception(f"setup_required: Account '{account.get('id')}' has no refresh token configured")
+        else:
+            if not CONFIG_PATH.exists():
+                # Auto-create a blank template so the user can fill it in via Settings
+                blank = {"refreshToken": "", "watchlistId": "", "tamName": "", "tamEmail": ""}
+                CONFIG_PATH.write_text(json.dumps(blank, indent=2), encoding="utf-8")
+                print("  [HARVEST] Created blank aiq_config.json template", flush=True)
+                raise Exception("setup_required: No Active IQ credentials configured")
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            refresh_token = cfg.get("refreshToken") or cfg.get("refresh_token")
+            if not refresh_token:
+                raise Exception("setup_required: No refresh token configured — open Settings & Config to add your Active IQ refresh token")
+
+        print("  [HARVEST] Getting access token...", flush=True)
+
+        # 2. Get access token
+        status, raw = _rest("access_token", refresh_token=refresh_token)
+        if status != 200:
+            raise Exception(f"Token exchange failed: HTTP {status}")
+        token_data = json.loads(raw.decode("utf-8", errors="replace"))
+        token = token_data.get("access_token")
+        if not token:
+            raw_s = raw.decode("utf-8", errors="replace").strip().strip('"')
+            token = raw_s if len(raw_s) > 30 else None
+        if not token:
+            raise Exception("No access token in response")
+        global _current_token
+        _current_token = token
+        print("  [HARVEST] Authenticated OK", flush=True)
+
+        # 3. Fetch summary (best-effort — accounts without unfiltered_system_access
+        #    privilege will get a GQL error here; we just skip it gracefully since
+        #    these counts are only used for logging, not for downstream logic).
+        total_sys = total_cl = total_sites = 0
+        summary = {}  # initialise here so it's always defined even if summary query is skipped
+        try:
+            print("  [HARVEST] Fetching summary...", flush=True)
+            # Use watchlist-scoped summary when watchlists are configured
+            # (use only the first ID for the summary count — it's informational only)
+            sum_query = _Q("summary_watchlist", watchlist_id=watchlist_ids[0]) if watchlist_ids else _Q("summary")
+            sum_status, summary_resp = _gql(token, sum_query)
+            if isinstance(summary_resp, dict) and not summary_resp.get("errors") and sum_status in (200, 201):
+                summary = (summary_resp.get("data") or {}).get("summary") or {}
+                total_sys   = summary.get("system", 0)
+                total_cl    = summary.get("cluster", 0)
+                total_sites = summary.get("site", 0)
+                print(f"  [HARVEST] Fleet: {total_sys} systems, {total_cl} clusters, {total_sites} sites", flush=True)
+            else:
+                err = (summary_resp.get("errors") or [{}])[0].get("message", "unknown") if isinstance(summary_resp, dict) else "non-dict response"
+                print(f"  [HARVEST] Summary skipped (will count from fetched data): {err}", flush=True)
+        except Exception as sum_err:
+            print(f"  [HARVEST] Summary query failed (non-fatal): {sum_err}", flush=True)
+
+        # 4. Fetch ALL systems with full details (pagination)
+        #    Strategy: try the expanded TAM query first; if GraphQL rejects any
+        #    field the whole response comes back with 0 systems.  In that case
+        #    fall back to the proven minimal query.
+        #
+        #    IMPORTANT: Do NOT add "... on ESeriesSystem" inline fragments.
+        #    The GQL schema does not support the ESeriesSystem type — including
+        #    it causes a GRAPHQL_VALIDATION_FAILED error that silently fails the
+        #    entire query, causing the harvest to fall through to MINIMAL tier
+        #    (which has no capacity/efficiency data). See commit e106562.
+        print("  [HARVEST] Fetching systems (full details)...", flush=True)
+
+
+        # ── ORIGINAL (proven, from git commit b318118) ──
+        SYSTEMS_FIELDS_MINIMAL = _frag("SYSTEMS_FIELDS_MINIMAL")
+
+        # ── Extended: original + safe additional fields ──
+        SYSTEMS_FIELDS_TAM = _frag("SYSTEMS_FIELDS_TAM")
+
+        # ── Medium: efficiency data without problematic Float fields ──────────
+        # The TAM query above fails outside corp with "Float cannot represent
+        # non numeric value: null" for utilization percentages.  This query
+        # strips the percentage fields and monthlyCapacity but keeps the
+        # efficiency ratio/saved block — giving us dataReductionRatio and
+        # deDuplicationSavedKiB for accurate donut chart savings.
+        SYSTEMS_FIELDS_EFFICIENCY = _frag("SYSTEMS_FIELDS_EFFICIENCY")
+
+        # E-Series (SANtricity) and StorageGRID capacity are fetched with one tiny query and merged
+        # by serial: adding it to the TAM/Efficiency field sets pushed them over Active
+        # IQ's "Maximum height (field count)" limit and forced whole watchlists down a tier.
+        # Platform extras (confirmed live, populated on real ONTAP / E-Series / StorageGRID systems):
+        # power & heat (energyConsumptionMetrics), hardware expansion limits, drive inventory with
+        # firmware currency and end-of-support, ONTAP upgrade history, E-Series NVSRAM, per-site grid
+        # capacity. energyConsumptionMetrics/hardwareCapabilities live on each concrete type, not on the
+        # System interface, so the common block is repeated per type.
+        ESERIES_CAP_FIELDS = _frag("ESERIES_CAP_FIELDS")
+
+        ONTAP_EXTRA2_FIELDS = _frag("ONTAP_EXTRA2_FIELDS")
+
+        # LUN and NAS volume inventory summary — requested by the user for SAN/NAS
+        # capacity reporting and best-practice alignment. Confirmed live via schema
+        # introspection: igroups, initiator groups and multipathing do NOT exist
+        # anywhere in Active IQ's GraphQL schema, so this covers capacity/provisioning
+        # only, not LUN-to-host mapping. Volume.capacity.sizeKB/availableKB are treated
+        # as KiB (1024-based, matching every other *KiB field in this schema) though
+        # NetApp's own field naming has already proven unreliable once (LUN's
+        # usableKiB turned out to be bytes, confirmed by cross-checking against a
+        # known-good cluster usable capacity) -- there was no equivalent cross-check
+        # available for volumes, so this is a best-effort convention match, not a
+        # confirmed fact the way the LUN bytes-vs-KiB finding was.
+        # pageSize: 50 per system -- bounds a single system's cost but under-counts
+        # (and under-sums capacity for) any system with more than 50 LUNs or volumes;
+        # totalCount is still exact, so the summary flags when it fetched a partial set.
+        # snapshotCount / snapshotReserveUsedPercentage confirmed live on Volume (not
+        # in the earlier LUN/volume capacity introspection pass -- found on a second,
+        # fuller field dump). There is NO per-snapshot object anywhere in the schema
+        # (no name, creation date, or lock state per snapshot) -- only these two
+        # volume-level aggregates, so age-based "stale snapshot" detection is not
+        # possible from this API, only reserve-overflow/footprint signals.
+        # snapshotReserveUsedPercentage can exceed 100 -- confirmed live (299% on a
+        # real volume) -- meaning snapshots have overflowed the reserved space and are
+        # now consuming active/user data capacity, a real and urgent condition.
+        LUN_VOLUME_FIELDS = _frag("LUN_VOLUME_FIELDS")
+
+        # Shelf module firmware currency (currentVersion/recommendedVersion) lives on a
+        # field the main TAM/Efficiency systems query never requested (shelves { } has no
+        # firmware field at all -- confirmed via live GraphQL schema introspection: Shelf,
+        # ShelfModuleHardwareModel and Bays all lack one). The field that DOES carry it,
+        # shelvesSummary { firmware { currentVersion recommendedVersion } }, was tried
+        # inline in the main query first and broke it ("Maximum height (field count) limit
+        # exceeded"), degrading the whole harvest to Minimal tier and losing systemFirmware/
+        # motherboardFirmware/DQP/shelves for every system. Fetched as its own small pass
+        # instead, the same way E-Series/StorageGRID capacity above is.
+        SHELVES_SUMMARY_FIELDS = _frag("SHELVES_SUMMARY_FIELDS")
+        REPLACEMENT_FIELDS = _frag("REPLACEMENT_FIELDS")
+        MONTHLY_STATS_FIELDS = _frag("MONTHLY_STATS_FIELDS")
+
+        # ── Early watchlist auto-discovery ──────────────────────────────────────
+        # Fetch watchlists from REST *before* the systems query so we can use them
+        # as a fallback scope when configured watchlists are stale or the account
+        # lacks unfiltered_system_access.
+        # Always runs — even when watchlist_ids is configured (they may be stale).
+        #
+        # The real, documented endpoint (confirmed live via NetApp's internal API
+        # catalog, aiq.netapp.com/catalog/.../watchlist-v2) is GET /v2/watchlist/list,
+        # authenticated with a header literally named `authorizationToken` (the raw
+        # access token, NO "Bearer " prefix) -- not the standard `Authorization:
+        # Bearer <token>` every other REST/GraphQL call in this file uses. That
+        # mismatch is why every previously-tried path/header combination here
+        # returned 404 ("Unsupported endpoint") or 401 -- the 401s (on paths that DO
+        # exist, e.g. /v2/watchlist/action) were this exact auth-header problem, not
+        # a wrong path. Response shape is nested at results.watchlist[], with
+        # snake_case fields (watchlist_id/watchlist_name), not the camelCase guessed
+        # here before.
+        _early_watchlists = []  # list of watchlist id strings
+        try:
+            wl_st, wl_raw = _rest("watchlist_list", token=token)
+            if wl_st == 200:
+                wl_data = json.loads(wl_raw.decode("utf-8", errors="replace"))
+                wl_list = ((wl_data.get("results") or {}).get("watchlist")) or []
+                for wl in wl_list:
+                    if isinstance(wl, dict):
+                        wid = wl.get("watchlist_id") or ""
+                        if wid:
+                            _early_watchlists.append(wid)
+                if _early_watchlists:
+                    print(f"  [HARVEST] Auto-discovered {len(_early_watchlists)} watchlist(s) via REST (GET /v2/watchlist/list)", flush=True)
+            else:
+                print(f"  [HARVEST] Watchlist REST pre-discovery: GET /v2/watchlist/list returned HTTP {wl_st}", flush=True)
+        except Exception as _wl_disc_err:
+            print(f"  [HARVEST] Watchlist REST pre-discovery skipped: {_wl_disc_err}", flush=True)
+
+        # 2. Fallback: try GraphQL watchlists query
+        # NOTE: verified via live schema introspection (2026-08-10) that "watchlists"
+        # does not exist as a Query field in the current GraphQL schema — this call
+        # always returns a GRAPHQL_VALIDATION_FAILED error and falls through to the
+        # except block below. Left in place (harmless, caught) in case NetApp adds
+        # this field in a future API version; REST discovery above is the only
+        # channel that has ever actually worked.
+        if not _early_watchlists:
+            try:
+                _, wl_gql_resp = _gql(token, _Q("watchlists"))
+                wl_gql_list = ((wl_gql_resp.get("data") or {}).get("watchlists") or []) if isinstance(wl_gql_resp, dict) else []
+                for wl in wl_gql_list:
+                    if isinstance(wl, dict):
+                        wid = wl.get("id", "")
+                        if wid:
+                            _early_watchlists.append(wid)
+                if _early_watchlists:
+                    print(f"  [HARVEST] Auto-discovered {len(_early_watchlists)} watchlist(s) via GraphQL", flush=True)
+                else:
+                    print("  [HARVEST] No watchlists found via REST or GraphQL — account may need a watchlist configured", flush=True)
+            except Exception as _wl_gql_err:
+                print(f"  [HARVEST] Watchlist GQL pre-discovery skipped: {_wl_gql_err}", flush=True)
+
+        _PRIVILEGE_PHRASES = ("unfiltered_system_access", "mandatory argument", "privilege")
+
+        def _fetch_systems_for_scope(fields, scope_wl_id=None, product_types=None):
+            """Fetch all systems pages for a given fields set and optional watchlist scope."""
+            systems = []
+            cursor = None
+            page = 0
+            privilege_blocked = False
+            while True:
+                page += 1
+                query_text = _Q("systems_page", after=_A("after", cursor), scope=_A("scope", scope_wl_id) + _A("product_types", product_types), fields=fields)
+                if page == 1:
+                    scope_label = scope_wl_id or "unfiltered"
+                    print(f"  [HARVEST] Systems query (scope={scope_label}) attempt...", flush=True)
+                _, sys_resp = _gql(token, query_text)
+                # Guard: _gql may return None on network failure
+                if not isinstance(sys_resp, dict):
+                    print(f"  [HARVEST] Systems GQL: non-dict response (network error?), stopping pagination", flush=True)
+                    break
+                # Detect privilege block or watchlist-not-found errors
+                if sys_resp.get("errors"):
+                    err_msg = sys_resp["errors"][0].get("message", "")
+                    if any(p in err_msg.lower() for p in _PRIVILEGE_PHRASES):
+                        print(f"  [HARVEST] Privilege block detected: {err_msg[:120]}", flush=True)
+                        privilege_blocked = True
+                        break
+                    elif "does not exist" in err_msg.lower() or "not found" in err_msg.lower():
+                        print(f"  [HARVEST] Watchlist not found (stale ID?): {err_msg[:200]}", flush=True)
+                        break
+                    elif page == 1:
+                        # Active IQ returns HTTP 200 with BOTH data and an errors
+                        # array when a few systems have a null/NaN numeric field
+                        # ("Float cannot represent non numeric value") or a
+                        # sub-resolver times out: the affected field/object is
+                        # nulled for that system only, the rest is intact.
+                        # Treating any error as fatal discarded ~100 valid
+                        # systems and dropped the whole fleet to a thinner
+                        # tier, losing monthlyCapacity + utilization % for
+                        # every system over one or two bad ones. Only give up
+                        # when no systems came back at all.
+                        _n_err = len(sys_resp["errors"])
+                        _got = ((sys_resp.get("data") or {}).get("systems") or {}).get("systems")
+                        if not _got:
+                            print(f"  [HARVEST] GraphQL errors: {err_msg[:200]}", flush=True)
+                            break
+                        print(f"  [HARVEST] Partial GraphQL errors ({_n_err}, e.g. \"{err_msg[:80]}\") "
+                              f"-- keeping the {len(_got)} systems returned; affected fields are null "
+                              f"for those systems only", flush=True)
+                sys_data = (sys_resp.get("data") or {}).get("systems") or {}
+                if not isinstance(sys_data, dict):
+                    break
+                page_systems = sys_data.get("systems") or []
+                systems.extend(page_systems)
+                new_cursor = sys_data.get("cursor")
+                print(f"  [HARVEST] Page {page}: {len(page_systems)} systems (total so far: {len(systems)})", flush=True)
+                if not page_systems or not new_cursor or new_cursor == cursor:
+                    break
+                cursor = new_cursor
+            return systems, privilege_blocked
+
+        # Try expanded first, fall back to efficiency-only, then minimal.
+        # IMPORTANT: this fallback is applied PER WATCHLIST, not just once for
+        # the whole account. A single watchlist can fail a richer tier (e.g.
+        # Active IQ's "Float cannot represent non numeric value: null" when
+        # one system in that specific watchlist has a null numeric field the
+        # TAM-tier query expects) while sibling watchlists in the same account
+        # succeed fine at that tier. The old code treated a tier as "succeeded"
+        # once the ACCOUNT-WIDE total across all watchlists was non-zero, so a
+        # failing watchlist's systems were silently dropped forever -- the
+        # other watchlists' non-zero total masked it, and there was no retry
+        # at a smaller field set for just that one watchlist. Confirmed live:
+        # a real account's 4th watchlist returned 0 systems this way every
+        # harvest while the other 3 succeeded, with only a log line to show
+        # for it -- the watchlist's own membership list (shown in the sidebar)
+        # was correct the whole time, but none of its systems ever made it
+        # into the harvested fleet.
+        all_systems = []
+        used_tam_query = False
+        _QUERY_NAMES = ["TAM (full)", "Efficiency (medium)", "Minimal (bare)"]
+        _tiers = [SYSTEMS_FIELDS_TAM, SYSTEMS_FIELDS_EFFICIENCY, SYSTEMS_FIELDS_MINIMAL]
+
+        if watchlist_ids:
+            print(f"  [HARVEST] Fetching systems across {len(watchlist_ids)} configured watchlist(s)...", flush=True)
+            seen_serials = set()
+            _min_attempt_used = None
+            for wl_id_cfg in watchlist_ids:
+                wl_systems = []
+                wl_blocked = False
+                for attempt, fields in enumerate(_tiers):
+                    wl_systems, wl_blocked = _fetch_systems_for_scope(fields, wl_id_cfg)
+                    if wl_systems:
+                        if _min_attempt_used is None or attempt < _min_attempt_used:
+                            _min_attempt_used = attempt
+                        break  # this watchlist succeeded at this tier -- stop retrying it
+                    if wl_blocked:
+                        # A privilege block isn't fixed by asking for fewer fields --
+                        # no point retrying this watchlist at a smaller tier.
+                        break
+                    if attempt < len(_tiers) - 1:
+                        print(f"  [HARVEST] Watchlist {wl_id_cfg} returned 0 systems at "
+                              f"{_QUERY_NAMES[attempt]} tier -- retrying that watchlist at "
+                              f"{_QUERY_NAMES[attempt + 1]} tier...", flush=True)
+                for s in wl_systems:
+                    sn = s.get("serialNumber", "")
+                    if sn not in seen_serials:
+                        seen_serials.add(sn)
+                        all_systems.append(s)
+                if wl_blocked:
+                    print(f"  [HARVEST] Privilege block on watchlist {wl_id_cfg} (skipping)", flush=True)
+                elif not wl_systems:
+                    print(f"  [HARVEST] Watchlist {wl_id_cfg} returned 0 systems at every tier", flush=True)
+            blocked = len(all_systems) == 0
+            used_tam_query = _min_attempt_used is not None and _min_attempt_used <= 1
+        else:
+            for attempt, fields in enumerate(_tiers):
+                fetched, blocked = _fetch_systems_for_scope(fields, None)
+                if fetched:
+                    all_systems = list(fetched)
+                    used_tam_query = attempt <= 1
+                    print(f"  [HARVEST] {_QUERY_NAMES[attempt]} query succeeded: {len(all_systems)} systems", flush=True)
+                    break
+                print(f"  [HARVEST] WARNING: {_QUERY_NAMES[attempt]} query returned 0 systems — trying next tier...", flush=True)
+
+        # If blocked by privilege OR returned 0 systems (outside corp network the API
+        # returns success+empty instead of a privilege error), retry with auto-discovered watchlists.
+        # Also retry if configured watchlist_ids produced 0 (they may be stale/invalid).
+        if (blocked or len(all_systems) == 0) and _early_watchlists:
+            already_tried = set(watchlist_ids or [])
+            new_wls = [w for w in _early_watchlists if w not in already_tried]
+            if new_wls:
+                print(f"  [HARVEST] Retrying with {len(new_wls)} auto-scoped watchlist(s) (reason: {'privilege block' if blocked else '0 systems from unfiltered/configured query'})...", flush=True)
+                seen_serials = {s.get('serialNumber', '') for s in all_systems}
+                for wl_id_auto in new_wls:
+                    wl_systems, _ = _fetch_systems_for_scope(SYSTEMS_FIELDS_TAM, wl_id_auto)
+                    if not wl_systems:
+                        wl_systems, _ = _fetch_systems_for_scope(SYSTEMS_FIELDS_EFFICIENCY, wl_id_auto)
+                    if not wl_systems:
+                        wl_systems, _ = _fetch_systems_for_scope(SYSTEMS_FIELDS_MINIMAL, wl_id_auto)
+                    for s in wl_systems:
+                        sn = s.get("serialNumber", "")
+                        if sn not in seen_serials:
+                            seen_serials.add(sn)
+                            all_systems.append(s)
+                print(f"  [HARVEST] Combined from watchlists: {len(all_systems)} unique systems", flush=True)
+
+        # Final fallback: try unfiltered query (no watchlist scope) when all
+        # configured + auto-discovered watchlists returned 0 systems.
+        if len(all_systems) == 0 and watchlist_ids:
+            print("  [HARVEST] All watchlists returned 0 — trying unfiltered query...", flush=True)
+            for attempt, fields in enumerate(_tiers):
+                unfiltered, _uf_blocked = _fetch_systems_for_scope(fields, None)
+                if unfiltered and not _uf_blocked:
+                    all_systems = list(unfiltered)
+                    used_tam_query = attempt <= 1
+                    print(f"  [HARVEST] Unfiltered {_QUERY_NAMES[attempt]} query succeeded: {len(all_systems)} systems", flush=True)
+                    break
+
+        def _fetch_rows_all_scopes(fields, product_types=None):
+            """Rows for `fields` across every scope that works for this account. Configured watchlists first; if none are
+            configured, try unfiltered, and on a privilege block (or zero rows) fall back to the auto-discovered watchlists --
+            the same fallback the main systems query uses. Without this the extras merges silently returned nothing for
+            accounts lacking unfiltered_system_access (restricted accounts), so their StorageGRID topology, power, drives
+            etc. were never harvested."""
+            rows, seen = [], set()
+            def _take(batch):
+                for r in batch:
+                    k = r.get("serialNumber")
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    rows.append(r)
+            if watchlist_ids:
+                for wl in list(watchlist_ids):
+                    _take(_fetch_systems_for_scope(fields, wl, product_types)[0])
+                return rows
+            batch, blocked = _fetch_systems_for_scope(fields, None, product_types)
+            _take(batch)
+            if (blocked or not batch) and _early_watchlists:
+                for wl in _early_watchlists:
+                    _take(_fetch_systems_for_scope(fields, wl, product_types)[0])
+            return rows
+
+        # ── Other Active IQ records ──
+        # `systems` defaults to productTypes [FILER, SWApp]; Active IQ also tracks NON_FILER, SWITCH, UNKNOWN and AIDE_DCN records
+        # (found live: 39 more on one account -- 37 SnapMirror-licence "OTHERS" entries and 2 Brocade storage switches). They are not
+        # storage controllers, so they are kept in their own list (otherProductSystems) rather than mixed into the controller fleet.
+        other_product_systems = []
+        try:
+            _OTHER_FIELDS = _frag("OTHER_PRODUCT_FIELDS")
+            for _orow in _fetch_rows_all_scopes(_OTHER_FIELDS, "NON_FILER, UNKNOWN, SWITCH, AIDE_DCN"):
+                _orow["accountId"] = (account.get("id") if account else None) or "default"
+                other_product_systems.append(_orow)
+            print(f"  [HARVEST] Other Active IQ records (non-controller product types): {len(other_product_systems)}", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: other product types fetch failed: {_e}", flush=True)
+
+        # ── E-Series capacity merge (see ESERIES_CAP_FIELDS) ──
+        try:
+            _ecap_by_serial = {}
+            _gcap_by_serial = {}
+            _gtopo_by_serial = {}
+            _pextra_by_serial = {}
+            for _ecap_scope in [None]:
+                _ecap_rows = _fetch_rows_all_scopes(ESERIES_CAP_FIELDS)
+                for _r in _ecap_rows:
+                    if _r.get("eCapacity"):
+                        _ecap_by_serial[_r.get("serialNumber")] = _r["eCapacity"]
+                    _pe = _build_platform_extras(_r)
+                    if _pe:
+                        _pextra_by_serial[_r.get("serialNumber")] = _pe
+                    if _r.get("gridId") or _r.get("gridSites") or _r.get("tenants") or _r.get("ILMDetails"):
+                        # StorageGRID topology / tenants / buckets / ILM (confirmed live:
+                        # StorageGrid.gridSites, .tenants, .ILMDetails). Carried by the grid's
+                        # own system object (admin-node serial), same as capacity.
+                        _ilm_rules = []
+                        for _ild in (_r.get("ILMDetails") or []):
+                            _ilm_rules.extend((_ild or {}).get("rules") or [])
+                        _gtopo_by_serial[_r.get("serialNumber")] = {
+                            "gridId": _r.get("gridId"), "gridName": _r.get("gridName"),
+                            "primaryAdminNodeName": _r.get("primaryAdminNodeName"),
+                            "primaryAdminNodeSiteName": _r.get("primaryAdminNodeSiteName"),
+                            "licenseType": _r.get("licenseType"), "licenseCapacity": _r.get("licenseCapacity"),
+                            "softwareSupportTermEndDate": _r.get("softwareSupportTermEndDate"),
+                            "installedNodeCount": _r.get("installedNodeCount"),
+                            "sites": _r.get("gridSites") or [],
+                            "tenants": _r.get("tenants") or [],
+                            "ilmRules": _ilm_rules,
+                        }
+                    if _r.get("gridCapacity"):
+                        _gcap_by_serial[_r.get("serialNumber")] = {
+                            "gridId": _r.get("gridId"), "gridName": _r.get("gridName"),
+                            "installedNodeCount": _r.get("installedNodeCount"),
+                            "licenseCapacity": _r.get("licenseCapacity"),
+                            **_r["gridCapacity"],
+                        }
+            _ecap_hits = _gcap_hits = 0
+            for _s in all_systems:
+                _ec = _ecap_by_serial.get(_s.get("serialNumber"))
+                if _ec:
+                    _s["eCapacity"] = _ec
+                    _ecap_hits += 1
+                _px = _pextra_by_serial.get(_s.get("serialNumber"))
+                if _px:
+                    _s["pExtras"] = _px
+                _gt = _gtopo_by_serial.get(_s.get("serialNumber"))
+                if _gt:
+                    _s["gTopology"] = _gt
+                _gc = _gcap_by_serial.get(_s.get("serialNumber"))
+                if _gc:
+                    _s["gCapacity"] = _gc
+                    _gcap_hits += 1
+            print(f"  [HARVEST] E-Series capacity merged for {_ecap_hits} systems, StorageGRID grid capacity for {_gcap_hits}", flush=True)
+            # Second, ONTAP-only pass (kept separate: combined with the first it exceeds Active IQ's
+            # field-count limit -- confirmed live): adapter/FC inventory, Cloud Insights, talking points.
+            try:
+                for _ecap_scope in [None]:
+                    _o2_rows = _fetch_rows_all_scopes(ONTAP_EXTRA2_FIELDS)
+                    for _r in _o2_rows:
+                        _o2 = _build_ontap_extras2(_r)
+                        if _o2:
+                            _pextra_by_serial.setdefault(_r.get("serialNumber"), {}).update(_o2)
+                for _s in all_systems:
+                    _px2 = _pextra_by_serial.get(_s.get("serialNumber"))
+                    if _px2:
+                        _s["pExtras"] = _px2
+            except Exception as _e2:
+                print(f"  [HARVEST] WARNING: ONTAP adapter/Cloud Insights fetch failed: {_e2}", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: E-Series capacity fetch failed: {_e}", flush=True)
+
+        # ── Replacement fields (retentionSpecialist/solutionEngineerSpecialist replace the deprecated csm; eventDate replaces daysToEvent) ──
+        # A separate small pass: adding them to the main field lists exceeds Active IQ's field-count limit. Systems where it returns nothing
+        # keep the deprecated csm / daysToEvent already fetched by the main query.
+        try:
+            _repl_n = 0
+            _repl_by_serial = {}
+            for _r in _fetch_rows_all_scopes(REPLACEMENT_FIELDS):
+                _repl_by_serial[_r.get("serialNumber")] = _r
+            for _s in all_systems:
+                _rr = _repl_by_serial.get(_s.get("serialNumber"))
+                if not _rr:
+                    continue
+                for _k in ("retentionSpecialist", "solutionEngineerSpecialist"):
+                    if _rr.get(_k):
+                        _s[_k] = _rr[_k]
+                _dates = {}
+                for _ev in (_rr.get("lifecycleEvents") or []):
+                    _dates.setdefault(_ev.get("typeCode"), []).append(_ev.get("eventDate"))
+                for _ev in (_s.get("lifecycleEvents") or []):
+                    _lst = _dates.get(_ev.get("typeCode"))
+                    if _lst:
+                        _ev["eventDate"] = _lst.pop(0)
+                _repl_n += 1
+            print(f"  [HARVEST] Replacement contact-role / eventDate fields merged for {_repl_n} systems", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: replacement-fields fetch failed (the deprecated fields are used): {_e}", flush=True)
+
+        # ── Capacity split (NAS / SAN / snapshots) and Active IQ's energy forecast ──
+        # A separate small pass: the fields do not fit in the main lists (field-count limit).
+        try:
+            _ce_n = 0
+            _ce_by_serial = {}
+            for _r in _fetch_rows_all_scopes(_frag("CAPACITY_ENERGY_FIELDS")):
+                _ce_by_serial[_r.get("serialNumber")] = _r
+            for _s in all_systems:
+                _rr = _ce_by_serial.get(_s.get("serialNumber"))
+                if not _rr:
+                    continue
+                _cap = _rr.get("capacity") or {}
+                if _cap.get("physical") or _cap.get("logical"):
+                    _s["capacitySplit"] = {"physical": _cap.get("physical") or {}, "logical": _cap.get("logical") or {}}
+                _fc = ((_rr.get("energyConsumptionMetrics") or {}).get("forecastedEnergyConsumptions")) or []
+                if _fc:
+                    _s["energyForecast"] = sorted([f for f in _fc if isinstance(f, dict)], key=lambda f: f.get("forecastDate") or "")
+                _ce_n += 1
+            print(f"  [HARVEST] Capacity split / energy forecast merged for {_ce_n} systems", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: capacity split / energy forecast fetch failed: {_e}", flush=True)
+
+        # ── Monthly history per system (uptime, ARP coverage, risks found/resolved, carbon, auto-resolved cases) ──
+        try:
+            _mon_n = 0
+            _mon_by_serial = {}
+            for _r in _fetch_rows_all_scopes(MONTHLY_STATS_FIELDS):
+                _mon_by_serial[_r.get("serialNumber")] = _r
+            _mon_keys = {"uptime": "monthlyUptimeStats", "arp": "monthlyArpStats", "risks": "monthlyResolvedRisksStats",
+                         "carbon": "monthlyCarbonStats", "cases": "monthlyAutoResolvedCases"}
+            for _s in all_systems:
+                _rr = _mon_by_serial.get(_s.get("serialNumber"))
+                if not _rr:
+                    continue
+                _ms = {k: [dict(m, month=str(m.get("month") or "")[:7]) for m in (_rr.get(v) or [])] for k, v in _mon_keys.items()}
+                if any(_ms.values()):
+                    _s["monthlyStats"] = _ms
+                    _mon_n += 1
+            print(f"  [HARVEST] Monthly history (uptime, ARP, risks, carbon, cases) merged for {_mon_n} systems", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: monthly history fetch failed: {_e}", flush=True)
+
+        # ── ASA r2 capacity merge (LUN/namespace provisioned size) ──
+        # ASA r2 systems (ontapPersonality "ASAR2" — confirmed live, distinct casing
+        # from the enum's declared "ASAR2" name) return `capacity { physical {...} }`
+        # as null: they're disaggregated and don't report through the aggregate/
+        # cluster capacity path every other ONTAP system uses. Confirmed live: what
+        # they DO report is per-LUN/namespace capacity via `luns`/`namespaces`, whose
+        # `capacity.usableKiB` field is mislabeled — comparing its sum against a
+        # working (non-r2) ASA system's known-good clusterUsableCapacityTB shows the
+        # field is actually BYTES, not KiB (dividing by 1024**4, not 1024**3, lands
+        # in the right order of magnitude; the KiB interpretation was 1000x too high
+        # — implausible thin-provisioning ratios like 150 PB of LUNs on a 2-node
+        # ASA-A70). This is a genuine capacity source Active IQ has for these systems
+        # (an ASA r2 TAM checking the portal sees it as LUN/namespace sizes) that the
+        # main systems query never fetched — only `luns { totalCount }`, no capacity.
+        # Scoped to ontapPersonalities: [ASAR2] so this never touches the ~2,890
+        # non-r2 systems in a real fleet (only ~8 systems, confirmed live) and can't
+        # push the main query over Active IQ's field-count limit like inlining it
+        # into SYSTEMS_FIELDS_TAM would.
+        try:
+            _asar2_by_serial = {}
+
+            def _asar2_fetch_scope(_wl, _nest_after=None):
+                """One watchlist (or None for unfiltered), paginated. Returns (rows, privilege_blocked). _nest_after pages the nested LUN/namespace lists."""
+                _rows, _cursor, _blocked = [], None, False
+                while True:
+                    _q = _Q("asar2_systems_page", scope=_A("scope", _wl), after=_A("after", _cursor), nested_after=_A("nested_after", _nest_after))
+                    _, _resp = _gql(token, _q)
+                    if isinstance(_resp, dict) and _resp.get("errors"):
+                        _err = _resp["errors"][0].get("message", "")
+                        if any(p in _err.lower() for p in _PRIVILEGE_PHRASES):
+                            _blocked = True
+                        break
+                    _data = ((_resp or {}).get("data") or {}).get("systems") or {}
+                    _page = _data.get("systems") or []
+                    _rows.extend(_page)
+                    _new_cursor = _data.get("cursor")
+                    if not _page or not _new_cursor or _new_cursor == _cursor:
+                        break
+                    _cursor = _new_cursor
+                return _rows, _blocked
+
+            # Try unfiltered first (cheap, one scope) -- works for any account with
+            # unfiltered_system_access. Only fall back to per-watchlist scoping
+            # (auto-discovered _early_watchlists) on a genuine privilege block,
+            # confirmed live on a real second account in this fleet ("At least one
+            # mandatory argument is required for users without the
+            # unfiltered_system_access privilege"). Falling back whenever
+            # watchlist_ids was merely empty (rather than only on a real privilege
+            # block) was tried and made things WORSE for the account that DOES have
+            # the privilege -- _early_watchlists is auto-discovered from a different,
+            # incomplete source than what that account's unfiltered query covers.
+            _a2_scopes = [None]
+            if watchlist_ids:
+                _a2_scopes = list(watchlist_ids)
+                _asar2_page = []
+                for _wl in list(watchlist_ids):
+                    _rows, _ = _asar2_fetch_scope(_wl)
+                    _asar2_page.extend(_rows)
+            else:
+                _asar2_page, _asar2_blocked = _asar2_fetch_scope(None)
+                if _asar2_blocked:
+                    _asar2_page = []
+                    _a2_scopes = list(_early_watchlists or [])
+                    for _wl in (_early_watchlists or []):
+                        _rows, _ = _asar2_fetch_scope(_wl)
+                        _asar2_page.extend(_rows)
+            _a2_off, _a2_pass = 100000, 0
+            def _a2_incomplete(_r):
+                _l = _r.get("luns") or {}; _n = _r.get("namespaces") or {}
+                return len(_l.get("luns") or []) < (_l.get("totalCount") or 0) or len(_n.get("namespaces") or []) < (_n.get("totalCount") or 0)
+            while _a2_pass < 100 and any(_a2_incomplete(_r) for _r in _asar2_page):
+                _a2_pass += 1
+                _a2_added = 0
+                for _sc in _a2_scopes:
+                    _more, _ = _asar2_fetch_scope(_sc, _a2_off)
+                    for _m in _more:
+                        for _t in [x for x in _asar2_page if x.get("serialNumber") == _m.get("serialNumber")]:
+                            _ml = (_m.get("luns") or {}).get("luns") or []; _mn = (_m.get("namespaces") or {}).get("namespaces") or []
+                            if _ml and len((_t.get("luns") or {}).get("luns") or []) < ((_t.get("luns") or {}).get("totalCount") or 0):
+                                _t["luns"]["luns"].extend(_ml); _a2_added += len(_ml)
+                            if _mn and len((_t.get("namespaces") or {}).get("namespaces") or []) < ((_t.get("namespaces") or {}).get("totalCount") or 0):
+                                _t["namespaces"]["namespaces"].extend(_mn); _a2_added += len(_mn)
+                if not _a2_added:
+                    break
+                _a2_off += 100000
+            for _r in _asar2_page:
+                _luns = (_r.get("luns") or {}).get("luns") or []
+                _nss  = (_r.get("namespaces") or {}).get("namespaces") or []
+                _lun_bytes = sum((l.get("capacity") or {}).get("usableKiB") or 0 for l in _luns)
+                _ns_bytes  = sum((n.get("capacity") or {}).get("usableKiB") or 0 for n in _nss)
+                _asar2_by_serial[_r.get("serialNumber")] = {
+                    "ontapPersonality": _r.get("ontapPersonality") or "",
+                    "lunCount": (_r.get("luns") or {}).get("totalCount") or 0,
+                    "namespaceCount": (_r.get("namespaces") or {}).get("totalCount") or 0,
+                    # usableKiB is mislabeled (actually bytes) -- convert straight to KiB here
+                    # so downstream code can treat it like every other *KiB capacity field.
+                    "usableKiB": round((_lun_bytes + _ns_bytes) / 1024),
+                }
+            _asar2_hits = 0
+            for _s in all_systems:
+                _ac = _asar2_by_serial.get(_s.get("serialNumber"))
+                if _ac:
+                    _s["asaR2Capacity"] = _ac
+                    _asar2_hits += 1
+            print(f"  [HARVEST] ASA r2 LUN/namespace capacity merged for {_asar2_hits} systems ({len(_asar2_by_serial)} ASA r2 systems found)", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: ASA r2 capacity fetch failed: {_e}", flush=True)
+
+        # ── LUN / NAS volume inventory summary merge (see LUN_VOLUME_FIELDS) ──
+        try:
+            _lv_by_serial = {}
+            # Try unfiltered first (cheap, one query) -- works fine for any account
+            # that has unfiltered_system_access. Only fall back to per-watchlist
+            # scoping (auto-discovered _early_watchlists) when that's genuinely
+            # blocked by privilege, confirmed live on a real second account in this
+            # fleet ("At least one mandatory argument is required for users without
+            # the unfiltered_system_access privilege"). Preferring _early_watchlists
+            # whenever watchlist_ids was merely empty (instead of only on an actual
+            # privilege block) was tried and made things WORSE for the account that
+            # DOES have the privilege: _early_watchlists is auto-discovered from a
+            # different, incomplete source (4 watchlists / 27 systems here) than
+            # what the main harvest's own unfiltered path actually covers (165).
+            _lv_scopes = list(watchlist_ids) if watchlist_ids else [None]
+            if watchlist_ids:
+                _lv_all_rows = []
+                for _lv_scope in list(watchlist_ids):
+                    _rows, _ = _fetch_systems_for_scope(LUN_VOLUME_FIELDS, _lv_scope)
+                    _lv_all_rows.extend(_rows)
+            else:
+                _lv_all_rows, _lv_blocked = _fetch_systems_for_scope(LUN_VOLUME_FIELDS, None)
+                if _lv_blocked or not _lv_all_rows:
+                    _lv_all_rows = []
+                    _lv_scopes = list(_early_watchlists or [])
+                    for _lv_scope in _lv_scopes:
+                        _rows, _ = _fetch_systems_for_scope(LUN_VOLUME_FIELDS, _lv_scope)
+                        _lv_all_rows.extend(_rows)
+            # A system can have thousands of LUNs (one had 2,671); the nested page size is honoured, so the first page
+            # is not the whole list. Fetch further pages (nested `after` is an offset) until every list is complete,
+            # otherwise LUN capacity is summed from only the first page.
+            _lv_rows_by_serial = {}
+            for _r in _lv_all_rows:
+                _lv_rows_by_serial.setdefault(_r.get("serialNumber"), []).append(_r)
+            def _lv_incomplete(_r):
+                _l = _r.get("luns") or {}; _v = _r.get("storageVolumes") or {}
+                return (len(_l.get("luns") or []) < (_l.get("totalCount") or 0)) or (len(_v.get("volumes") or []) < (_v.get("totalCount") or 0))
+            _lv_offset, _lv_pass = 100000, 0   # follow-up pages (only reached by a system with more than 100,000 of either)
+            while _lv_pass < 100 and any(_lv_incomplete(_r) for _r in _lv_all_rows):
+                _lv_pass += 1
+                _lv_page_fields = _frag("LUN_VOLUME_FIELDS", nested_after=_A("nested_after", _lv_offset))
+                _added = 0
+                for _sc in _lv_scopes:
+                    _more, _ = _fetch_systems_for_scope(_lv_page_fields, _sc)
+                    for _m in _more:
+                        _targets = _lv_rows_by_serial.get(_m.get("serialNumber")) or []
+                        _ml = ((_m.get("luns") or {}).get("luns")) or []; _mv = ((_m.get("storageVolumes") or {}).get("volumes")) or []
+                        if not (_ml or _mv):
+                            continue
+                        for _t in _targets:
+                            if _ml and _lv_incomplete(_t):
+                                _t.setdefault("luns", {}).setdefault("luns", []).extend(_ml)
+                            _tv = _t.get("storageVolumes") or {}
+                            if _mv and len(_tv.get("volumes") or []) < (_tv.get("totalCount") or 0):   # never re-add volumes the first pass already returned
+                                _t.setdefault("storageVolumes", {}).setdefault("volumes", []).extend(_mv)
+                                _added += len(_mv)
+                        _added += len(_ml)
+                if not _added:
+                    break
+                _lv_offset += 100000
+            if _lv_pass:
+                print(f"  [HARVEST] LUN/volume lists completed with {_lv_pass} extra page pass(es)", flush=True)
+            for _r in _lv_all_rows:
+                    _luns = (_r.get("luns") or {}).get("luns") or []
+                    _lun_total = (_r.get("luns") or {}).get("totalCount") or 0
+                    _lun_kib = round(sum((l.get("capacity") or {}).get("usableKiB") or 0 for l in _luns) / 1024)
+                    _vols = (_r.get("storageVolumes") or {}).get("volumes") or []
+                    _vol_total = (_r.get("storageVolumes") or {}).get("totalCount") or 0
+                    _vol_size_kib = 0
+                    _vol_thin = 0; _vol_data = 0; _vol_data_thin = 0
+                    _vol_no_efficiency = 0
+                    _vol_high_snap = 0
+                    _vol_snap_overflow = 0
+                    _vol_snapshot_count_total = 0
+                    _protocols = set()
+                    _vp_arp_off = _vp_unenc = _vp_not_online = _vp_autosize_off = _vp_snaplock = _vp_full = 0
+                    _vp_arp_off_names = []
+                    for _v in _vols:
+                        _cap = _v.get("capacity") or {}
+                        # sizeKB/availableKB/usedSnapshotsKiB are mislabeled -- actually bytes,
+                        # not KB/KiB, same units bug confirmed on LUN.capacity.usableKiB (cross-
+                        # checked live: a single volume's raw sizeKB implied a 420 TiB volume on
+                        # an ASA-A70 whose whole cluster is 2.4 PB raw -- as bytes, that volume is
+                        # a plausible ~420 GiB, and the system's total volume footprint drops from
+                        # 72x its raw cluster capacity to a sane ~7%). Divide by 1024 to store as
+                        # real KiB, matching every other *KiB field in this codebase.
+                        # Volume sizes ARE in KiB, as the field names say. (An earlier version treated them as bytes and divided by 1024, which
+                        # made every volume size 1,024x too small: a system's logical used data came out at a median 458x its total volume size.
+                        # Verified on the live fleet: with the values as-is, logical used / volume size has a median 0.45 and LUN size / volume size
+                        # a median 0.89. LUN usableKiB is different: it really is bytes, and keeps its conversion above.)
+                        _size = (_cap.get("sizeKB") or 0)
+                        _avail = (_cap.get("availableKB") or 0)
+                        _snap = ((_cap.get("logical") or {}).get("usedSnapshotsKiB") or 0)
+                        _vol_size_kib += _size
+                        if (_v.get("provisioning") or {}).get("isThinProvisioned"):
+                            _vol_thin += 1
+                        if not _v.get("isRoot"):
+                            _vol_data += 1
+                            if (_v.get("provisioning") or {}).get("isThinProvisioned"):
+                                _vol_data_thin += 1
+                        _saved_pct = ((_cap.get("efficiency") or {}).get("saved") or {}).get("totalSavedPercentage")
+                        if not _v.get("isRoot") and (_saved_pct or 0) == 0:
+                            _vol_no_efficiency += 1
+                        _used = max(0, _size - _avail)
+                        if _used > 0 and _snap / _used > 0.3:
+                            _vol_high_snap += 1
+                        _reserve_pct = _v.get("snapshotReserveUsedPercentage")
+                        if (_reserve_pct or 0) > 100:
+                            _vol_snap_overflow += 1
+                        _vol_snapshot_count_total += _v.get("snapshotCount") or 0
+                        for _p in (_v.get("protocols") or []):
+                            _protocols.add(_p)
+                        if not _v.get("isRoot"):
+                            if _v.get("isARPEnabled") is False:
+                                _vp_arp_off += 1
+                                if len(_vp_arp_off_names) < 100:
+                                    _vp_arp_off_names.append(_v.get("name") or "")
+                            if _v.get("isEncrypted") is False:
+                                _vp_unenc += 1
+                            if (_v.get("state") or "online") != "online":
+                                _vp_not_online += 1
+                            if _v.get("isAutoSizeEnabled") is False:
+                                _vp_autosize_off += 1
+                            if (_v.get("snapLockMode") or "NON_SNAPLOCK") != "NON_SNAPLOCK":
+                                _vp_snaplock += 1
+                            if (_v.get("usedCapacityPercentage") or 0) >= 90:
+                                _vp_full += 1
+                    _lv_by_serial[_r.get("serialNumber")] = {
+                        "lunCount": _lun_total, "lunUsableKiB": _lun_kib, "lunFetchTruncated": _lun_total > len(_luns),
+                        "volumeCount": _vol_total, "volumeSizeKiB": round(_vol_size_kib), "volumeSizeUnitsFixed": True,   # marks data written with the corrected unit
+                        "volumeThinProvisionedCount": _vol_thin, "volumeDataCount": _vol_data, "volumeDataThinCount": _vol_data_thin, "volumeNoEfficiencyCount": _vol_no_efficiency,
+                        "volumeHighSnapshotCount": _vol_high_snap,
+                        "volumeSnapshotReserveOverflowCount": _vol_snap_overflow,
+                        "volumeSnapshotCountTotal": _vol_snapshot_count_total,
+                        "volumeProtocols": sorted(_protocols),
+                        "volumeArpDisabledCount": _vp_arp_off, "volumeArpDisabledNames": _vp_arp_off_names,
+                        "volumeUnencryptedCount": _vp_unenc, "volumeNotOnlineCount": _vp_not_online, "volumeAutosizeOffCount": _vp_autosize_off,
+                        "volumeSnapLockCount": _vp_snaplock, "volumeOver90PctFullCount": _vp_full, "volumeProtectionFetched": True,
+                        "volumeFetchTruncated": _vol_total > len(_vols),
+                    }
+            _lv_hits = 0
+            for _s in all_systems:
+                _lv = _lv_by_serial.get(_s.get("serialNumber"))
+                if _lv and (_lv["lunCount"] or _lv["volumeCount"]):
+                    _s["lunVolumeSummary"] = _lv
+                    _lv_hits += 1
+            print(f"  [HARVEST] LUN/volume inventory merged for {_lv_hits} systems", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: LUN/volume inventory fetch failed: {_e}", flush=True)
+
+        # ── Shelf module firmware currency merge (see SHELVES_SUMMARY_FIELDS) ──
+        try:
+            _shsum_by_serial = {}
+            for _shsum_scope in [None]:
+                # same scoping fix as the StorageGRID/extras merges: accounts without unfiltered_system_access
+                # (watchlist-scoped only) returned nothing here, leaving shelf firmware "unknown" for most systems
+                _shsum_rows = _fetch_rows_all_scopes(SHELVES_SUMMARY_FIELDS)
+                for _r in _shsum_rows:
+                    _ss = _r.get("shelvesSummary")
+                    if _ss:
+                        _shsum_by_serial[_r.get("serialNumber")] = _ss
+            _shsum_hits = 0
+            for _s in all_systems:
+                _ss = _shsum_by_serial.get(_s.get("serialNumber"))
+                if _ss:
+                    _s["shelvesSummary"] = _ss
+                    _shsum_hits += 1
+            print(f"  [HARVEST] Shelf firmware summary merged for {_shsum_hits} systems", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: Shelf firmware summary fetch failed: {_e}", flush=True)
+
+        print(f"  [HARVEST] Systems fetch complete: {len(all_systems)} total systems"
+              f"{' (TAM/Efficiency tier)' if used_tam_query else ' (Minimal tier)'}", flush=True)
+
+
+
+
+        # 5. Fetch clusters with full details (including switches and shelves)
+        print("  [HARVEST] Fetching clusters...", flush=True)
+        all_clusters = []
+        cursor = None
+        while True:
+            _, cl_resp = _gql(token, _Q("clusters_page", after=_A("after", cursor)))
+            # Guard: privilege error or proxy block returns errors/null data
+            if not isinstance(cl_resp, dict):
+                print(f"  [HARVEST] Clusters: non-dict response, skipping", flush=True)
+                break
+            if cl_resp.get("errors"):
+                err_msg = cl_resp["errors"][0].get("message", "")[:150]
+                print(f"  [HARVEST] Clusters GQL error (skipping): {err_msg}", flush=True)
+                break
+            cl_data = (cl_resp.get("data") or {}).get("clusters") or {}
+            clusters_page = cl_data.get("clusters") or [] if isinstance(cl_data, dict) else []
+            all_clusters.extend(clusters_page)
+            new_cursor = cl_data.get("cursor") if isinstance(cl_data, dict) else None
+            if not clusters_page or not new_cursor or new_cursor == cursor:
+                break
+            cursor = new_cursor
+
+        print(f"  [HARVEST] Clusters: {len(all_clusters)}", flush=True)
+
+        # RC-3 Fix, broadened: the unscoped clusters() call above only sees whatever
+        # default privilege scope the token has -- it takes no watchlist argument at
+        # all, unlike systems() which is explicitly queried per watchlist. Originally
+        # this retry only fired when the unscoped call returned exactly 0 clusters
+        # (a fully privilege-restricted account), on the assumption that any non-zero
+        # count meant the unscoped call saw everything. Confirmed live that's false:
+        # after watchlist auto-discovery started finding a real account's full set
+        # (v5.6.142), the unscoped call kept returning a small, real, non-zero but
+        # badly incomplete count (109 clusters for 2900+ systems -- ~27 systems per
+        # cluster, implausible for real ONTAP HA pairs) because it can't see clusters
+        # only reachable via the newly-discovered watchlists. Systems from those
+        # watchlists still harvested fine (systems() is per-watchlist), but their
+        # cluster-level merge data -- vservers/SVMs, capacity, HA status -- silently
+        # stayed empty since their cluster never appeared in the unscoped result, with
+        # no fallback ever running to recover it. Now always runs when any watchlists
+        # are known, merging by cluster id instead of only replacing an empty list.
+        _wl_ids_for_cl = list(watchlist_ids or [])
+        for _w in _early_watchlists:
+            if _w not in set(_wl_ids_for_cl):
+                _wl_ids_for_cl.append(_w)
+        if _wl_ids_for_cl:
+            print(f"  [HARVEST] Clusters: {len(all_clusters)} from unscoped call -- also scoping to {len(_wl_ids_for_cl)} watchlist(s) to recover any clusters outside the token's default visibility...", flush=True)
+            _seen_cl_ids: set = {(_cl.get("id") or _cl.get("name")) for _cl in all_clusters if (_cl.get("id") or _cl.get("name"))}
+            for _wl_cl_id in _wl_ids_for_cl:  # every watchlist (no cap)
+                _cl_wl_cursor = None
+                while True:
+                    _cl_wl_query = _Q("clusters_page_watchlist", watchlist_id=_wl_cl_id, after=_A("after", _cl_wl_cursor))
+                    _, _cl_r = _gql(token, _cl_wl_query)
+                    if not isinstance(_cl_r, dict):
+                        break
+                    if _cl_r.get("errors"):
+                        _cl_err = _cl_r["errors"][0].get("message", "")[:150]
+                        print(f"  [HARVEST] Clusters watchlist retry error (skipping): {_cl_err}", flush=True)
+                        break
+                    _cl_wl_data = (_cl_r.get("data") or {}).get("clusters") or {}
+                    _cl_wl_page = _cl_wl_data.get("clusters") or [] if isinstance(_cl_wl_data, dict) else []
+                    for _cl in _cl_wl_page:
+                        _cl_uid = _cl.get("id") or _cl.get("name")
+                        if _cl_uid and _cl_uid not in _seen_cl_ids:
+                            _seen_cl_ids.add(_cl_uid)
+                            all_clusters.append(_cl)
+                    _cl_new_cur = _cl_wl_data.get("cursor") if isinstance(_cl_wl_data, dict) else None
+                    if not _cl_wl_page or not _cl_new_cur or _cl_new_cur == _cl_wl_cursor:
+                        break
+                    _cl_wl_cursor = _cl_new_cur
+            print(f"  [HARVEST] Clusters (after watchlist scoping): {len(all_clusters)}", flush=True)
+
+        # 6. Fetch risk instances (paginated, 500 per page)
+        # Accounts without the `unfiltered_system_access` privilege (the same
+        # accounts that require a watchlistId to fetch `systems` at all -- see
+        # the systems fetch above) get "At least one input parameter is
+        # required" from an unscoped riskInstances query. Previously this was
+        # queried unconditionally unscoped, so those accounts silently got 0
+        # risk instances on every harvest despite systems fetching fine via
+        # their watchlist -- confirmed live against a real account (186
+        # systems, 0 risks) that only succeeds when watchlistId is passed.
+        # Scope per configured watchlist when present, same as systems/clusters.
+        print("  [HARVEST] Fetching risk instances...", flush=True)
+
+        def _fetch_risk_instances_for_scope(scope_wl_id=None):
+            items = []
+            cursor = None
+            page = 0
+            while True:
+                page += 1
+                _, ri_resp = _gql(token, _Q("risk_instances_page", after=_A("after", cursor), scope=_A("scope", scope_wl_id)))
+                if not isinstance(ri_resp, dict) or ri_resp.get("errors"):
+                    err_msg = (ri_resp["errors"][0].get("message", "")[:120] if isinstance(ri_resp, dict) else "non-dict response")
+                    scope_label = scope_wl_id or "unfiltered"
+                    print(f"  [HARVEST] Risk instances GQL error (scope={scope_label}, skipping): {err_msg}", flush=True)
+                    break
+                ri_data = (ri_resp.get("data") or {}).get("riskInstances") or {}
+                ri_page_items = ri_data.get("riskInstances") or [] if isinstance(ri_data, dict) else []
+                items.extend(ri_page_items)
+                new_cursor = ri_data.get("cursor") if isinstance(ri_data, dict) else None
+                if not ri_page_items or not new_cursor or new_cursor == cursor:
+                    break
+                cursor = new_cursor
+            return items
+
+        all_risk_instances = []
+        _restricted_scope = False
+        if watchlist_ids:
+            _ri_seen = set()
+            for _wl_id in watchlist_ids:
+                _wl_items = _fetch_risk_instances_for_scope(_wl_id)
+                print(f"  [HARVEST] Risk instances (watchlist={_wl_id}): {len(_wl_items)}", flush=True)
+                for _ri in _wl_items:
+                    _sys = _ri.get("system") or {}
+                    _key = (_sys.get("serialNumber"), (_ri.get("risk") or {}).get("riskId"))
+                    if _key not in _ri_seen:
+                        _ri_seen.add(_key)
+                        all_risk_instances.append(_ri)
+        else:
+            all_risk_instances = _fetch_risk_instances_for_scope(None)
+            if not all_risk_instances and _early_watchlists:
+                # account without unfiltered_system_access: scope per discovered watchlist
+                _restricted_scope = True
+                _ri_seen = set()
+                for _wl_id in _early_watchlists:
+                    for _ri in _fetch_risk_instances_for_scope(_wl_id):
+                        _key = ((_ri.get("system") or {}).get("serialNumber"), (_ri.get("risk") or {}).get("riskId"))
+                        if _key not in _ri_seen:
+                            _ri_seen.add(_key)
+                            all_risk_instances.append(_ri)
+                print(f"  [HARVEST] Risk instances via {len(_early_watchlists)} discovered watchlist(s): {len(all_risk_instances)}", flush=True)
+        print(f"  [HARVEST] Total risk instances: {len(all_risk_instances)}", flush=True)
+
+        # 7. Fetch all support cases — paginated + fallback without productTypes if the
+        #    corp-network GQL proxy rejects the enum value.
+        print("  [HARVEST] Fetching support cases...", flush=True)
+        all_cases = []
+
+        def _fetch_cases_pages(with_product_types=True, scope_wl_id=None):
+            """Paginate all cases. Returns list of case dicts, or None on GQL error."""
+            cases_out = []
+            c_cursor = None
+            c_page = 0
+            while True:
+                c_page += 1
+                _, cr = _gql(token, _Q("cases_page", after=_A("after", c_cursor), product_types=_A("all_product_types", with_product_types), scope=_A("scope", scope_wl_id)))
+                if not isinstance(cr, dict):
+                    print(f"  [HARVEST] Cases GQL: non-dict response (network/proxy error)", flush=True)
+                    break
+                if cr.get("errors"):
+                    err_msg = cr["errors"][0].get("message", "")[:200]
+                    print(f"  [HARVEST] Cases GQL error: {err_msg}", flush=True)
+                    return None  # caller will retry without productTypes
+                c_data  = (cr.get("data") or {}).get("cases") or {}
+                c_items = c_data.get("cases") or [] if isinstance(c_data, dict) else []
+                cases_out.extend(c_items)
+                new_cur = c_data.get("cursor") if isinstance(c_data, dict) else None
+                print(f"  [HARVEST] Cases page {c_page}: {len(c_items)} "
+                      f"(total so far: {len(cases_out)}, totalCount={c_data.get('totalCount','?')})",
+                      flush=True)
+                if not c_items or not new_cur or new_cur == c_cursor:
+                    break
+                c_cursor = new_cur
+            return cases_out
+
+        # Accounts without `unfiltered_system_access` (the same accounts that
+        # require a watchlistId for `systems`) get "At least one mandatory
+        # argument is required..." from an unscoped cases query -- confirmed
+        # live against a real account (186 systems via watchlist, 0 cases
+        # from the unscoped query, 149 cases when scoped to the same
+        # watchlist). Scope per configured watchlist when present, same
+        # pattern as the risk instances and systems fetches.
+        if watchlist_ids:
+            all_cases = []
+            _case_seen = set()
+            for _wl_id in watchlist_ids:
+                _wl_cases = _fetch_cases_pages(with_product_types=True, scope_wl_id=_wl_id)
+                if _wl_cases is None:
+                    _wl_cases = _fetch_cases_pages(with_product_types=False, scope_wl_id=_wl_id) or []
+                print(f"  [HARVEST] Cases (watchlist={_wl_id}): {len(_wl_cases)}", flush=True)
+                for _c in _wl_cases:
+                    _cid = _c.get("caseId")
+                    if _cid and _cid not in _case_seen:
+                        _case_seen.add(_cid)
+                        all_cases.append(_c)
+        else:
+            # First attempt with productTypes filter; if corp proxy rejects enum, retry without
+            _cases_result = _fetch_cases_pages(with_product_types=True)
+            if _cases_result is None:
+                print("  [HARVEST] Cases: retrying without productTypes filter...", flush=True)
+                _cases_result = _fetch_cases_pages(with_product_types=False) or []
+            all_cases = _cases_result or []
+            if not all_cases and _early_watchlists:
+                _restricted_scope = True
+                _case_seen = set()
+                for _wl_id in _early_watchlists:
+                    _wl_cases = _fetch_cases_pages(with_product_types=True, scope_wl_id=_wl_id)
+                    if _wl_cases is None:
+                        _wl_cases = _fetch_cases_pages(with_product_types=False, scope_wl_id=_wl_id) or []
+                    for _c in _wl_cases:
+                        _cid = _c.get("caseId")
+                        if _cid and _cid not in _case_seen:
+                            _case_seen.add(_cid)
+                            all_cases.append(_c)
+                print(f"  [HARVEST] Cases via {len(_early_watchlists)} discovered watchlist(s): {len(all_cases)}", flush=True)
+        print(f"  [HARVEST] Cases total: {len(all_cases)}", flush=True)
+
+        # Accounts without `unfiltered_system_access` need a watchlistId on
+        # every account-scoped query below (customers/sites/sustainability/
+        # recommendations/contract renewals), same privilege restriction as
+        # systems/riskInstances/cases above -- confirmed live against a real
+        # such account: every one of these returned "At least one
+        # [mandatory argument/input parameter] is required..." when unscoped,
+        # and returned real data once watchlistId was added. Use the first
+        # configured watchlist (these are account-wide reference/summary
+        # data, not deeply per-watchlist like systems/risks/cases -- same
+        # "informational, first ID is enough" reasoning already used for the
+        # `summary` query above).
+        _scope_wl0 = watchlist_ids[0] if watchlist_ids else (_early_watchlists[0] if (_restricted_scope and _early_watchlists) else None)
+        _wl_scope_arg = _A("scope", _scope_wl0)
+        # Restricted (watchlist-scoped-only) account: these reference queries are per-watchlist, so a single
+        # watchlist undercounts (e.g. 1 site / 1 renewal for a 1,181-system account). Query every discovered
+        # watchlist and merge; configured/unrestricted accounts keep their single scope.
+        _all_scopes = list(_early_watchlists) if (_restricted_scope and _early_watchlists and not watchlist_ids) else [_scope_wl0]
+        def _scope_arg(_w): return _A("scope", _w)
+
+        # 8. Fetch customers (with sustainability)
+        customers, _cust_seen = [], set()
+        for _w in _all_scopes:
+            _after, _guard = "", 0
+            while _guard < 100:   # page with the `after` cursor; a full page of 100 may not be the last
+                _guard += 1
+                _, cust_resp = _gql(token, _Q("customers_page", after=_A("after", _after), scope=_scope_arg(_w)))
+                _cc = (((cust_resp.get("data") or {}).get("customers")) or {}) if isinstance(cust_resp, dict) else {}
+                _pg = _cc.get("customers") or []
+                for _c in _pg:
+                    if _c.get("id") not in _cust_seen:
+                        _cust_seen.add(_c.get("id")); customers.append(_c)
+                _cur = _cc.get("cursor") or ""
+                if len(_pg) < 100 or not _cur or _cur == _after:
+                    break
+                _after = _cur
+
+        # ── TAM: Recommendations ──
+        tam_recommendations = []
+        try:
+            print("  [HARVEST] Fetching TAM recommendations...", flush=True)
+            _rec_seen = set()
+            for _w in _all_scopes:
+                _, rec_resp = _gql(token, _Q("recommendations", scope=_scope_arg(_w)))
+                for _r in ((rec_resp.get("data") or {}).get("recommendations") or [] if isinstance(rec_resp, dict) else []):
+                    _k = (_r.get("recommendation"), _r.get("category"))
+                    if _k not in _rec_seen:
+                        _rec_seen.add(_k); tam_recommendations.append(_r)
+            print(f"  [HARVEST] Recommendations: {len(tam_recommendations)}", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] WARNING: Recommendations failed: {e}", flush=True)
+
+        # ── TAM: Sites ──
+        tam_sites = []
+        try:
+            print("  [HARVEST] Fetching TAM sites...", flush=True)
+            _site_seen = set()
+            for _w in _all_scopes:
+                _after, _guard = "", 0
+                while _guard < 100:   # page with the `after` cursor; a full page of 100 may not be the last
+                    _guard += 1
+                    _, sites_resp = _gql(token, _Q("sites_page", after=_A("after", _after), scope=_scope_arg(_w)))
+                    _sc = (((sites_resp.get("data") or {}).get("sites")) or {}) if isinstance(sites_resp, dict) else {}
+                    _pg = _sc.get("sites") or []
+                    for _st in _pg:
+                        if _st.get("id") not in _site_seen:
+                            _site_seen.add(_st.get("id")); tam_sites.append(_st)
+                    _cur = _sc.get("cursor") or ""
+                    if len(_pg) < 100 or not _cur or _cur == _after:
+                        break
+                    _after = _cur
+            print(f"  [HARVEST] Sites: {len(tam_sites)}", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] WARNING: Sites failed: {e}", flush=True)
+
+        # ── TAM: Sustainability Score ──
+        tam_sustainability = []
+        try:
+            print("  [HARVEST] Fetching sustainability score...", flush=True)
+            # a score is per scope, not additive: use the first watchlist that reports one
+            for _w in _all_scopes:
+                _, sust_resp = _gql(token, _Q("sustainability_score", call=(_A("sustainability_call_scoped", _w) if _w else _A("sustainability_call", True))))
+                tam_sustainability = (((sust_resp.get("data") or {}).get("sustainabilityScore") or {}).get("sustainabilityScores")) or [] if isinstance(sust_resp, dict) else []
+                if tam_sustainability:
+                    break
+            print(f"  [HARVEST] Sustainability scores: {len(tam_sustainability)}", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] WARNING: Sustainability failed: {e}", flush=True)
+
+        # ── TAM: Official Active IQ Health Score ──────────────────────────
+        # Active IQ's own authoritative 0-100 health score for this account/
+        # scope (distinct from this tool's own risk-based scoring), confirmed
+        # live via GraphQL introspection (2026-09-17) as `summary { healthScore
+        # { overallHealthScore kpis { ... } } }`. Returned as a single object
+        # per watchlist scope -- stored as a one-element list (matching the
+        # tamSustainability shape) so the existing per-account merge logic
+        # (_MERGE_LIST_FIELDS) applies unchanged.
+        tam_official_health_score = []
+        try:
+            print("  [HARVEST] Fetching official Active IQ health score...", flush=True)
+            _hs = None
+            for _w in _all_scopes:
+              _, hs_resp = _gql(token, _Q("health_score_scope", scope=_scope_arg(_w)))
+              _hs = (((hs_resp.get("data") or {}).get("summary") or {}).get("healthScore")) if isinstance(hs_resp, dict) else None
+              if _hs and _hs.get("overallHealthScore") is not None:
+                  break
+            if _hs and _hs.get("overallHealthScore") is not None:
+                tam_official_health_score = [_hs]
+                print(f"  [HARVEST] Official health score: {_hs.get('overallHealthScore')}/100", flush=True)
+            else:
+                print("  [HARVEST] Official health score: not reported for this scope", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] WARNING: Official health score failed: {e}", flush=True)
+
+        # Active IQ's own support-case summary (counts and trend) and risk counts (by severity and impact area) for the account/scope,
+        # stored as a one-element list per account like the health score above.
+        tam_case_summary, tam_risks_count, tam_workload_summary = [], [], []
+        for _name, _key, _out in (("case_summary", "caseSummary", tam_case_summary), ("risks_count", "risksCount", tam_risks_count),
+                                  ("workload_summary", "workloadSummary", tam_workload_summary)):
+            try:
+                for _w in _all_scopes:
+                    _, _r = _gql(token, _Q(_name, scope=_scope_arg(_w)))
+                    _o = ((_r.get("data") or {}).get(_key)) if isinstance(_r, dict) else None
+                    if _o:
+                        _out.append(_o)
+                        break
+                print(f"  [HARVEST] Active IQ {_key}: {'received' if _out else 'not reported for this scope'}", flush=True)
+            except Exception as e:
+                print(f"  [HARVEST] WARNING: {_key} failed: {e}", flush=True)
+
+        # Active IQ's StorageGRID capacity forecast (sites passing 80% within 3, 6 and 12 months): a list of intervals.
+        tam_sg_forecast = []
+        try:
+            for _w in _all_scopes:
+                _, _r = _gql(token, _Q("sg_capacity_forecast", scope=_scope_arg(_w)))
+                _o = ((_r.get("data") or {}).get("StorageGridCapacityExceededForecast")) if isinstance(_r, dict) else None
+                if _o:
+                    tam_sg_forecast = [x for x in _o if isinstance(x, dict)]
+                    break
+            print(f"  [HARVEST] StorageGRID capacity forecast: {len(tam_sg_forecast)} interval(s)", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] WARNING: StorageGRID capacity forecast failed: {e}", flush=True)
+
+        # ── TAM: Success Plans (real Active IQ CSP data) ──────────────────────
+        # Digital Advisor's own Success Plans feature -- confirmed live via
+        # GraphQL schema introspection (2026-09-16) that this is a real,
+        # queryable AND writable API (successPlan query, createSuccessPlan/
+        # updateSuccessPlan mutations), not a workflow-only concept as first
+        # assumed when this tab was built. Returned grouped by nagpId/nagpName
+        # (NetApp Account Group Profile -- the same per-customer grouping key
+        # already harvested onto every system as s.nagpId/nagpName); flattened
+        # here into one row per real CustomerSuccessPlan, tagged with its
+        # nagpId/nagpName so the UI can show which customer it belongs to
+        # even though Active IQ's own scope object may reference a narrower
+        # site/cluster. Mutations (create/update) are called directly from the
+        # browser via _callAIQMutation, same as risk acknowledgement -- there
+        # is no dedicated server-side write endpoint for this.
+        tam_success_plans = []
+        try:
+            print("  [HARVEST] Fetching Success Plans (real Active IQ CSP data)...", flush=True)
+            _sp_details, _sp_after, _sp_guard = [], "", 0
+            while _sp_guard < 100:   # page with the cursor; was a single page of 200 customers
+                _sp_guard += 1
+                _, sp_resp = _gql(token, _Q("success_plans_page", after=_A("after", _sp_after)))
+                _spd = ((sp_resp.get("data") or {}).get("successPlan") or {}) if isinstance(sp_resp, dict) else {}
+                _sp_pg = _spd.get("details") or []
+                _sp_details.extend(_sp_pg)
+                _spc = _spd.get("cursor") or ""
+                if not _sp_pg or not _spc or _spc == _sp_after:
+                    break
+                _sp_after = _spc
+            for _grp in _sp_details:
+                for _plan in (_grp.get("successPlans") or []):
+                    # Older code/UI read a single `tamNotes` string; the API's real field is `notes`
+                    # (a list of {name,email,date,message}). Keep both so nothing downstream breaks.
+                    _plan["tamNotes"] = "\n".join(n.get("message") or "" for n in (_plan.get("notes") or []) if n)
+                    _plan["nagpId"] = _grp.get("nagpId", "")
+                    _plan["nagpName"] = _grp.get("nagpName", "")
+                    tam_success_plans.append(_plan)
+            print(f"  [HARVEST] Success Plans: {len(tam_success_plans)} across {len(_sp_details)} customer(s)", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] WARNING: Success Plans failed: {e}", flush=True)
+
+        # ── TAM: OS Version Catalog ──
+        tam_os_versions = []
+        try:
+            print("  [HARVEST] Fetching OS version catalog...", flush=True)
+            tam_os_versions, _osv_after, _osv_guard = [], "", 0
+            while _osv_guard < 100:   # page with the cursor; was one page of 500
+                _osv_guard += 1
+                _, osv_resp = _gql(token, _Q("os_versions_page", after=_A("after", _osv_after)))
+                _osvd = ((osv_resp.get("data") or {}).get("osVersions") or {}) if isinstance(osv_resp, dict) else {}
+                _osv_pg = _osvd.get("osVersions") or []
+                tam_os_versions.extend(_osv_pg)
+                _osvc = _osvd.get("cursor") or ""
+                if len(_osv_pg) < 500 or not _osvc or _osvc == _osv_after:
+                    break
+                _osv_after = _osvc
+            print(f"  [HARVEST] OS versions: {len(tam_os_versions)}", flush=True)
+
+            # ── Fill gaps: query specifically for fleet OS versions not in first page ──
+            _cached_versions = set(v.get("osVersion", "") for v in tam_os_versions)
+            _fleet_versions = set()
+            for _s in all_systems:
+                _osv_str = _s.get("osVersion") or ""
+                if _osv_str:
+                    _fleet_versions.add(_osv_str)
+            _missing = sorted(_fleet_versions - _cached_versions)
+            if _missing:
+                # Query in batches of 50
+                _extra_count = 0
+                for _i in range(0, len(_missing), 50):
+                    _batch = _missing[_i:_i+50]
+                    _ver_list = json.dumps(_batch)
+                    _, _extra_resp = _gql(token, _Q("os_versions_by_name", versions=_ver_list))
+                    _extra_versions = ((_extra_resp.get("data") or {}).get("osVersions", {}).get("osVersions")) or [] if isinstance(_extra_resp, dict) else []
+                    tam_os_versions.extend(_extra_versions)
+                    _extra_count += len(_extra_versions)
+                if _extra_count:
+                    print(f"  [HARVEST] OS versions (fleet-targeted): +{_extra_count} for {len(_missing)} fleet versions", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] WARNING: OS versions failed: {e}", flush=True)
+
+        # ── TAM: Contract Renewals with Lifecycle Events ──
+        tam_renewals = []
+        try:
+            print("  [HARVEST] Fetching contract renewals...", flush=True)
+            _ren_seen = set()
+            for _w in _all_scopes:
+              # page through the whole result (the query returns a totalCount and an `after` cursor); it used to stop at the first 200
+              _after, _got, _guard = "", 0, 0
+              while _guard < 200:
+                _guard += 1
+                _, ren_resp = _gql(token, _Q("contract_renewals_page", after=_A("after", _after), scope=_scope_arg(_w)))
+                _rc = (((ren_resp.get("data") or {}).get("systemContractRenewals")) or {}) if isinstance(ren_resp, dict) else {}
+                _page = _rc.get("systems") or []
+                for _rs in _page:
+                  if _rs.get("serialNumber") not in _ren_seen:
+                    _ren_seen.add(_rs.get("serialNumber")); tam_renewals.append(_rs)
+                _got += len(_page)
+                _cur = _rc.get("cursor") or ""
+                if not _page or not _cur or _cur == _after or _got >= int(_rc.get("totalCount") or 0):
+                  break
+                _after = _cur
+            # .get("systemContractRenewals", {}) only applies its default when the key
+            # is MISSING — GraphQL can return {"data": {"systemContractRenewals": null}}
+            # (e.g. no privilege/no systems in scope), where the key exists with value
+            # None, crashing the chained .get("systems") call. Use "or {}" instead.
+            print(f"  [HARVEST] Renewals with lifecycle events: {len(tam_renewals)}", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] WARNING: Contract renewals failed: {e}", flush=True)
+
+        # 9. Build risksBySerial lookup from riskInstances
+        risks_by_serial = {}
+        for ri in all_risk_instances:
+            ri_sys = ri.get("system") or {}
+            serial = ri_sys.get("serialNumber")
+            if serial:
+                risk_entry = dict(ri.get("risk") or {})
+                risk_entry["systemRiskDetail"] = ri.get("systemRiskDetail", "")
+                risk_entry["acknowledgement"] = ri.get("riskAcknowledgementInfo")
+                risk_entry["riskTriggeredDate"] = ri.get("riskTriggeredDate") or ""        # when Active IQ first raised this risk on the system
+                risk_entry["riskLastTriggeredDate"] = ri.get("riskLastTriggeredDate") or ""
+                risk_entry["fixedVersions"] = ri.get("fixedVersions") or []
+                risks_by_serial.setdefault(serial, []).append(risk_entry)
+
+        # 9b. Cross-reference acknowledged risks against the CISA KEV catalog —
+        # flags cases where a TAM acknowledged (accepted/deferred) a risk that
+        # has since been added to CISA's Known Exploited Vulnerabilities list,
+        # meaning it's now under active real-world exploitation. This is a
+        # meaningful escalation signal no other view in the tool surfaces.
+        acknowledged_risks_now_exploited = _check_acknowledged_risks_vs_kev(risks_by_serial)
+
+        # 10. Build casesBySerial lookup from cases
+        cases_by_serial = {}
+        _cases_no_serial = 0
+        for c in all_cases:
+            c_sys = c.get("system") or {}
+            serial = c_sys.get("serialNumber")
+            if serial:
+                cases_by_serial.setdefault(serial, []).append(c)
+            else:
+                _cases_no_serial += 1
+        _cases_matched = sum(len(v) for v in cases_by_serial.values())
+        print(f"  [HARVEST] Cases by serial: {len(cases_by_serial)} unique serials, "
+              f"{_cases_matched} matched, {_cases_no_serial} without serial", flush=True)
+        if cases_by_serial:
+            _sample = list(cases_by_serial.items())[:3]
+            for _sk, _sv in _sample:
+                print(f"    Serial {_sk}: {len(_sv)} case(s)", flush=True)
+
+        # 11. Build unique risks list (deduplicated by riskId)
+        unique_risks = {}
+        for ri in all_risk_instances:
+            r = ri.get("risk") or {}
+            rid = r.get("riskId")
+            if rid and rid not in unique_risks:
+                unique_risks[rid] = r
+        # Risk metadata (what kind of change fixes each risk, and whether it is disruptive) merged onto the unique risks
+        try:
+            _rids = sorted(unique_risks)
+            _meta_n = 0
+            for _i in range(0, len(_rids), 100):
+                _, _mr = _gql(token, _Q("risk_metadata_page", risk_ids=json.dumps(_rids[_i:_i + 100])))
+                for _m in ((((_mr.get("data") or {}).get("riskMeta") or {}).get("riskMetadata")) or []) if isinstance(_mr, dict) else []:
+                    _r = unique_risks.get(_m.get("riskId"))
+                    if _r is not None:
+                        _r["fixAction"] = _m.get("mitigationAction")
+                        _r["fixActionSub"] = _m.get("mitigationActionSub")
+                        _r["fixCategory"] = _m.get("mitigationCategory")
+                        _r["isPublic"] = _m.get("isPublic")
+                        _r["playbook"] = _m.get("playbook")
+                        _r["hasFixit"] = bool(_m.get("hasUMFixit") or _m.get("hasCloudManagerFixit"))
+                        _r["burtReferences"] = _m.get("burtReferences") or []
+                        _meta_n += 1
+            for _lst in risks_by_serial.values():
+                for _e in _lst:
+                    _src = unique_risks.get(_e.get("riskId")) or {}
+                    if _src.get("fixAction"):
+                        for _k in ("fixAction", "fixActionSub", "fixCategory", "isPublic", "playbook", "hasFixit", "burtReferences"):
+                            _e[_k] = _src.get(_k)
+            print(f"  [HARVEST] Risk metadata merged for {_meta_n} of {len(_rids)} unique risks", flush=True)
+        except Exception as _e:
+            print(f"  [HARVEST] WARNING: risk metadata fetch failed: {_e}", flush=True)
+        all_risks = list(unique_risks.values())
+
+        # 12. Build cluster lookup + serial→cluster reverse map
+        cluster_map = {}
+        serial_to_cluster = {}
+        serial_to_cluster_cap = {}
+        serial_to_cluster_sm = {}   # serial → snapMirror relationship count
+        serial_to_cluster_ha = {}   # serial → HA configured flag
+        serial_to_cluster_switches = {}  # serial → switches list from cluster
+        serial_to_cluster_shelves = {}   # serial → shelves list from cluster
+        serial_to_cluster_vservers = {}  # serial → vservers list from cluster
+        for cl in all_clusters:
+            cl_id = cl.get("id") or cl.get("name")
+            cl_name = cl.get("name", "")
+            if cl_id:
+                cluster_map[cl_id] = cl
+            cl_systems = cl.get("systems") or []
+            cap = cl.get("capacity") or {}
+            phys = cap.get("physical") or {}
+            logical = cap.get("logical") or {}
+            # Note: ClusterCapacity GQL type does NOT support efficiency sub-fields.
+            # Efficiency data is only available from the system-level ONTAP inline fragment.
+            # Divide capacity by node count to produce per-node fallback values.
+            _n_nodes = max(len(cl_systems), 1)
+            cap_data = {
+                "physicalUsedTB": round((phys.get("usedKiB") or 0) / (1024**3) / _n_nodes, 2),
+                "rawCapacityTB": round((phys.get("rawMarketingKiB") or 0) / (1024**3) / _n_nodes, 2),
+                "logicalUsedTB": round((logical.get("usedKiB") or 0) / (1024**3) / _n_nodes, 2),
+                "physicalUsedNoSnapsTB": round((phys.get("usedWithoutSnapshotsKiB") or 0) / (1024**3) / _n_nodes, 2),
+                "logicalUsedNoSnapsTB": round((logical.get("usedWithoutSnapshotsClonesKiB") or 0) / (1024**3) / _n_nodes, 2),
+                "usableCapacityTB": round((phys.get("usablePerformanceTierKiB") or phys.get("rawMarketingKiB") or 0) / (1024**3) / _n_nodes, 2),
+                "qoqUtilizationPct": phys.get("qoqUtilizationPercentage") or 0,
+                "yoyUtilizationPct": phys.get("yoyUtilizationPercentage") or 0,
+                "capacityReportedOn": (cap.get("reportedOn") or "")[:10],
+                # Monthly history for chart: list of {month, usedKiB, rawKiB}
+                "monthlyCapacity": [
+                    {
+                        "month": m.get("month", ""),
+                        "usedTB": round(((m.get("physical") or {}).get("usedKiB") or 0) / (1024**3) / _n_nodes, 3),
+                        "rawTB": round(((m.get("physical") or {}).get("rawMarketingKiB") or 0) / (1024**3) / _n_nodes, 2),
+                        "qoqPct": (m.get("physical") or {}).get("qoqUtilizationPercentage") or None,
+                    }
+                    for m in (cl.get("monthlyCapacity") or [])
+                ],
+            }
+            sm_count = ((cl.get("snapMirrorRelationships") or {}).get("totalCount")) or 0
+            # isHAConfigured from the API is unreliable — it can return null/false
+            # even for multi-node clusters. Any ONTAP cluster with 2+ nodes is
+            # inherently an HA pair, so infer HA from node count as a fallback.
+            is_ha = cl.get("isHAConfigured")
+            if not is_ha and len(cl_systems) >= 2:
+                is_ha = True
+            cl_os = cl.get("osVersion", "")
+            cl_rec = ((cl.get("osRecommendation") or {}).get("recommendedVersion")) or ""
+            cl_switches = cl.get("switches") or []
+            cl_shelves = cl.get("shelves") or []
+            cl_vservers = cl.get("vservers") or []
+            # Compute SVM counts from vservers type field
+            _data_svm_count = sum(1 for v in cl_vservers if (v.get("type") or "").upper() == "DATA")
+            _node_svm_count = sum(1 for v in cl_vservers if (v.get("type") or "").upper() == "NODE")
+            for cs in cl_systems:
+                cs_serial = cs.get("serialNumber")
+                if cs_serial:
+                    serial_to_cluster[cs_serial] = cl_name
+                    serial_to_cluster_cap[cs_serial] = cap_data
+                    serial_to_cluster_sm[cs_serial] = sm_count
+                    serial_to_cluster_ha[cs_serial] = is_ha
+                    serial_to_cluster_switches[cs_serial] = cl_switches
+                    serial_to_cluster_shelves[cs_serial] = cl_shelves
+                    serial_to_cluster_vservers[cs_serial] = cl_vservers
+                    serial_to_cluster_cap[cs_serial]["dataSvmCount"] = _data_svm_count
+                    serial_to_cluster_cap[cs_serial]["nodeSvmCount"] = _node_svm_count
+        
+        total_sw = sum(len(v) for v in serial_to_cluster_switches.values())
+        print(f"  [HARVEST] Switch instances mapped: {total_sw // max(len(serial_to_cluster_switches), 1)} unique across clusters", flush=True)
+
+        # ── Load external ground-truth firmware baselines ──
+        _baselines_path = os.path.join(os.path.dirname(__file__), "data", "firmware_baselines.json")
+        _ext_baselines = {}
+        try:
+            with open(_baselines_path, "r", encoding="utf-8") as _bl_f:
+                _ext_baselines = json.load(_bl_f)
+            print(f"  [HARVEST] Loaded firmware baselines from {os.path.basename(_baselines_path)} (updated: {_ext_baselines.get('_lastUpdated', '?')})", flush=True)
+        except Exception as _bl_err:
+            print(f"  [HARVEST] WARNING: Could not load firmware_baselines.json: {_bl_err}", flush=True)
+
+        # ── Build firmware lookup from osVersions bundled firmware catalog ──
+        # Maps (osVersion, modelPrefix) → {spVersion, biosVersion, dqpVersion}
+        # Used to derive firmware currency when per-system GQL returns null.
+        _fw_by_os_model = {}  # key: (osVersion, model) → {type, version, biosVersion}
+        _latest_fw_by_model = {}  # key: model → {type, version, biosVersion} from latest ONTAP
+        _dqp_by_os = {}  # key: osVersion → {currentVersion from bundled DQP}
+        _drive_fw_by_os = {}  # key: osVersion → {driveModel: version}
+        _latest_drive_fw = {}  # key: driveModel → latest recommended version
+        _shelf_fw_by_os_module = {}  # key: (osVersion, shelfModuleName) → sysShelfModuleFirmwareVersion
+        _latest_shelf_fw_by_module = {}  # key: shelfModuleName → latest recommended version
+        for _osv in tam_os_versions:
+            _os_ver = _osv.get("osVersion", "")
+            if not _os_ver:
+                continue
+            for _bsf in (_osv.get("bundledSystemFirmwares") or []):
+                _sys_model = _bsf.get("systemModel", "")
+                _fw_type = _bsf.get("type", "SP")  # SP or BMC
+                _fw_ver = _bsf.get("version", "")
+                _bios_ver = _bsf.get("biosVersion", "")
+                if _sys_model and _fw_ver:
+                    _fw_by_os_model[(_os_ver, _sys_model)] = {
+                        "type": _fw_type, "version": _fw_ver, "biosVersion": _bios_ver
+                    }
+                    # Track the latest (last entry wins since osVersions is typically sorted)
+                    _latest_fw_by_model[_sys_model] = {
+                        "type": _fw_type, "version": _fw_ver, "biosVersion": _bios_ver,
+                        "osVersion": _os_ver,
+                    }
+            # Build bundled drive firmware lookup
+            _bdf = _osv.get("bundledDriveFirmwares") or []
+            if _bdf:
+                _os_drives = {}
+                for _d in _bdf:
+                    _dm = _d.get("driveModel", "")
+                    _dv = _d.get("version", "")
+                    if _dm and _dv:
+                        _os_drives[_dm] = _dv
+                        _latest_drive_fw[_dm] = _dv  # last wins
+                if _os_drives:
+                    _drive_fw_by_os[_os_ver] = _os_drives
+            # Build bundled shelf firmware lookup
+            for _bshf in (_osv.get("bundledShelfFirmwares") or []):
+                _smod = _bshf.get("shelfModuleName", "")
+                _sver = _bshf.get("sysShelfModuleFirmwareVersion", "")
+                if _smod and _sver:
+                    _shelf_fw_by_os_module[(_os_ver, _smod)] = _sver
+                    _latest_shelf_fw_by_module[_smod] = _sver  # last wins
+        _fw_derived = 0
+
+        # ── Override firmware baselines with external ground-truth ──
+        # The GQL catalog only knows firmware bundled with ONTAP releases.
+        # External baselines from firmware_baselines.json represent the actual
+        # latest published firmware from NetApp support site / KBs.
+        _ext_sp_families = ((_ext_baselines.get("spBmc") or {}).get("families") or [])
+        _ext_sp_by_model = ((_ext_baselines.get("spBmc") or {}).get("byModel") or {})
+        _ext_shelf_modules = _ext_baselines.get("shelfModules") or {}
+        _ext_ontap = _ext_baselines.get("ontap") or {}
+        _ext_ontap_by_branch = _ext_ontap.get("latestByBranch") or {}
+        _ext_santricity = _ext_baselines.get("santricity") or {}
+
+        def _resolve_ext_sp_bmc(model_name):
+            """Resolve SP/BMC version from external baselines using keyword matching."""
+            if not model_name:
+                return None, None
+            model_upper = model_name.upper().replace("-", "").replace(" ", "")
+            # Direct lookup by model keyword
+            for kw, ver in _ext_sp_by_model.items():
+                if kw.startswith("_"):  # skip _comment keys
+                    continue
+                kw_norm = kw.upper().replace("-", "").replace(" ", "")
+                if kw_norm in model_upper or model_upper.startswith(kw_norm):
+                    return ver, "external_baseline"
+            # Family keyword fallback
+            for fam in _ext_sp_families:
+                for kw in fam.get("modelKeywords", []):
+                    kw_norm = kw.upper().replace("-", "").replace(" ", "")
+                    if kw_norm in model_upper:
+                        return fam.get("latestKnown", ""), "external_baseline_family"
+            return None, None
+
+        def _resolve_ext_ontap_branch(os_version):
+            """Find the latest P-release for this system's ONTAP branch."""
+            if not os_version or not _ext_ontap_by_branch:
+                return None
+            import re as _re_br
+            # Extract branch: "9.16.1P11" → "9.16.1", "9.8P20" → "9.8"
+            m = _re_br.match(r'(\d+\.\d+(?:\.\d+)?)', os_version)
+            if m:
+                branch = m.group(1)
+                return _ext_ontap_by_branch.get(branch)
+            return None
+
+        # Override _latest_fw_by_model with external baselines
+        _ext_override_count = 0
+        for _model_key in list(_latest_fw_by_model.keys()):
+            _ext_ver, _ext_src = _resolve_ext_sp_bmc(_model_key)
+            if _ext_ver:
+                _latest_fw_by_model[_model_key]["version"] = _ext_ver
+                _latest_fw_by_model[_model_key]["_source"] = _ext_src
+                _ext_override_count += 1
+        # Also override shelf module baselines
+        for _mod_name, _mod_data in _ext_shelf_modules.items():
+            if not isinstance(_mod_data, dict):
+                continue
+            _rec = _mod_data.get("recommended", "")
+            if _rec and _rec != "current":
+                _latest_shelf_fw_by_module[_mod_name] = _rec
+        if _ext_override_count > 0 or _ext_shelf_modules:
+            print(f"  [HARVEST] Applied external baselines: {_ext_override_count} SP/BMC overrides, {len(_ext_shelf_modules)} shelf module baselines", flush=True)
+
+        # Also override drive firmware baselines from external baselines JSON
+        _ext_disk_fw = (_ext_baselines.get("diskFirmware") or {}).get("byModel") or {}
+        _ext_drive_fw_count = 0
+        for _dm, _dv in _ext_disk_fw.items():
+            if _dm.startswith("_"):  # skip _comment keys
+                continue
+            if isinstance(_dv, str) and _dv:
+                _latest_drive_fw[_dm] = _dv
+                _ext_drive_fw_count += 1
+        if _ext_drive_fw_count > 0:
+            print(f"  [HARVEST] Applied external drive firmware baselines: {_ext_drive_fw_count} drive models", flush=True)
+
+        # ── Override drive firmware baselines with DQP data (if available) ──
+        # The DQP (Disk Qualification Package) contains per-drive-model qualified
+        # firmware revisions. When qual_devices_v3.zip or qual_devices.xml is present
+        # in the data/ directory, its data overrides the GQL-derived _latest_drive_fw.
+        _dqp_override_count = 0
+        try:
+            import sys as _sys_mod
+            _tools_dir = os.path.join(os.path.dirname(__file__), "tools")
+            if _tools_dir not in _sys_mod.path:
+                _sys_mod.path.insert(0, _tools_dir)
+            from dqp_parser import load_dqp_drive_baselines
+            _dqp_baselines = load_dqp_drive_baselines(
+                data_dir=os.path.join(os.path.dirname(__file__), "data")
+            )
+            if _dqp_baselines:
+                for _dm, _dv in _dqp_baselines.items():
+                    _latest_drive_fw[_dm] = _dv
+                    _dqp_override_count += 1
+                print(f"  [HARVEST] Applied DQP drive firmware baselines: {_dqp_override_count} drive models", flush=True)
+        except ImportError:
+            pass  # dqp_parser not available — skip silently
+        except Exception as _dqp_err:
+            print(f"  [HARVEST] DQP load warning: {_dqp_err}", flush=True)
+
+        # ── Auto-discover drive firmware baselines from the fleet itself ──
+        # For any drive model not yet in _latest_drive_fw, use the highest firmware
+        # version seen across the fleet as a best-effort recommendation.
+        _fleet_drive_models = {}  # model → {fw_version: count}
+        for s in all_systems:
+            for _shelf in (s.get("shelves") or []):
+                for _drv in ((_shelf.get("drives") or {}).get("drives") or []):
+                    _dm = ((_drv.get("hardwareModel") or {}).get("name") or "").strip()
+                    _dfw = (_drv.get("firmwareRevision") or "").strip()
+                    if _dm and _dfw and _dfw != "Unknown":
+                        if _dm not in _fleet_drive_models:
+                            _fleet_drive_models[_dm] = {}
+                        _fleet_drive_models[_dm][_dfw] = _fleet_drive_models[_dm].get(_dfw, 0) + 1
+        _auto_discovered = 0
+        for _dm, _fw_counts in _fleet_drive_models.items():
+            if _dm not in _latest_drive_fw:
+                # Use the most common firmware version (or highest if tied) as baseline
+                _best_fw = max(_fw_counts.keys(), key=lambda v: (_fw_counts[v], v))
+                _latest_drive_fw[_dm] = _best_fw
+                _auto_discovered += 1
+        if _auto_discovered > 0:
+            print(f"  [HARVEST] Auto-discovered drive firmware baselines from fleet: {_auto_discovered} models", flush=True)
+
+        # 13. Build final systems output (with full TAM enrichment)
+        systems_out = []
+        for s in all_systems:
+            cust = s.get("customer") or {}
+            site = s.get("site") or {}
+            hw = s.get("hardwareModel") or {}
+            contact = s.get("contactPerson") or {}
+            contract = s.get("contract") or {}
+            asup = s.get("latestAsup") or {}
+            # Active IQ's `latestAsup` frequently has subject/type/isManual as null even
+            # when receivedDate/asupId are populated — the same data (correctly filled in)
+            # is present in the `autoSupports` history list. Fall back to the most recent
+            # history entry (matched by asupId when possible) for those specific fields.
+            if not asup.get("subject") or not asup.get("type") or asup.get("isManual") is None:
+                _asup_hist = s.get("autoSupports") or []
+                _asup_match = next((a for a in _asup_hist if a.get("asupId") == asup.get("asupId")), None) \
+                    or (_asup_hist[0] if _asup_hist else None)
+                if _asup_match:
+                    asup = dict(asup)
+                    for _k in ("subject", "type", "isManual"):
+                        if asup.get(_k) is None or asup.get(_k) == "":
+                            asup[_k] = _asup_match.get(_k)
+            # Active IQ's `latestAsup` is not always the newest AutoSupport the system sent: it often points to a regular (weekly) one while newer
+            # management-log, performance, user-triggered or E-Series messages have arrived since (median 9 days newer on a real fleet). A system that
+            # sends any AutoSupport is sending, so the newest message of any type is what counts; the regular one is kept as latestRegularAsupDate.
+            _asup_regular_date = asup.get("receivedDate") or asup.get("generatedDate") or ""
+            _asup_all = [a for a in ([asup] + list(s.get("latestAsupOfEachType") or []) + list(s.get("autoSupports") or []))
+                         if isinstance(a, dict) and (a.get("receivedDate") or a.get("generatedDate"))]
+            if _asup_all:
+                asup = max(_asup_all, key=lambda a: a.get("receivedDate") or a.get("generatedDate") or "")
+            nagp = s.get("nagp") or {}
+            sr = s.get("salesRepresentative") or {}
+            # Contact roles: Active IQ deprecated `csm` in favour of retentionSpecialist and solutionEngineerSpecialist.
+            # The new roles are preferred; csm stays as the fallback (still requested), so csmName/csmEmail keep working.
+            re_d = s.get("retentionSpecialist") or {}
+            se_d = s.get("solutionEngineerSpecialist") or {}
+            csm_d = se_d if se_d.get("name") else (re_d if re_d.get("name") else (s.get("csm") or {}))
+            sam_d = s.get("sam") or {}
+            gard = s.get("gard") or {}
+            asp = s.get("authorizedSupportPartner") or {}
+            dp = s.get("domesticParent") or {}
+            asup_cfg = s.get("autoSupportConfig") or {}
+            sv = s.get("softwareVersion") or {}
+            evd = sv.get("endOfVersionDetails") or {}
+            eos = s.get("endOfSupport") or {}
+            srd = s.get("swRecommendationDetails") or {}
+            cap = s.get("capacity") or {}
+            cap_phys = cap.get("physical") or {}
+            cap_eff = cap.get("efficiency") or {}
+            serial = s.get("serialNumber", "")
+
+            cl_name = serial_to_cluster.get(serial, "")
+            # Fallback: derive cluster name from hostname by stripping node suffix
+            # e.g. "EXAMPLE-CLUSTER" → "EXAMPLE-CLUSTER", "FAS8300-node2" → "FAS8300"
+            if not cl_name:
+                _hn = s.get("hostName", "") or ""
+                cl_name = re.sub(r'[-_](?:0[1-9]|node\d+|n\d+)$', '', _hn, flags=re.IGNORECASE)
+            cl_cap = serial_to_cluster_cap.get(serial, {})
+
+            # Extract switches from port connectivity (device names + port types)
+            # _sys_is_mcc: real harvested isMetroCluster flag for the parent system —
+            # used to flag which of this system's switches sit on a MetroCluster ISL
+            # so the Switch Validation UI can apply MC-specific ISL requirement
+            # context (TR-published distance/packet-loss/jitter/MTU limits) instead
+            # of generic cluster-interconnect validation. This is NOT derived from a
+            # guessed switch "role" enum value (unconfirmed against live Active IQ
+            # data) — it only uses the confirmed-real per-system isMetroCluster field.
+            _sys_is_mcc = bool(s.get("isMetroCluster"))
+            # Port-interface-derived connectivity (which local port this system's node
+            # cables into, at what speed/state) and cluster.switches (CSHM-monitored
+            # model/firmware/RCF/support-contract data) describe the SAME physical
+            # switches from two different Active IQ fields, keyed by device name only
+            # loosely -- cluster.switches' deviceName can carry a parenthetical serial
+            # suffix ("LEAF-1001(FDO22452V0T)") the port-interface's connectedDevice
+            # never has. Normalize both for matching so a switch reported by both
+            # sources becomes ONE row carrying both port-cabling detail and CSHM
+            # model/firmware/status, instead of two rows in the same list -- one
+            # "thin" (no model/firmware/status at all) and one "rich" -- which is what
+            # was actually happening (no cross-source dedup existed) and is almost
+            # certainly the "flaky/thin reporting" a user sees in the switch table.
+            def _sw_norm(name):
+                return re.sub(r'\s*\([^)]*\)\s*$', '', str(name or '')).strip().lower()
+
+            switches = []
+            seen_devs = set()
+            conn_by_dev = {}  # normalized device name -> connectivity dict
+            pi = s.get("portInterface") or {}
+            all_ports = list(pi.get("onboardPorts") or [])
+            for card in (pi.get("adapterCards") or []):
+                all_ports.extend(card.get("ports") or [])
+            for p in all_ports:
+                dev = p.get("connectedDevice", "")
+                if dev and dev not in seen_devs:
+                    seen_devs.add(dev)
+                    pt = (p.get("portType") or "").lower()
+                    sw_type = "Data"
+                    if "cluster" in pt: sw_type = "Cluster Interconnect"
+                    elif "intercluster" in pt: sw_type = "Intercluster"
+                    conn_by_dev[_sw_norm(dev)] = {
+                        "deviceName": dev, "type": sw_type,
+                        "connectedPort": p.get("connectedPort", ""),
+                        "portSpeed": p.get("portSpeed", ""),
+                        "portState": p.get("portState", ""),
+                        "sourcePort": p.get("portName", ""),
+                        "mcContext": _sys_is_mcc,
+                    }
+            matched_conn_devs = set()
+
+            # Merge cluster-level switches (with model, firmware, validation data)
+            #
+            # Active IQ's own cluster.switches field can report the SAME physical
+            # switch twice under two different device-name suffixes from two
+            # different discovery paths -- e.g. "SA-OOB-...corp (d4:2c:44:af:0e:53)"
+            # (MAC-suffixed) and "SA-OOB-...corp(FOC2039R176)" (serial-suffixed),
+            # each with its own IP and firmware-string phrasing. This is NOT a
+            # cross-source (portInterface vs cluster.switches) issue -- it happens
+            # within cluster.switches alone, and was very likely the dominant cause
+            # of "flaky/thin" duplicate-looking switch rows (confirmed live: 14
+            # such pairs in one account's harvest). Dedup by normalized device name,
+            # keeping whichever duplicate Active IQ actually monitors (isMonitored
+            # =True beats False; a real model beats "OTHER"/blank; a non-empty
+            # firmware string beats an empty one) rather than showing both.
+            cl_switches_raw = serial_to_cluster_switches.get(serial, [])
+            _by_norm = {}
+            for _csw in cl_switches_raw:
+                _key = _sw_norm(_csw.get("deviceName") or "")
+                if not _key:
+                    continue
+                _prev = _by_norm.get(_key)
+                if _prev is None:
+                    _by_norm[_key] = _csw
+                    continue
+                _prev_mon, _cur_mon = _prev.get("isMonitored", False), _csw.get("isMonitored", False)
+                if _cur_mon and not _prev_mon:
+                    _by_norm[_key] = _csw
+                elif _cur_mon == _prev_mon:
+                    _prev_model = (_prev.get("model") or "").upper()
+                    _cur_model = (_csw.get("model") or "").upper()
+                    _prev_has_model = _prev_model not in ("", "OTHER")
+                    _cur_has_model = _cur_model not in ("", "OTHER")
+                    if _cur_has_model and not _prev_has_model:
+                        _by_norm[_key] = _csw
+                    elif _cur_has_model == _prev_has_model:
+                        _prev_fw = ((_prev.get("versionInfo") or {}).get("fwVersion") or "")
+                        _cur_fw = ((_csw.get("versionInfo") or {}).get("fwVersion") or "")
+                        if len(_cur_fw) > len(_prev_fw):
+                            _by_norm[_key] = _csw
+            cl_switches = list(_by_norm.values())
+            for csw in cl_switches:
+                sw_serial = csw.get("switchSerialNumber", "") or ""
+                vi = csw.get("versionInfo") or {}
+                fw = vi.get("fwVersion", "") or ""
+                rcf = vi.get("rcfVersion", "") or ""
+                is_monitored  = csw.get("isMonitored", False)
+                is_discovered = csw.get("isDiscovered", False)
+                sw_model  = csw.get("model")  or ""
+                sw_vendor = csw.get("vendor") or ""
+                sw_name   = csw.get("deviceName") or ""
+                sw_ip     = csw.get("ipAddress") or ""
+                # `network` is a real enum (CLUSTER_NETWORK/MANAGEMENT_NETWORK/
+                # STORAGE_NETWORK/OTHER) -- more reliable than the free-text `role`
+                # field, which is nullable and vendor-supplied. Prefer it; fall back
+                # to `role`, then the same default as before.
+                _NETWORK_LABELS = {"CLUSTER_NETWORK": "Cluster Interconnect", "MANAGEMENT_NETWORK": "Management",
+                                    "STORAGE_NETWORK": "Storage/Data", "OTHER": ""}
+                sw_role = _NETWORK_LABELS.get(csw.get("network") or "", "") or csw.get("role") or "Cluster Interconnect"
+
+                # Support contract (start/end date, offer description) -- fetched but
+                # never surfaced before; feeds EOS/warranty tracking the same as every
+                # other hardware component's contract data.
+                _contracts = csw.get("supportContract") or []
+                _active_contract = None
+                for _c in _contracts:
+                    _end = _c.get("endDate")
+                    if _end and (not _active_contract or _end > (_active_contract.get("endDate") or "")):
+                        _active_contract = _c
+                sw_contract_end = (_active_contract or {}).get("endDate") or ""
+                sw_contract_start = (_active_contract or {}).get("startDate") or ""
+                sw_contract_desc = (_active_contract or {}).get("offerDescription") or ""
+
+                # Merge in this switch's local port-cabling detail (which of this
+                # system's node ports it's connected to, at what speed) if the same
+                # physical switch was also seen via portInterface connectivity --
+                # see conn_by_dev / _sw_norm above. Without this, the switch would
+                # appear TWICE: once here with no port info, once from conn_by_dev
+                # with no model/firmware/status.
+                _conn = conn_by_dev.get(_sw_norm(sw_name))
+                if _conn:
+                    matched_conn_devs.add(_sw_norm(sw_name))
+
+                # ── Infer model from device name, then firmware string, when AIQ
+                # returns OTHER / blank ── Typical names: "zaDEL-DC1-LEAF-1001
+                # (FDO22452V0T)", "Nexus3132Q-V". A hostname often gives no hint at
+                # all (e.g. "SA-OOB-EXAMPLE-SYSTEM") while the firmware STRING nearly
+                # always names the real platform ("Cisco NX-OS(tm) n6000, Software
+                # (n6000-uk9)...") -- checked second, only when the device name
+                # itself matched nothing, so a confident name-based match still wins.
+                if not sw_model or sw_model.upper() == "OTHER":
+                    dn_lower = sw_name.lower()
+                    fw_lower = fw.lower()
+                    if any(x in dn_lower for x in ("nexus 9", "nexus9", "n9k", "93", "9336", "9364", "9332")):
+                        sw_model = "Cisco Nexus 9k"
+                    elif any(x in dn_lower for x in ("nexus 3", "nexus3", "n3k", "3132", "3064", "3548")):
+                        sw_model = "Cisco Nexus 3k"
+                    elif any(x in dn_lower for x in ("mds", "cisco mds")):
+                        sw_model = "Cisco MDS"
+                    elif any(x in dn_lower for x in ("sn2100", "nvidia", "cumulus")):
+                        sw_model = "NVIDIA SN2100"
+                    elif any(x in dn_lower for x in ("bes-53248", "bes53248", "efos", "broadcom")):
+                        sw_model = "Broadcom BES-53248"
+                    elif any(x in dn_lower for x in ("g620", "g630", "g720", "brocade", "fos")):
+                        sw_model = "Brocade FC Switch"
+                    elif any(x in fw_lower for x in ("n9k", "nexus 9", " n9000")):
+                        sw_model = "Cisco Nexus 9k"
+                    elif any(x in fw_lower for x in ("n6000", "nexus 6")):
+                        sw_model = "Cisco Nexus 6k"
+                    elif any(x in fw_lower for x in ("n5000", "nexus 5")):
+                        sw_model = "Cisco Nexus 5k"
+                    elif any(x in fw_lower for x in ("n3k", "nexus 3", " n3000")):
+                        sw_model = "Cisco Nexus 3k"
+                    elif "mds" in fw_lower:
+                        sw_model = "Cisco MDS"
+                    elif "cumulus" in fw_lower:
+                        sw_model = "NVIDIA SN2100"
+                    elif "fabric os" in fw_lower or "fos" in fw_lower:
+                        sw_model = "Brocade FC Switch"
+                    elif "cisco" in fw_lower:
+                        sw_model = "Cisco (model not identified)"
+                    elif "huawei" in fw_lower:
+                        # e.g. "Huawei Switch\nHuawei YunShan OS\nVersion 1.22.1.1 (S5700 V600R022C10SPC500)"
+                        _m = re.search(r'\b(S\d{3,5}|CE\d{3,5}|AR\d{3,5})\b', fw)
+                        sw_model = "Huawei " + _m.group(1) if _m else "Huawei Switch"
+                    elif "aruba" in fw_lower:
+                        # e.g. "Aruba JL256A 2930F-48G-PoE+-4SFP+ Switch, revision ..."
+                        _m = re.search(r'\b(JL\d{3,5}A)\b', fw)
+                        sw_model = "Aruba " + _m.group(1) if _m else "Aruba Switch"
+                    elif fw_lower.startswith("hp ") or " hp " in fw_lower or fw_lower.startswith("hpe "):
+                        # e.g. "HP J9146A 2910al-24G-PoE Switch, revision ...", "HP J9850A Switch 5406Rzl2, ..."
+                        _m = re.search(r'\b(J\d{3,5}[A-Z]?)\b', fw)
+                        sw_model = "HP " + _m.group(1) if _m else "HP Switch"
+                    elif fw_lower.startswith("usw-") or "unifi" in fw_lower:
+                        # e.g. "USW-Pro-48-PoE, 7.5.15.17146, Linux 3.6.5"
+                        sw_model = "Ubiquiti " + fw.split(",")[0].strip()
+                    elif sw_vendor:
+                        sw_model = sw_vendor
+                    # Still nothing — use the device name (already the most descriptive thing we have)
+                    if not sw_model:
+                        sw_model = sw_name or "Unknown Switch"
+
+                # ── Status / validation ──────────────────────────────────────────
+                status = "Optimal"
+                if not is_monitored and not is_discovered:
+                    status = "Unknown"
+                    validation = (f"Switch '{sw_name}' (IP: {sw_ip}) was not discovered or monitored by Active IQ. "
+                                  f"Verify CSHM is configured and the switch is reachable.")
+                elif not is_monitored:
+                    status = "Warning"
+                    validation = (f"Switch '{sw_name}' is discovered but not actively monitored by CSHM. "
+                                  f"Enable CSHM health monitoring for proactive alerting and firmware recommendations.")
+                elif csw.get("model", "").upper() in ("OTHER", "") or not csw.get("model"):
+                    status = "Warning"
+                    validation = (f"Switch '{sw_name}' (IP: {sw_ip}) is monitored but its model is not recognized "
+                                  f"by Active IQ. Verify IMT compatibility and confirm CSHM switch-type mapping.")
+                else:
+                    validation = f"Switch '{sw_name}' firmware validated by Active IQ CSHM."
+
+                # Active IQ's rcfVersion field is sometimes a literal placeholder
+                # sentence -- "No RCF version found." -- instead of null/empty when
+                # it has no published reference config for a switch (confirmed live
+                # on Cumulus Linux/NVIDIA MetroCluster ISL switches). Treated as a
+                # real version string, this produced "Target: No RCF version found."
+                # and a false "RCF Mismatch" warning on switches Active IQ never
+                # actually assessed. Normalize any such placeholder to "no data",
+                # same as a genuinely blank field.
+                if rcf and ("no rcf" in rcf.lower() or "not found" in rcf.lower() or "n/a" == rcf.strip().lower()):
+                    rcf = ""
+
+                # ── targetFirmware: only use RCF if it differs from current fw ──
+                # When rcf == fw (or rcf is blank) the API has no upgrade recommendation
+                target_fw = rcf if (rcf and rcf != fw) else ""
+
+                # ── RCF (Reference Configuration File) compliance ──────────────
+                # rcfVersion is harvested and already used to compute target_fw
+                # above, but was never surfaced as its own explicit signal — a
+                # switch running the wrong RCF is a real compliance gap distinct
+                # from "firmware is outdated". True = current fw matches the RCF
+                # NetApp has on file; False = a mismatch was detected; None =
+                # Active IQ hasn't reported an RCF version for this switch at all
+                # (can't assess compliance, not the same as "non-compliant").
+                if not rcf:
+                    rcf_compliant = None
+                else:
+                    rcf_compliant = (rcf == fw)
+
+                switches.append({
+                    "type":              sw_role,
+                    "model":             sw_model,
+                    "serialNumber":      sw_serial if sw_serial else "Not available",
+                    "firmware":          fw  if fw  else "Not reported",
+                    "targetFirmware":    target_fw,   # "" → UI shows "N/A"
+                    "rcfVersion":        rcf if rcf else "",
+                    "rcfCompliant":      rcf_compliant,
+                    "status":            status,
+                    "ipAddress":         sw_ip,
+                    "validationDetails": validation,
+                    "deviceName":        sw_name,
+                    "vendor":            sw_vendor,
+                    "isMonitored":       is_monitored,
+                    "isDiscovered":      is_discovered,
+                    "mcContext":         _sys_is_mcc,
+                    "supportContractEnd":   sw_contract_end,
+                    "supportContractStart": sw_contract_start,
+                    "supportContractDesc":  sw_contract_desc,
+                    "snmpVersion":       (csw.get("snmpConfiguration") or {}).get("version") or "",   # SNMPV1 / SNMPV2C / SNMPV3
+                    "connectedPort":     (_conn or {}).get("connectedPort", ""),
+                    "portSpeed":         (_conn or {}).get("portSpeed", ""),
+                    "portState":         (_conn or {}).get("portState", ""),
+                    "sourcePort":        (_conn or {}).get("sourcePort", ""),
+                })
+
+            # Any switch seen via port connectivity but never reported by
+            # cluster.switches at all (not a merge -- genuinely no CSHM data for it)
+            # is still surfaced, clearly as a thin/connectivity-only row rather than
+            # silently dropped -- but only ONE such row per device now, not one from
+            # every code path that happens to see it.
+            for _norm, _conn in conn_by_dev.items():
+                if _norm in matched_conn_devs:
+                    continue
+                switches.append({
+                    "type": _conn["type"], "model": "", "serialNumber": "Not available",
+                    "firmware": "Not reported", "targetFirmware": "", "rcfVersion": "", "rcfCompliant": None,
+                    "status": "Unknown",
+                    "validationDetails": f"Switch '{_conn['deviceName']}' was seen only via local port connectivity, "
+                                          f"not in Active IQ's CSHM-monitored switch inventory -- no model, firmware, "
+                                          f"or health data is available for it.",
+                    "ipAddress": "", "deviceName": _conn["deviceName"], "vendor": "",
+                    "isMonitored": False, "isDiscovered": False, "mcContext": _sys_is_mcc,
+                    "supportContractEnd": "", "supportContractStart": "", "supportContractDesc": "", "snmpVersion": "",
+                    "connectedPort": _conn.get("connectedPort", ""), "portSpeed": _conn.get("portSpeed", ""),
+                    "portState": _conn.get("portState", ""), "sourcePort": _conn.get("sourcePort", ""),
+                })
+
+            # Merge cluster-level shelves
+            cl_shelves = serial_to_cluster_shelves.get(serial, [])
+            shelves_out = s.get("shelves") or []
+            seen_shelf_sns = {sh.get("serialNumber") for sh in shelves_out if sh.get("serialNumber")}
+            for csh in cl_shelves:
+                csh_sn = csh.get("serialNumber", "")
+                if csh_sn in seen_shelf_sns:
+                    continue  # don't duplicate per-system shelves
+                seen_shelf_sns.add(csh_sn)
+                hm = csh.get("hardwareModel") or {}
+                mmhm = csh.get("moduleHardwareModel") or {}
+                drives_raw = csh.get("drives") or {}
+                shelves_out.append({
+                    "serialNumber": csh_sn,
+                    "shelfId": csh.get("shelfId", ""),
+                    "model": hm.get("name", ""),
+                    "hardwareModel": {"name": hm.get("name", ""), "endOfAvailability": hm.get("endOfAvailability", ""), "endOfHwSupport": hm.get("endOfHwSupport", "")},
+                    "endOfAvailability": hm.get("endOfAvailability", ""),
+                    "endOfHwSupport": hm.get("endOfHwSupport", ""),
+                    "moduleHardwareModel": {"name": mmhm.get("name", "")},
+                    "drives": drives_raw,
+                })
+
+            # ── Pre-compute capacity from system-level ONTAPSystemPhysicalCapacity ──
+            # System-level is preferred; cluster-level used as fallback for systems without cluster data.
+            _sys_phys = cap_phys
+            _sys_log  = (cap.get("logical") or {})
+            _sys_eff  = (cap.get("efficiency") or {})
+            _sys_eff_ratio = (_sys_eff.get("ratio") or {})
+            _sys_eff_saved = (_sys_eff.get("saved") or {})
+            # ── Efficiency ratio fields (ONTAPSystemEfficiency.ratio) ──
+            _eff_ratio     = _sys_eff_ratio.get("efficiencyRatio")       # includes snapshots
+            _data_red      = _sys_eff_ratio.get("dataReductionRatio")    # dedupe+compression only ← preferred
+            _snap_ratio    = _sys_eff_ratio.get("withSnapshotRatio")     # with-snapshot ratio (reference)
+            # ── Space saved KiB fields (ONTAPSystemEfficiency.saved) ──
+            _saved_kib     = _sys_eff_saved.get("savedKiB")              # total (includes snapshot savings)
+            _dedup_kib     = _sys_eff_saved.get("deDuplicationSavedKiB") # pure dedup savings
+            _compact_kib   = _sys_eff_saved.get("compactionSavedKiB")    # compaction savings
+
+            _sys_monthly = []
+            for m in (s.get("monthlyCapacity") or []):
+                mp  = m.get("physical") or {}
+                ml  = m.get("logical") or {}
+                mep = (m.get("efficiency") or {}).get("ratio") or {}
+                mraw = mp.get("rawMarketingKiB") or 0
+                mused = mp.get("usedKiB") or 0
+                mutil = mp.get("utilizationPercentage") or 0
+                # If usedKiB is 0 but utilizationPercentage is set, derive used
+                if mused == 0 and mraw > 0 and mutil > 0:
+                    mused = mraw * mutil / 100.0
+                _sys_monthly.append({
+                    "month":   m.get("month", ""),
+                    "usedTB":  round(mused / (1024**3), 3),
+                    "rawTB":   round(mraw  / (1024**3), 2),
+                    "utilPct": round(mutil, 1) if mutil else None,
+                    "qoqPct":  mp.get("qoqUtilizationPercentage"),
+                    "effRatio": mep.get("efficiencyRatio"),
+                    "logUsedTB": round((ml.get("usedKiB") or 0) / (1024**3), 3),
+                })
+            # Per-month fallback: the API can populate rawMarketingKiB for a month
+            # while leaving that month's usedKiB (and utilizationPercentage) null at
+            # the system level even though the cluster-level monthlyCapacity has a
+            # real usedTB for the same month — merge it in rather than showing "—".
+            _cl_monthly_by_month = {m.get("month"): m for m in (cl_cap.get("monthlyCapacity") or []) if m.get("month")}
+            for _sm in _sys_monthly:
+                if not _sm.get("usedTB"):
+                    _cl_m = _cl_monthly_by_month.get(_sm.get("month"))
+                    if _cl_m and _cl_m.get("usedTB"):
+                        _sm["usedTB"] = _cl_m["usedTB"]
+            _raw_kib  = _sys_phys.get("rawMarketingKiB") or 0
+            _used_kib = _sys_phys.get("usedKiB") or 0
+            _used_no_snap_kib = _sys_phys.get("usedWithoutSnapshotsKiB") or 0
+            _log_kib  = _sys_log.get("usedKiB") or 0
+            _log_no_snap_kib = _sys_log.get("usedWithoutSnapshotsClonesKiB") or 0
+            _usbl_kib = _sys_phys.get("usablePerformanceTierKiB") or 0
+            _qoq      = _sys_phys.get("qoqUtilizationPercentage") or 0
+            _yoy      = _sys_phys.get("yoyUtilizationPercentage") or 0
+            _util_pct = _sys_phys.get("utilizationPercentage") or 0
+            # Fix API gap: if usedKiB is 0 but utilizationPercentage is set, derive it
+            if _used_kib == 0 and _raw_kib > 0 and _util_pct > 0:
+                _used_kib = _raw_kib * _util_pct / 100.0
+            # Fall back to cluster-level if system-level raw is also zero
+            if _raw_kib == 0:
+                _raw_kib  = cl_cap.get("rawCapacityTB", 0) * (1024**3)
+                _used_kib = cl_cap.get("physicalUsedTB", 0) * (1024**3)
+                _log_kib  = cl_cap.get("logicalUsedTB", 0) * (1024**3)
+                _used_no_snap_kib = cl_cap.get("physicalUsedNoSnapsTB", 0) * (1024**3)
+                _log_no_snap_kib  = cl_cap.get("logicalUsedNoSnapsTB", 0) * (1024**3)
+                _usbl_kib = cl_cap.get("usableCapacityTB", 0) * (1024**3)
+                _qoq      = cl_cap.get("qoqUtilizationPct", 0)
+                _yoy      = cl_cap.get("yoyUtilizationPct", 0)
+            # Independent per-field fallback: the API can populate rawMarketingKiB/
+            # usablePerformanceTierKiB at the system level while leaving usedKiB (and
+            # logical usedKiB) null — the block above only fires when _raw_kib is ALSO
+            # zero, so this case (raw/usable present, used genuinely missing) fell
+            # through with a permanently-0.00 TB "Physical Used"/"Logical" display.
+            if _used_kib == 0:
+                _cl_used = cl_cap.get("physicalUsedTB", 0) * (1024**3)
+                if _cl_used > 0:
+                    _used_kib = _cl_used
+            if _log_kib == 0:
+                _cl_log = cl_cap.get("logicalUsedTB", 0) * (1024**3)
+                if _cl_log > 0:
+                    _log_kib = _cl_log
+
+            # ── E-Series (SANtricity): capacity lives on SantricitySystem.capacity, not
+            # in the ONTAP capacity block above (which is empty for these systems) ──
+            # totalKiB = raw capacity of all data drives; configured.allocatedKiB is
+            # space allocated to volume groups/disk pools (NOT data written -- E-Series
+            # has no data reduction to report); unconfiguredKiB = unassigned drives.
+            _e_cap = s.get("eCapacity") or {}
+            _e_cfg = _e_cap.get("configured") or {}
+            _eseries_capacity = None
+            if _e_cap.get("totalKiB") is not None:
+                _e_total = _e_cap.get("totalKiB") or 0
+                _e_alloc = _e_cfg.get("allocatedKiB") or 0
+                _e_free  = _e_cfg.get("freeKiB") or 0
+                _e_unconf = _e_cap.get("unconfiguredKiB") or 0
+                _eseries_capacity = {
+                    "totalTB": round(_e_total / (1024**3), 3),
+                    "allocatedTB": round(_e_alloc / (1024**3), 3),
+                    "freeTB": round(_e_free / (1024**3), 3),
+                    "unconfiguredTB": round(_e_unconf / (1024**3), 3),
+                    "updatedOn": _e_cap.get("updatedOn"),
+                }
+                if _raw_kib == 0 and _e_total > 0:
+                    _raw_kib = _e_total
+                    _used_kib = _e_alloc
+                    _usbl_kib = _e_total
+
+            # ── StorageGRID: capacity is per GRID (StorageGrid.gridCapacity), carried by
+            # the grid's own system object. usableKiB is the REMAINING usable space
+            # (verified: usable + usedData + usedMetadata + reservedMetadata == actual),
+            # so used = data + metadata and total = actual. ──
+            _g_cap = s.get("gCapacity") or {}
+            _storagegrid_capacity = None
+            if _g_cap:
+                _g_cf = _g_cap.get("configured") or {}
+                _g_ph = _g_cap.get("physical") or {}
+                _g_total = _g_ph.get("actualKiB") or _g_ph.get("rawMarketingKiB") or 0
+                _g_used_d = _g_cf.get("usedDataKiB") or 0
+                _g_used_m = _g_cf.get("usedMetadataKiB") or 0
+                _g_free = _g_cf.get("usableKiB") or 0
+                _g_resv = _g_cf.get("reservedMetadataKiB") or 0
+                if _g_total > 0:
+                    _tb = lambda k: round(k / (1024**3), 3)
+                    _storagegrid_capacity = {
+                        "gridId": _g_cap.get("gridId"), "gridName": _g_cap.get("gridName"),
+                        "installedNodeCount": _g_cap.get("installedNodeCount"),
+                        "licenseCapacity": _g_cap.get("licenseCapacity"),
+                        "totalTB": _tb(_g_total), "usedDataTB": _tb(_g_used_d),
+                        "usedMetadataTB": _tb(_g_used_m), "reservedMetadataTB": _tb(_g_resv),
+                        "remainingTB": _tb(_g_free),
+                        "usedPct": round((_g_used_d + _g_used_m) / _g_total * 100, 1),
+                        "qoqPct": _g_ph.get("qoqUtilizationPercentage"),
+                        "yoyPct": _g_ph.get("yoyUtilizationPercentage"),
+                        "reportedOn": _g_cap.get("reportedOn"),
+                    }
+                    if _raw_kib == 0:
+                        _raw_kib = _g_total
+                        _used_kib = _g_used_d + _g_used_m
+                        _usbl_kib = _g_total
+
+            # ── Derive firmware from osVersions catalog if per-system GQL returned null ──
+            _raw_sfw = s.get("systemFirmware") or {}
+            _raw_mbfw = s.get("motherboardFirmware") or {}
+            _raw_dqp = s.get("diskQualificationPackage") or {}
+            _sys_model = (hw.get("name") or "")
+            _sys_os = s.get("osVersion", "") or ""
+            _sys_platform = s.get("platformType", "") or s.get("_source_platform", "") or ""
+            _sys_type_lower = (s.get("type") or "").lower()
+
+            # ── E-Series: SANtricity OS version IS the firmware ──
+            _is_eseries = (_sys_platform.upper() == "E-SERIES"
+                           or _sys_type_lower == "efiler"
+                           or _sys_type_lower == "e-series"
+                           or (s.get("productType") or "").upper() in ("EFILER", "E-SERIES")
+                           or (_sys_model[:2] in ("28", "48") and _sys_model[:4].isdigit()))
+            if _is_eseries:
+                _rec_os = s.get("recommendedOSVersion", "") or ""
+                if _sys_os:
+                    _raw_sfw = {
+                        "type": "SANtricity",
+                        "currentVersion": _sys_os,
+                        "recommendedVersion": _rec_os or _sys_os,
+                        "_derived": True,
+                    }
+                    # E-Series doesn't have separate MB firmware
+                    _raw_mbfw = {}
+                    _raw_dqp = {}
+                    _fw_derived += 1
+            elif (not _raw_sfw.get("currentVersion")) and _sys_model and _sys_os:
+                # Try exact match first
+                _bundled = _fw_by_os_model.get((_sys_os, _sys_model))
+                if not _bundled:
+                    # Progressive prefix fallback: 9.16.1P11 → 9.16.1P → 9.16.1 → 9.16 → 9.
+                    import re as _re_fw
+                    _prefixes = []
+                    _m = _re_fw.match(r'(\d+\.\d+(?:\.\d+)?(?:P)?)(\d*)', _sys_os)
+                    if _m:
+                        _prefixes.append(_m.group(1))          # e.g. "9.16.1P"
+                    _m2 = _re_fw.match(r'(\d+\.\d+\.\d+)', _sys_os)
+                    if _m2:
+                        _prefixes.append(_m2.group(1))         # e.g. "9.16.1"
+                    _m3 = _re_fw.match(r'(\d+\.\d+)', _sys_os)
+                    if _m3:
+                        _prefixes.append(_m3.group(1))         # e.g. "9.16"
+                    # De-duplicate while preserving order
+                    _seen_pfx = set()
+                    for _pfx in _prefixes:
+                        if _pfx in _seen_pfx:
+                            continue
+                        _seen_pfx.add(_pfx)
+                        _candidates = [(k[0], v) for k, v in _fw_by_os_model.items()
+                                       if k[1] == _sys_model and k[0].startswith(_pfx)]
+                        if _candidates:
+                            _candidates.sort(key=lambda x: x[0])
+                            _bundled = _candidates[-1][1]
+                            break
+                # Final fallback: use the latest known firmware for this model from ANY version
+                if not _bundled:
+                    _bundled = _latest_fw_by_model.get(_sys_model)
+                _latest = _latest_fw_by_model.get(_sys_model)
+                if _bundled:
+                    _raw_sfw = {
+                        "type": _bundled["type"],
+                        "currentVersion": _bundled["version"],
+                        "recommendedVersion": _latest["version"] if _latest else _bundled["version"],
+                        "_derived": True,
+                    }
+                    _raw_mbfw = {
+                        "currentVersion": _bundled.get("biosVersion", ""),
+                        "recommendedVersion": _latest.get("biosVersion") if _latest else _bundled.get("biosVersion", ""),
+                        "_derived": True,
+                    }
+                    _fw_derived += 1
+
+            # ── Override SP/BMC recommendedVersion with external ground-truth ──
+            if not _is_eseries:
+                _ext_sp_ver, _ext_sp_src = _resolve_ext_sp_bmc(_sys_model)
+                if _ext_sp_ver and _raw_sfw.get("currentVersion"):
+                    _raw_sfw["recommendedVersion"] = _ext_sp_ver
+                    _raw_sfw["_recommendedSource"] = _ext_sp_src
+
+            # ── Derive DQP from bundled drive firmware catalog ──
+            # DQP version = the ONTAP version that bundles the drive qualification package.
+            # If a system's ONTAP version has bundled drive firmware entries, it ships with that DQP.
+            # The "latest" recommended DQP is the one from the latest ONTAP P-release for same major.
+            if (not _raw_dqp.get("currentVersion")) and _sys_os and not _is_eseries:
+                # Current DQP = whatever ships with the system's current ONTAP version
+                _cur_dqp = _drive_fw_by_os.get(_sys_os)
+                if _cur_dqp:
+                    # Find the recommended (latest) version for same major branch
+                    import re as _re_dqp
+                    _major_match = _re_dqp.match(r'(\d+\.\d+\.\d+)', _sys_os)
+                    _rec_dqp_ver = _sys_os  # default: current version IS recommended
+                    if _major_match:
+                        _major = _major_match.group(1)
+                        _branch_versions = sorted([v for v in _drive_fw_by_os.keys() if v.startswith(_major)])
+                        if _branch_versions:
+                            _rec_dqp_ver = _branch_versions[-1]
+                    _raw_dqp = {
+                        "currentVersion": _sys_os,
+                        "recommendedVersion": _rec_dqp_ver,
+                        "_derived": True,
+                    }
+
+            # ── Override ONTAP recommendedOSVersion with external branch baseline ──
+            if not _is_eseries:
+                _ext_branch_latest = _resolve_ext_ontap_branch(_sys_os)
+                if _ext_branch_latest:
+                    _existing_rec_os = s.get("recommendedOSVersion", "") or ""
+                    # Use the external baseline if it's newer or if AIQ didn't provide one
+                    if not _existing_rec_os or _ext_branch_latest > _existing_rec_os:
+                        s["recommendedOSVersion"] = _ext_branch_latest
+                        s["_recommendedOSSource"] = "external_baseline"
+
+            systems_out.append({
+                # ── Core identity ──
+                "serialNumber": serial,
+                "systemName": s.get("hostName", ""),
+                "clusterName": cl_name,
+                "customerName": cust.get("name", ""),
+                "customerId": cust.get("id", ""),
+                "siteName": site.get("name", ""),
+                "siteId": site.get("id", ""),
+                "siteCity": site.get("city", ""),
+                "siteCountry": site.get("countryCode", ""),
+                "siteState": site.get("state", ""),
+                "nagpId": nagp.get("id", ""),
+                "nagpName": nagp.get("name", ""),
+                "model": (hw.get("name") or ""),
+                "modelRevision": hw.get("modelRevision", ""),
+                "osVersion": s.get("osVersion", ""),
+                "platform": s.get("platformType", ""),
+                "systemType": s.get("type", ""),
+                "productType": s.get("productType", ""),
+                "systemState": s.get("systemState", ""),
+                "systemId": s.get("systemId", ""),
+                "ageInYears": s.get("ageInYears"),
+                "serviceTier": s.get("serviceTier", ""),
+                "recommendedOSVersion": s.get("recommendedOSVersion", ""),
+                "resellerCompany": s.get("incumbentResellerCompany", ""),
+                "techRefreshStatus": s.get("techRefreshStatus", ""),
+                "lastRebootTime": s.get("lastRebootTime", ""),
+                "originalShipDate": s.get("originalShipDate") or "",
+                "marketingType": s.get("marketingType", ""),
+                "storageConfiguration": s.get("storageConfiguration", ""),
+                "isFabricPool": s.get("isFabricPool"),
+                "hasPvr": s.get("hasPvr"),
+                # ── Platform personality (ASA r2 / AFX) ──
+                # ontapPersonality is a real GQL field ("Unified"/"ASAR2"/"AFX", confirmed
+                # live -- casing is inconsistent between the enum's declared name and the
+                # value actually returned, so app.js compares case-insensitively). Only
+                # populated when the ASA r2 capacity merge below found this system;
+                # falls back to the model-name guess otherwise.
+                "personality": (s.get("asaR2Capacity") or {}).get("ontapPersonality") or "",
+                "isDisaggregated": bool(s.get("asaR2Capacity")),
+                "isAsaR2": bool(s.get("asaR2Capacity")) or (hw.get("name") or "").upper().startswith("ASA A"),
+                "isAfx": "EF50" in (hw.get("name") or "").upper() or "EF80" in (hw.get("name") or "").upper() or "AFX" in (hw.get("name") or "").upper(),
+                # True SAZ (Storage Availability Zone) capacity isn't queried -- not
+                # confirmed to exist as a GQL field. What IS confirmed live: ASA r2
+                # systems' capacity{physical{...}} comes back null, but they report
+                # capacity per LUN/namespace via the "ASA r2 capacity merge" pass above.
+                # That's provisioned/usable size, not bytes actually written, so it only
+                # ever fills usable/raw capacity in app.js's enrichment, never physical-used.
+                "sazTotalRawKiB": 0,
+                "sazUsedKiB": 0,
+                "sazAvailableKiB": 0,
+                "sazProvisionedKiB": 0,
+                "sazEffectiveCapacityKiB": 0,
+                "sazDataReductionRatio": None,
+                "consistencyGroupCount": 0,
+                "storageUnitCount": ((s.get("asaR2Capacity") or {}).get("lunCount") or 0) + ((s.get("asaR2Capacity") or {}).get("namespaceCount") or 0),
+                # LUN/namespace-derived usable capacity for ASA r2 (see above) -- kept
+                # separate from the saz* fields since it's a different, confirmed-real
+                # data source, not the (unconfirmed) Storage Availability Zone API.
+                "asaLunUsableKiB": (s.get("asaR2Capacity") or {}).get("usableKiB") or 0,
+                # LUN (SAN) and NAS volume inventory summary (see the "LUN / NAS volume
+                # inventory summary merge" pass above) -- capacity, thin-provisioning and
+                # efficiency signals for SAN/NAS best-practice reporting. None of this
+                # covers igroup mapping or multipathing (confirmed not in the API schema).
+                "lunVolumeSummary": s.get("lunVolumeSummary") or None,
+                "monthlyStats": s.get("monthlyStats") or None,
+                # ── Contacts & personnel ──
+                "contactFirstName": contact.get("firstName", ""),
+                "contactLastName": contact.get("lastName", ""),
+                "contactPhone": contact.get("phone", ""),
+                "contactEmail": contact.get("email", ""),
+                "salesRepName": sr.get("name", ""),
+                "salesRepEmail": sr.get("emailAddress", ""),
+                "csmName": csm_d.get("name", ""),
+                "csmEmail": csm_d.get("emailAddress", ""),
+                "retentionSpecialistName": re_d.get("name", ""),
+                "retentionSpecialistEmail": re_d.get("emailAddress", ""),
+                "solutionEngineerName": se_d.get("name", ""),
+                "solutionEngineerEmail": se_d.get("emailAddress", ""),
+                "samName": sam_d.get("name", ""),
+                "samEmail": sam_d.get("emailAddress", ""),
+                "gard": gard,
+                "aspName": asp.get("name", ""),
+                "aspEndDate": asp.get("endDate") or "",
+                "domesticParentName": dp.get("name", ""),
+                # ── Contract ──
+                "contractActive": contract.get("isContractActive"),
+                "contractEndDate": contract.get("overallContractEndDate") or "",
+                "contractHWEndDate": contract.get("hardwareContractEndDate") or "",
+                "contractSWEndDate": contract.get("softwareContractEndDate") or "",
+                "contractNRDEndDate": contract.get("nrdContractEndDate") or "",
+                "contractExpiry": contract.get("expiryDate") or "",
+                "warrantyEndDate": contract.get("hardwareWarrantyEndDate") or "",
+                "warrantyStartDate": contract.get("hardwareWarrantyStartDate") or "",
+                "serviceLevel": contract.get("hardwareServiceLevel", ""),
+                "contractSWId": contract.get("softwareContractId", ""),
+                "contractHWId": contract.get("hardwareContractId", ""),
+                # ── Hardware lifecycle ──
+                "hwEndOfAvailability": hw.get("endOfAvailability", ""),
+                "hwEndOfSupport": hw.get("endOfSupport", ""),
+                "eosEarliest": eos.get("earliestEndOfSupportDate") or "",
+                "eosShelf": eos.get("earliestShelfEndOfSupportDate") or "",
+                "eosDisk": eos.get("earliestDiskEndOfSupportDate") or "",
+                "eosPVR": eos.get("latestPVRDate") or "",
+                "eosLatest": eos.get("latestEndOfSupportDate") or "",
+                # ── Software version details ──
+                "softwareVersionFull": sv.get("fullVersionString", ""),
+                "swReleaseDate": evd.get("releaseDate") or "",
+                "swEndOfFullSupport": evd.get("endOfVersionFullSupport", ""),
+                "swEndOfLimitedSupport": evd.get("endOfVersionLimitedSupport", ""),
+                "swEndOfSelfService": evd.get("endOfSelfServiceSupport", ""),
+                "swRecMin": srd.get("minRecommendedVersion", ""),
+                "swRecLatest": srd.get("latestRecommendedVersion", ""),
+                "swCQV": (srd.get("cqvDetails") or {}).get("qualifiedVersion", ""),
+                # ── ONTAP flags ──
+                "isMetroCluster": s.get("isMetroCluster"),
+                # Real MetroCluster DR partner CLUSTER, straight from Active IQ
+                # (ONTAPSystem.drCluster) -- confirmed live via GraphQL schema
+                # introspection + a real fleet query (reciprocal: cluster A's
+                # drCluster is cluster B and vice versa). Not previously
+                # queried; the app used to only guess the partner from cluster
+                # naming conventions, which fails for fleets that don't follow
+                # a site-prefix naming pattern (confirmed live: a real 4-cluster
+                # MetroCluster fleet named EXAMPLE-SYSTEM-04 showed as 4 unpaired
+                # clusters under the old name-inference heuristic).
+                "mcDrClusterName": ((s.get("drCluster") or {}).get("name") or ""),
+                "mcDrClusterId": ((s.get("drCluster") or {}).get("id") or ""),
+                # Real per-system Active IQ Health Score (ONTAPSystem.healthScore --
+                # confirmed live: same 0-100 scoring already used fleet-wide/per-
+                # customer via summary(nagpId).healthScore (see tam_official_health_score/
+                # tam_customer_health_scores below), just at system granularity, which
+                # neither of those can give you (which SPECIFIC system is dragging a
+                # customer's score down). KPI breakdown (asup/firmware/security/etc.,
+                # same shape as the fleet-wide query) was tried and confirmed LIVE to
+                # push this query over Active IQ's "Maximum height (field count)" limit
+                # on the TAM tier -- kept to just the overall score to stay safe; the
+                # KPI detail is still available fleet-wide/per-customer.
+                "aiqHealthScore": (s.get("healthScore") or {}).get("overallHealthScore"),
+                "aiqHealthScoreDate": (s.get("healthScore") or {}).get("calculatedAt") or "",
+                "isAllFlashOptimized": s.get("isAllFlashOptimized"),
+                "isARPEnabled": s.get("isARPEnabled"),
+                "operatingMode": s.get("operatingMode", ""),
+                "propensityCategory": s.get("propensityCategory", ""),
+                "nextBestAction": s.get("nextBestAction", ""),
+                "serviceProcessorIP": s.get("serviceProcessorIPAddress", ""),
+                "autoUpdateEnabled": s.get("autoUpdateEnabled"),
+                # ASA r2: SAZ-level capacity (no aggregates; pull from storageAvailabilityZone)
+                "sazTotalRawKiB": 0,
+                "sazUsedKiB": 0,
+                "sazAvailableKiB": 0,
+                # ── AutoSupport ──
+                "latestAsupDate": asup.get("receivedDate") or asup.get("generatedDate") or "",
+                "latestAsupSubject": asup.get("subject", ""),
+                "latestAsupType": asup.get("type", ""),
+                "latestAsupIsManual": asup.get("isManual"),
+                "latestAsupId": asup.get("asupId", ""),
+                "latestRegularAsupDate": _asup_regular_date,
+                "asupStatus": asup_cfg.get("autoSupportStatus", ""),
+                "asupTransport": asup_cfg.get("autoSupportTransport", ""),
+                "asupOnDemand": asup_cfg.get("isAutoSupportOnDemandEnabled"),
+                "asupDomain": asup_cfg.get("systemDomain", ""),
+                "asupHistory": s.get("autoSupports") or [],
+                "asupByType": s.get("latestAsupOfEachType") or [],
+                # ── Firmware ──
+                "systemFirmware": _raw_sfw,
+                "motherboardFirmware": _raw_mbfw,
+                "diskQualificationPackage": _raw_dqp,
+                # Note: "shelves" is set further down using shelves_out (merged per-system + cluster shelves)
+                "autoUpdateSettings": s.get("autoUpdateSettings") or {},
+                # ── Lifecycle & TAM intelligence ──
+                "lifecycleEvents": _normalize_lifecycle_events(s.get("lifecycleEvents")),
+                "licenses": s.get("licenses") or [],
+                "pvrs": s.get("pvrs") or [],
+                # ── Downtime & monthly stats ──
+                "downtimeEvents": s.get("downtimeEvents") or {},
+                "monthlyUptimeStats": s.get("monthlyUptimeStats") or [],
+                "monthlyCarbonStats": s.get("monthlyCarbonStats") or [],
+                "monthlyResolvedRisksStats": s.get("monthlyResolvedRisksStats") or [],
+                "monthlyArpStats": s.get("monthlyArpStats") or [],
+                "monthlyAutoResolvedCases": s.get("monthlyAutoResolvedCases") or [],
+                "sustainabilityScores": s.get("sustainabilityScores") or [],
+                # ── Capacity ──
+                "eseriesCapacity": _eseries_capacity,
+                "storagegridCapacity": _storagegrid_capacity,
+                "storagegridTopology": s.get("gTopology") or None,
+                "platformExtras": s.get("pExtras") or None,
+                "capacityAllocatedKB": 0,
+                "capacityUsedKB": round(_used_kib),
+                "capacityAvailableKB": round(max(0, _usbl_kib - _used_kib)),
+                # TB-scale aliases that app.js enrichSystemTelemetry reads directly
+                "clusterPhysicalUsedTB": round(_used_kib / (1024**3), 3) if _used_kib else 0,
+                "clusterRawCapacityTB":  round(_raw_kib  / (1024**3), 3) if _raw_kib  else 0,
+                "clusterUsableCapacityTB": round(_usbl_kib / (1024**3), 3) if _usbl_kib else 0,
+                "clusterLogicalUsedTB": round(_log_kib / (1024**3), 3) if _log_kib else 0,
+                "physicalUsedNoSnapsTB": round(_used_no_snap_kib / (1024**3), 3) if _used_no_snap_kib else 0,
+                "logicalUsedNoSnapsTB": round(_log_no_snap_kib / (1024**3), 3) if _log_no_snap_kib else 0,
+                "dataReductionRatio": _data_red or cap_eff.get("dataReductionRatio"),
+                "clusterQoQUtilPct": _qoq,
+                "clusterYoYUtilPct": _yoy,
+                "clusterCapacityUtilPct": _util_pct,
+                "clusterCapacityReportedOn": (cap.get("reportedOn") or cl_cap.get("capacityReportedOn", "") or "")[:10],
+                "clusterMonthlyCapacity": _sys_monthly if _sys_monthly else cl_cap.get("monthlyCapacity", []),
+                # ── Efficiency (from system-level GQL) ──
+                "efficiencyRatio": _eff_ratio,
+                "dataReductionRatioSys": _data_red,
+                "withSnapshotRatio": _snap_ratio,
+                "savedKiB": _saved_kib,
+                "dedupSavedKiB": _dedup_kib,
+                "compactionSavedKiB": _compact_kib,
+                # Both default to None (not 0/False) when this serial isn't
+                # part of any cluster Active IQ returned -- e.g. StorageGRID/
+                # E-Series systems, or a real ONTAP system with no cluster
+                # object in this harvest. A hardcoded 0/False default made
+                # "Active IQ never reported this" indistinguishable from a
+                # genuine "0 SnapMirror relationships" / "HA not configured"
+                # on a real ONTAP cluster -- confirmed live: systems with
+                # zero cluster data were rendering a hard "confirmed
+                # disabled" in the Feature Matrix instead of "not reported".
+                "snapMirrorCount": serial_to_cluster_sm.get(serial),
+                "isHAConfigured": serial_to_cluster_ha.get(serial),
+                # ── Aggregate / Volume / SVM topology counts ──
+                "localTierCount": (s.get("storageAggregates") or {}).get("totalCount", 0) or 0,
+                "volumeCount": (s.get("storageVolumes") or {}).get("totalCount", 0) or 0,
+                "lunCount": (s.get("luns") or {}).get("totalCount", 0) or 0,
+                "dataSvmCount": sum(1 for v in serial_to_cluster_vservers.get(serial, []) if (v.get("type") or "").lower() == "data"),
+                "nodeSvmCount": sum(1 for v in serial_to_cluster_vservers.get(serial, []) if (v.get("type") or "").lower() == "node"),
+                # ── Shelves, drives, ports, switches ──
+                "shelves": shelves_out,
+                # Active IQ's `shelves { ... }` list has no per-shelf installed-firmware
+                # field at all (confirmed via live GraphQL schema introspection: Shelf,
+                # ShelfModuleHardwareModel and Bays all lack one). The currently-installed
+                # version only exists on the separate `shelvesSummary { firmware {
+                # currentVersion recommendedVersion } } }` field, grouped by module type
+                # rather than per physical shelf -- that's what the UI's Firmware Currency
+                # panel now reads for "Current".
+                "shelvesSummary": s.get("shelvesSummary") or [],
+                "recommendedDriveFirmwares": _latest_drive_fw if _latest_drive_fw else (_drive_fw_by_os.get(_sys_os) or _drive_fw_by_os.get(s.get("recommendedOSVersion", "")) or {}),
+                # Filter shelf firmware to only modules actually installed on this system
+                "recommendedShelfFirmwares": {mod: _shelf_fw_by_os_module.get((_sys_os, mod)) or _latest_shelf_fw_by_module.get(mod, "") for mod in _latest_shelf_fw_by_module if mod in {(_sh.get("moduleHardwareModel") or {}).get("name", "") for _sh in shelves_out if (_sh.get("moduleHardwareModel") or {}).get("name", "")}} if not _is_eseries else {},
+                "portInterface": s.get("portInterface") or {},
+                "networkPorts": s.get("networkPorts") or {},
+                "switches": switches,
+                "vservers": serial_to_cluster_vservers.get(serial, []),
+                "vcenters": s.get("vcenters") or [],
+                # ── Risks & cases ──
+                "risks": risks_by_serial.get(serial, []),
+                "capacitySplit": s.get("capacitySplit") or {},
+                "energyForecast": s.get("energyForecast") or [],
+                "cases": cases_by_serial.get(serial, []),
+                "_source": "graphql",
+            })
+
+        if _fw_derived:
+            print(f"  [HARVEST] Firmware derived from osVersions catalog for {_fw_derived}/{len(systems_out)} systems", flush=True)
+
+        # ── Per-aggregate efficiency/FabricPool detail ─────────────────────
+        # Confirmed live via GraphQL introspection (2026-09-17) that the
+        # `aggregates(systemSerialNumber: ...)` query returns real, populated
+        # per-aggregate data (efficiency ratio, FabricPool tiering status,
+        # SIS-disabled volume counts) that isn't visible in the system-level
+        # rollup already harvested above (`localTierCount` is just a count).
+        # There is no account/watchlist-level scope for this query -- only
+        # per-system -- so it's fetched with a bounded thread pool, ONTAP-only
+        # (E-Series/StorageGRID have no WAFL aggregates), and reduced to a
+        # compact per-system summary rather than storing every raw aggregate
+        # (keeps the harvest payload and per-account API load reasonable
+        # across a fleet this size).
+        _agg_targets = [s for s in systems_out if "ONTAP" in (s.get("platform") or "").upper() and s.get("serialNumber")]
+        if _agg_targets:
+            print(f"  [HARVEST] Fetching per-aggregate detail for {len(_agg_targets)} ONTAP system(s)...", flush=True)
+            _agg_ok = 0
+
+            def _fetch_aggregates(_sys):
+                _serial = _sys.get("serialNumber")
+                try:
+                    _aggs, _ag_after, _ag_guard = [], "", 0
+                    while _ag_guard < 200:
+                        _ag_guard += 1
+                        _, _resp = _gql(token, _Q("aggregates_page", after=_A("after", _ag_after), serial=_serial))
+                        _agd = ((_resp.get("data") or {}).get("aggregates") or {}) if isinstance(_resp, dict) else {}
+                        _pg = _agd.get("aggregates") or []
+                        _aggs.extend(_pg)
+                        _agc = _agd.get("cursor") or ""
+                        if len(_pg) < 200 or not _agc or _agc == _ag_after:
+                            break
+                        _ag_after = _agc
+                    _data_aggs = [a for a in _aggs if not a.get("isRoot")]
+                    if not _data_aggs:
+                        return _serial, None
+                    _ratios = [a["storageEfficiencyRatio"]["withoutSnapshot"] for a in _data_aggs
+                               if (a.get("storageEfficiencyRatio") or {}).get("withoutSnapshot") is not None]
+                    _fc = [x for x in (_aggregate_forecast(a.get("name") or "", (a.get("capacityForecast") or {}).get("trend")) for a in _data_aggs) if x]
+                    return _serial, {
+                        "forecasts": _fc,
+                        "aggregatesFullWithin12Months": sum(1 for x in _fc if x["monthsTo100"] is not None and x["monthsTo100"] <= 12),
+                        "aggregatesOver90Within12Months": sum(1 for x in _fc if x["monthsTo90"] is not None and x["monthsTo90"] <= 12),
+                        "aggregateCount": len(_data_aggs),
+                        "aggregatesWithoutFabricPool": sum(1 for a in _data_aggs if a.get("isFabricPoolEnabled") is False),
+                        "aggregatesWithSisDisabledVolumes": sum(1 for a in _data_aggs if (a.get("sisDisabledVolumesCount") or 0) > 0),
+                        "avgEfficiencyRatioWithoutSnapshot": round(sum(_ratios) / len(_ratios), 2) if _ratios else None,
+                        "raidTypes": {t: sum(1 for a in _data_aggs if a.get("raidType") == t) for t in sorted({a.get("raidType") for a in _data_aggs if a.get("raidType")})},
+                        "storageTypes": {t: sum(1 for a in _data_aggs if a.get("storageType") == t) for t in sorted({a.get("storageType") for a in _data_aggs if a.get("storageType")})},
+                        "offlineVolumes": sum((a.get("offlineVolumesCount") or 0) for a in _data_aggs),
+                        "aggregatesWithOfflineVolumes": sum(1 for a in _data_aggs if (a.get("offlineVolumesCount") or 0) > 0),
+                        "snapLockAggregates": sum(1 for a in _data_aggs if a.get("snapLockMode") and str(a.get("snapLockMode")).upper() not in ("NONE", "NOT_SNAPLOCK", "NOT_ENABLED")),
+                    }
+                except Exception:
+                    return _serial, None
+
+            with ThreadPoolExecutor(max_workers=10, thread_name_prefix='aggregates') as _pool:
+                for _serial, _summary in _pool.map(_fetch_aggregates, _agg_targets):
+                    if _summary:
+                        _agg_ok += 1
+                        for _s in systems_out:
+                            if _s.get("serialNumber") == _serial:
+                                _s["aggregateDetail"] = _summary
+                                break
+            print(f"  [HARVEST] Per-aggregate detail: {_agg_ok}/{len(_agg_targets)} systems reported aggregate data", flush=True)
+
+        # ── Per-customer official Active IQ Health Score ───────────────────
+        # The account-wide tam_official_health_score fetched earlier is ONE
+        # score for the whole watchlist/account scope -- it never changes
+        # when a TAM filters the UI down to a single customer, which reads
+        # as a broken/stuck KPI (found live: the Overview tile showed the
+        # same 68/100 regardless of which customer was selected). `summary`
+        # also accepts a real `nagpId` filter, so fetch one score per real
+        # customer (same bounded thread-pool pattern as aggregates, but
+        # scoped to the much smaller set of distinct customers, not systems).
+        _customer_nagps = {}
+        for _s in systems_out:
+            _nid = _s.get("nagpId")
+            if _nid and _nid not in _customer_nagps:
+                _customer_nagps[_nid] = _s.get("nagpName", "")
+        tam_customer_health_scores = []
+        if _customer_nagps:
+            print(f"  [HARVEST] Fetching per-customer health score for {len(_customer_nagps)} customer(s)...", flush=True)
+            _hs_ok = 0
+
+            def _fetch_customer_health_score(_item):
+                _nid, _nname = _item
+                try:
+                    _, _resp = _gql(token, _Q("health_score_customer", nagp_id=_nid))
+                    _hs = (((_resp.get("data") or {}).get("summary") or {}).get("healthScore")) if isinstance(_resp, dict) else None
+                    if _hs and _hs.get("overallHealthScore") is not None:
+                        return {"nagpId": _nid, "nagpName": _nname, "overallHealthScore": _hs.get("overallHealthScore"), "calculatedAt": _hs.get("calculatedAt", "")}
+                except Exception:
+                    pass
+                return None
+
+            with ThreadPoolExecutor(max_workers=10, thread_name_prefix='health-score') as _pool:
+                for _result in _pool.map(_fetch_customer_health_score, _customer_nagps.items()):
+                    if _result:
+                        _hs_ok += 1
+                        tam_customer_health_scores.append(_result)
+            print(f"  [HARVEST] Per-customer health score: {_hs_ok}/{len(_customer_nagps)} customers reported", flush=True)
+
+        # ── Per-customer TAM Recommendations ────────────────────────────────
+        # `recommendations` (the account-wide tam_recommendations fetched
+        # earlier) accepts a real `customerId` filter -- confirmed live
+        # (2026-09-17) that scoping by customerId returns genuinely different
+        # Score % values per customer (e.g. one real customer's MIN_VERSION
+        # check scored 8%, another's scored 0%, the unscoped account-wide
+        # figure was 44% -- none of the three match). The UI previously had
+        # to show an honest "this percentage is account-wide, not just this
+        # customer" disclaimer because no per-customer source existed; this
+        # fetches the real thing instead, one call per real customerId
+        # (same bounded thread-pool pattern as the health score fetch above).
+        _customer_ids = {}
+        for _s in systems_out:
+            _cid = _s.get("customerId")
+            if _cid and _cid not in _customer_ids:
+                _customer_ids[_cid] = _s.get("customerName", "")
+        tam_customer_recommendations = []
+        if _customer_ids:
+            print(f"  [HARVEST] Fetching per-customer recommendations for {len(_customer_ids)} customer(s)...", flush=True)
+            _rec_ok = 0
+
+            def _fetch_customer_recommendations(_item):
+                _cid, _cname = _item
+                try:
+                    _, _resp = _gql(token, _Q("recommendations_customer", customer_id=_cid))
+                    _recs = (_resp.get("data") or {}).get("recommendations") if isinstance(_resp, dict) else None
+                    if _recs:
+                        return {"customerId": _cid, "customerName": _cname, "recommendations": _recs}
+                except Exception:
+                    pass
+                return None
+
+            with ThreadPoolExecutor(max_workers=10, thread_name_prefix='cust-recs') as _pool:
+                for _result in _pool.map(_fetch_customer_recommendations, _customer_ids.items()):
+                    if _result:
+                        _rec_ok += 1
+                        tam_customer_recommendations.append(_result)
+            print(f"  [HARVEST] Per-customer recommendations: {_rec_ok}/{len(_customer_ids)} customers reported", flush=True)
+
+        # 14. Fetch watchlists from REST API -- GET /v2/watchlist/list, header
+        # `authorizationToken: <token>` (no "Bearer " prefix), results nested at
+        # results.watchlist[] with snake_case fields. See the early-discovery block
+        # above for how this was found (NetApp's internal API catalog).
+        watchlists_out = []
+        try:
+            wl_status, wl_raw = _rest("watchlist_list", token=token)
+            if wl_status == 200:
+                wl_data = json.loads(wl_raw.decode("utf-8", errors="replace"))
+                wl_list = ((wl_data.get("results") or {}).get("watchlist")) or []
+                for wl in wl_list:
+                    if isinstance(wl, dict):
+                        wid = wl.get("watchlist_id") or ""
+                        wname = wl.get("watchlist_name") or "Watchlist"
+                        if wid:
+                            watchlists_out.append({"id": wid, "name": wname, "systemSerials": [],
+                                                    "level": wl.get("wl_level", ""), "category": wl.get("wl_category", "")})
+                if watchlists_out:
+                    print(f"  [HARVEST] Watchlists: {len(watchlists_out)} from GET /v2/watchlist/list", flush=True)
+                    # Persist resolved names so fallback runs keep real names
+                    try:
+                        _cfg_w = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+                        _cfg_w["watchlistNames"] = {w["id"]: w["name"] for w in watchlists_out}
+                        CONFIG_PATH.write_text(json.dumps(_cfg_w, indent=2), encoding="utf-8")
+                    except Exception:
+                        pass
+            else:
+                print(f"  [HARVEST] Watchlists: GET /v2/watchlist/list returned HTTP {wl_status}", flush=True)
+        except Exception as e:
+            print(f"  [HARVEST] Watchlist fetch skipped: {e}", flush=True)
+
+        # 14a. Fallback: try GQL watchlists query if REST returned nothing
+        # (see the matching NOTE above — this field does not exist in the current
+        # schema, confirmed via live introspection; kept for forward-compatibility)
+        if not watchlists_out:
+            try:
+                _, wl_gql_resp = _gql(token, _Q("watchlists"))
+                wl_gql_list = ((wl_gql_resp.get("data") or {}).get("watchlists") or []) if isinstance(wl_gql_resp, dict) else []
+                for wl in wl_gql_list:
+                    if isinstance(wl, dict):
+                        wid = wl.get("id") or wl.get("watchListId") or wl.get("watchlistId") or ""
+                        wname = wl.get("name") or wl.get("watchListName") or wl.get("watchlistName") or "Watchlist"
+                        if wid:
+                            watchlists_out.append({"id": wid, "name": wname, "systemSerials": []})
+                if watchlists_out:
+                    print(f"  [HARVEST] Watchlists: {len(watchlists_out)} from GQL", flush=True)
+                    # Persist GQL-resolved names so fallback uses real names
+                    try:
+                        _cfg_w = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+                        _cfg_w["watchlistNames"] = {w["id"]: w["name"] for w in watchlists_out}
+                        CONFIG_PATH.write_text(json.dumps(_cfg_w, indent=2), encoding="utf-8")
+                    except Exception:
+                        pass
+            except Exception as _wl_gql_e:
+                print(f"  [HARVEST] GQL watchlist discovery skipped: {_wl_gql_e}", flush=True)
+
+        # 14b. Final fallback: use watchlist_ids from config — still re-resolve serials
+        #      so membership changes in AIQ are always reflected, even outside network.
+        if not watchlists_out and watchlist_ids:
+            _cfg_names = {}
+            try:
+                _cfg_tmp = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+                _cfg_names = _cfg_tmp.get("watchlistNames", {})
+            except Exception:
+                pass
+            for wid in watchlist_ids:
+                _placeholder_name = f"Watchlist {wid[:8]}"
+                _resolved_name = _cfg_names.get(wid, _placeholder_name)
+                watchlists_out.append({
+                    "id": wid,
+                    "name": _resolved_name,
+                    # Only a name we synthesized ourselves (no real name from
+                    # GQL/config) is safe to overwrite with a customer name
+                    # once serials resolve below -- a real, human-chosen
+                    # watchlist name (e.g. "APAC Region") must never be
+                    # silently replaced.
+                    "_isPlaceholderName": _resolved_name == _placeholder_name,
+                    "systemSerials": []
+                })
+            print(f"  [HARVEST] Watchlists: {len(watchlists_out)} from config (fallback)", flush=True)
+
+        # 14c. Resolve system serial numbers for each watchlist via GraphQL
+        if watchlists_out:
+            print(f"  [HARVEST] Resolving system serials for {len(watchlists_out)} watchlist(s)...", flush=True)
+            # Serial -> real customer name, from the systems already harvested
+            # above (step 13) -- used below to replace a synthesized
+            # "Watchlist <id prefix>" placeholder with the actual customer
+            # name once we know which systems are in that watchlist. MSP/TAM
+            # watchlists are typically scoped one-per-customer, so the
+            # customer name is a far more useful label than a random ID
+            # fragment.
+            _serial_to_customer = {s.get("serialNumber"): s.get("customerName") for s in systems_out if s.get("serialNumber")}
+            # No cap here (previously [:20] -- found live, once auto-discovery started
+            # finding a real account's full set, that a 23-watchlist account silently
+            # lost systemSerials resolution for its last 3 watchlists, same class of
+            # bug as the clusters() scoping gap above: risks/cases loops elsewhere in
+            # this function already iterate every configured watchlist with no cap,
+            # so there was no real reason for this one to differ).
+            for wl in watchlists_out:
+                wl_id = wl.get("id", "")
+                if not wl_id:
+                    continue
+                try:
+                    serials = []
+                    wl_cursor = None
+                    for wl_page in range(50):  # Max 5000 systems per watchlist
+                        _, wl_sys_resp = _gql(token, _Q("watchlist_system_serials_page", watchlist_id=wl_id, after=_A("after", wl_cursor)))
+                        wl_sys_data = (wl_sys_resp.get("data") or {}).get("systems", {}) if isinstance(wl_sys_resp, dict) else {}
+                        wl_systems = wl_sys_data.get("systems") or []
+                        for ws in wl_systems:
+                            sn = ws.get("serialNumber") or ""
+                            if sn:
+                                serials.append(sn)
+                        new_cursor = wl_sys_data.get("cursor")
+                        if not wl_systems or not new_cursor or new_cursor == wl_cursor:
+                            break
+                        wl_cursor = new_cursor
+                    wl["systemSerials"] = serials
+                    # Replace a synthesized placeholder name with the real
+                    # customer name once we know the watchlist's membership.
+                    # Originally required unanimous agreement across every
+                    # resolved system, but confirmed live that's too strict:
+                    # a real watchlist (186 systems) was 171 "Customer A" and 15 "Customer A (variant spelling)" -- the same
+                    # customer with an inconsistent name on a handful of
+                    # systems in Active IQ's own records, not a genuinely
+                    # mixed-customer watchlist. Use majority vote instead:
+                    # the dominant customer name is used once it covers at
+                    # least 75% of resolved systems: high enough that a
+                    # real mixed-customer watchlist (roughly even split)
+                    # still correctly keeps its generic label, low enough
+                    # to absorb this kind of minority data-quality noise.
+                    if wl.pop("_isPlaceholderName", False) and serials:
+                        from collections import Counter
+                        _cust_counts = Counter(_serial_to_customer.get(sn) for sn in serials if _serial_to_customer.get(sn))
+                        if _cust_counts:
+                            _top_name, _top_count = _cust_counts.most_common(1)[0]
+                            if _top_count / sum(_cust_counts.values()) >= 0.75:
+                                wl["name"] = _top_name
+                    print(f"    Watchlist '{wl['name']}': {len(serials)} systems", flush=True)
+                except Exception as wl_err:
+                    wl.pop("_isPlaceholderName", None)
+                    print(f"    Watchlist '{wl.get('name', wl_id)}' serial resolve failed: {wl_err}", flush=True)
+            # Belt-and-suspenders: any watchlist whose loop iteration above raised
+            # before reaching the try's own pop() would leak this internal marker
+            # into the JSON response -- strip it from all of them here regardless.
+            for wl in watchlists_out:
+                wl.pop("_isPlaceholderName", None)
+            # Persist any newly-resolved customer names so the next harvest's
+            # config-fallback path (14b above) reuses them instead of
+            # re-synthesizing "Watchlist <id prefix>" every time.
+            try:
+                _cfg_w2 = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+                _names_now = _cfg_w2.get("watchlistNames", {})
+                _names_now.update({w["id"]: w["name"] for w in watchlists_out if w.get("id") and w.get("name")})
+                _cfg_w2["watchlistNames"] = _names_now
+                CONFIG_PATH.write_text(json.dumps(_cfg_w2, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        result = {
+            "status": "success",
+            "systems": systems_out,
+            "clusters": all_clusters,
+            "risks": all_risks,
+            "cases": all_cases,
+            "riskInstances": len(all_risk_instances),
+            "customers": customers,
+            "watchlists": watchlists_out,
+            "totalSystems": len(systems_out),
+            "totalClusters": len(all_clusters),
+            "totalRisks": len(all_risks),
+            "totalCases": len(all_cases),
+            "totalRiskInstances": len(all_risk_instances),
+            "summary": summary,
+            # ── TAM data ──
+            "tamRecommendations": tam_recommendations,
+            "tamSites": tam_sites,
+            "tamSustainability": tam_sustainability,
+            "tamOfficialHealthScore": tam_official_health_score,
+            "tamCaseSummary": tam_case_summary,
+            "tamRisksCount": tam_risks_count,
+            "tamWorkloadSummary": tam_workload_summary,
+            "tamSgForecast": tam_sg_forecast,
+            "tamCustomerHealthScores": tam_customer_health_scores,
+            "tamCustomerRecommendations": tam_customer_recommendations,
+            "tamSuccessPlans": tam_success_plans,
+            "tamOsVersions": tam_os_versions,
+            "acknowledgedRisksNowExploited": acknowledged_risks_now_exploited,
+            "tamRenewals": tam_renewals,
+            "otherProductSystems": other_product_systems,
+            # ── External firmware baselines (ground-truth) ──
+            "firmwareBaselines": _ext_baselines,
+        }
+
+        # Tag every per-system/cluster/risk/case record with which account it
+        # came from, so a merged multi-account view can still tell customers
+        # apart (used by the sidebar Account filter and by _merge_account_results).
+        if account:
+            _acct_id = account.get("id") or "default"
+            _acct_label = account.get("label") or _acct_id
+            result["accountId"] = _acct_id
+            result["accountLabel"] = _acct_label
+            for _field in ("systems", "clusters", "risks", "cases", "tamSites", "tamRenewals", "otherProductSystems", "tamRecommendations", "tamSustainability", "tamOfficialHealthScore", "tamCaseSummary", "tamRisksCount", "tamWorkloadSummary", "tamSgForecast", "tamCustomerHealthScores", "tamCustomerRecommendations", "tamSuccessPlans"):
+                for _item in (result.get(_field) or []):
+                    if isinstance(_item, dict):
+                        _item.setdefault("accountId", _acct_id)
+                        _item.setdefault("accountLabel", _acct_label)
+
+        # Keep the local list of your own names and serials (used to stop them reaching git) current after every sync
+        try:
+            import guard_sensitive
+            guard_sensitive.refresh(DB_PATH, CONFIG_PATH, quiet=True)
+        except Exception:
+            pass
+        print(f"  [HARVEST] Done in {duration_ms}ms: {len(systems_out)} systems, {len(all_clusters)} clusters, {len(all_risks)} unique risks, {len(all_risk_instances)} risk instances, {len(all_cases)} cases", flush=True)
+
+        # ── Merge-back guard: preserve previous data on transient API failures ──
+        # When the API times out, systems or clusters may return 0 even though the
+        # data exists.  Rather than overwriting good cached data with empty arrays,
+        # merge the previous harvest's systems/clusters back into the result.
+        db = _init_db()
+        try:
+            if account:
+                prev_result, _ = _load_cached_account(db, account.get("id") or "default")
+            else:
+                prev_result, _ = _load_cached(db)
+            if prev_result:
+                if len(systems_out) == 0 and len(prev_result.get("systems") or []) > 0:
+                    prev_sys = prev_result["systems"]
+                    print(f"  [HARVEST] Merge-back: keeping {len(prev_sys)} systems from previous harvest (current returned 0)", flush=True)
+                    result["systems"] = prev_sys
+                    result["totalSystems"] = len(prev_sys)
+                if len(all_clusters) == 0 and len(prev_result.get("clusters") or []) > 0:
+                    prev_cl = prev_result["clusters"]
+                    print(f"  [HARVEST] Merge-back: keeping {len(prev_cl)} clusters from previous harvest (current returned 0)", flush=True)
+                    result["clusters"] = prev_cl
+                    result["totalClusters"] = len(prev_cl)
+
+            _acct_id = account.get("id") if account else "default"
+            _acct_label = (account.get("label") or account.get("id")) if account else "Default Account"
+            if account:
+                _save_harvest_account(db, _acct_id or "default", _acct_label or "default", result, duration_ms)
+            else:
+                _save_harvest(db, result, duration_ms)
+            _capture_snapshots(db, result)
+            _populate_reporting_tables(db, _acct_id or "default", _acct_label or "default", result)
+            _maybe_send_webhook_alert(db, result, _acct_label or "default")
+        finally:
+            db.close()
+
+        # Trigger background enrichment for all versions found in this harvest
+        # Non-blocking: runs in a separate daemon thread so it never delays the response
+        try:
+            t = threading.Thread(
+                target=_enrich_all_versions,
+                args=(result,),
+                daemon=True
+            )
+            t.start()
+            print("  [ENRICH] Post-harvest enrichment thread started.", flush=True)
+        except Exception as _te:
+            print(f"  [ENRICH] Could not start enrichment thread: {_te}", flush=True)
+
+        return result
+
+    except Exception as e:
+        _last_sync_error = str(e)
+        raise
+    finally:
+        with _sync_lock:
+            _is_syncing = False
+
+
+def _sync_all_accounts(extra_watchlist_ids=None):
+    """Harvest every configured account, one at a time.
+
+    Sequential (not parallel/threaded) on purpose: each account is a separate
+    Active IQ credential/token exchange, and hammering NetApp's API with N
+    concurrent OAuth exchanges + GraphQL queries is both impolite and more
+    likely to trip rate limiting than doing them one after another. A failure
+    on one account is logged and does not stop the remaining accounts from
+    syncing — one customer's expired token shouldn't block everyone else's data.
+
+    Returns {"succeeded": [account_id, ...], "failed": {account_id: error_str}}.
+    """
+    accounts = _get_accounts()
+    if not accounts:
+        raise Exception("setup_required: No Active IQ accounts configured — open Settings & Config to add at least one")
+
+    succeeded, failed = [], {}
+    for acct in accounts:
+        acct_label = acct.get("label") or acct.get("id")
+        print(f"  [MULTI-ACCOUNT] Syncing account '{acct_label}' ({acct.get('id')})...", flush=True)
+        try:
+            _do_full_harvest(watchlist_ids=extra_watchlist_ids, account=acct)
+            succeeded.append(acct.get("id"))
+        except Exception as e:
+            print(f"  [MULTI-ACCOUNT] Account '{acct_label}' failed: {e}", flush=True)
+            import traceback as _tb; _tb.print_exc()
+            failed[acct.get("id")] = str(e)
+    print(f"  [MULTI-ACCOUNT] Done: {len(succeeded)} succeeded, {len(failed)} failed", flush=True)
+    return {"succeeded": succeeded, "failed": failed}
+
+
+def _get_merged_harvest(db, account_id=None):
+    """Read cached harvest data for the dashboard. With no account_id, merges
+    every currently-configured account's cached result into one unified fleet
+    view (this is the default — the whole point of multi-account support is
+    not having to pick one). Pass account_id to scope to a single account
+    instead.
+
+    Cache rows are filtered down to accounts still present in aiq_config.json
+    ("default" is always allowed, for the legacy single-token path) — an
+    account removed from config stops appearing in the merged view instead of
+    haunting it forever as an orphaned cache row that can never be refreshed
+    or explained.
+    """
+    if account_id:
+        result, meta = _load_cached_account(db, account_id)
+        return result, [meta] if meta else []
+    all_cached = _load_all_accounts_cached(db)
+    configured_ids = {a["id"] for a in _get_accounts()} | {"default"}
+    all_cached = [(acct_id, result, meta) for acct_id, result, meta in all_cached if acct_id in configured_ids]
+    if not all_cached:
+        # No per-account cache yet (fresh install, never synced) — fall back
+        # to the legacy singleton table in case it has pre-migration data.
+        result, meta = _load_cached(db)
+        return result, [meta] if meta else []
+    merged = _merge_account_results([(acct_id, result, meta) for acct_id, result, meta in all_cached])
+    metas = [meta for _acct_id, _result, meta in all_cached]
+    return merged, metas
+
+
+def _enrich_all_versions(harvest_result):
+    """
+    Post-harvest enrichment pass.
+    Extracts every unique software version string from the harvested systems
+    and enriches it via the existing fetchers, writing results to enrich_cache.
+    Skips any version that was already enriched within the last 6 days.
+    Rate-limited to 1 request/second to be polite to public servers.
+    """
+    systems = harvest_result.get('systems', [])
+    if not systems:
+        return
+
+    # Collect unique (version, platform_family) pairs
+    to_enrich = {}  # key → (enrich_type, version_string)
+
+    # ── Shared StorageGRID platform detector ──────────────────────────────────
+    # Active IQ API returns platformType as raw codes (e.g. 'SG6160', 'SG5712',
+    # 'SGF6112', 'SG100', 'SG1000') — NOT the human-readable prefix 'StorageGRID'.
+    # We must test every known SG family prefix to avoid misclassifying these nodes
+    # as ONTAP (which causes wrong enrichment type, wrong security bulletins, and
+    # wrong version catalogue lookups — the corporate-network specific bug).
+    def _is_storagegrid_platform(platform_str, system_type='', product_type=''):
+        p = platform_str.lower()
+        st = system_type.lower()
+        pt = product_type.lower()
+        return (
+            'storagegrid' in p or 'webscale' in p or
+            # SG6xxx family: SG6060, SG6160, SG6112, SG6024, SG6000-CN…
+            'sg60' in p or 'sg61' in p or 'sg62' in p or 'sg6' in p or
+            # SG5xxx family: SG5712, SG5760, SG5612…
+            'sg5' in p or
+            # SGF6xxx family: SGF6112, SGF6024, SGF6112-C…
+            'sgf' in p or
+            # SG100 / SG1000 admin nodes
+            'sg100' in p or 'sg1000' in p or
+            # Catch-all: any 'sg' prefix followed by digits (future SG families)
+            (p.startswith('sg') and any(c.isdigit() for c in p[2:4])) or
+            # systemType / productType fields
+            st == 'storagegrid' or
+            'storagegrid' in pt or 'object' in pt
+        )
+
+    for sys in systems:
+        ver = sys.get('osVersion') or sys.get('ontapVersion') or sys.get('softwareVersion') or ''
+        if not ver or len(ver) < 4:
+            continue
+        platform = sys.get('platform') or sys.get('platformModel') or sys.get('platformType') or ''
+        sys_type = sys.get('systemType') or ''
+        prod_type = sys.get('productType') or ''
+        if _is_storagegrid_platform(platform, sys_type, prod_type):
+            etype = 'sg-version'
+        elif (any(k in platform.lower() for k in ('e-series', 'ef6', 'ef3', 'e5700', 'e2800', 'ef50', 'ef80', 'e4000'))
+              or sys_type.lower() in ('eseries', 'e-series', 'e_series')
+              or prod_type.lower() in ('eseries', 'e-series', 'e_series', 'santricity')):
+            etype = 'santricity-version'
+        else:
+            etype = 'ontap-version'
+        cache_key = f'{etype}:{ver}'
+        to_enrich[cache_key] = (etype, ver)
+
+    if not to_enrich:
+        return
+
+    print(f"  [ENRICH] Post-harvest: checking {len(to_enrich)} unique version(s)...", flush=True)
+    db = _init_db()
+    try:
+        enriched_count = 0
+        skipped_count = 0
+        for cache_key, (etype, ver) in to_enrich.items():
+            try:
+                # Check if already cached and fresh (within 6 days)
+                row = db.execute(
+                    "SELECT fetched_at FROM enrich_cache WHERE cache_key = ?",
+                    (cache_key,)
+                ).fetchone()
+                if row:
+                    # Already cached — skip unless stale (> 6 days handled by purge on init)
+                    skipped_count += 1
+                    continue
+
+                # Fetch from public source
+                data = None
+                if etype == 'ontap-version':
+                    data = fetch_ontap_version_info(ver)
+                elif etype == 'sg-version':
+                    data = fetch_sg_version_info(ver)
+                elif etype == 'santricity-version':
+                    data = fetch_santricity_version_info(ver)
+
+                if data:
+                    fetched_at = datetime.now(timezone.utc).isoformat()
+                    db.execute(
+                        'INSERT OR REPLACE INTO enrich_cache (cache_key, result_json, fetched_at, source) VALUES (?, ?, ?, ?)',
+                        (cache_key, json.dumps(data), fetched_at, 'docs.netapp.com')
+                    )
+                    db.commit()
+                    enriched_count += 1
+                    print(f"  [ENRICH] {cache_key} — OK", flush=True)
+
+                # Rate limit: 1 req/sec to be polite
+                time.sleep(1.0)
+
+            except Exception as _e:
+                print(f"  [ENRICH] {cache_key} failed: {_e}", flush=True)
+                continue
+        print(f"  [ENRICH] Post-harvest complete: {enriched_count} enriched, {skipped_count} already cached.", flush=True)
+
+        print("  [ENRICH] Refreshing version catalog...", flush=True)
+        try:
+            catalog = fetch_latest_version_catalog()
+            if catalog:
+                db.execute(
+                    'INSERT OR REPLACE INTO enrich_cache (cache_key, fetched_at, result_json, source) VALUES (?, ?, ?, ?)',
+                    ('_catalog:versions', datetime.now(timezone.utc).isoformat(), json.dumps(catalog), 'docs.netapp.com')
+                )
+                db.commit()
+        except Exception as e:
+            print(f"  [ENRICH] Failed to refresh version catalog: {e}", flush=True)
+
+    finally:
+        db.close()
+
+
+def _background_sync():
+    """Run a full harvest in the background. Errors are logged, not raised."""
+    try:
+        # Read all watchlist IDs from config for background sync.
+        # These are the LEGACY top-level fields (see _get_accounts()'s docstring:
+        # "treated as account id=default whenever no accounts array is present").
+        # Only meaningful in single-account mode -- once an "accounts" array is
+        # configured, applying this as extra_watchlist_ids would scope EVERY
+        # account's harvest to whichever watchlist happens to be sitting in the
+        # stale top-level field (a leftover from before multi-account was set
+        # up), not just the account it actually belongs to. Confirmed live:
+        # this cross-contaminated a second account's risks/cases queries with
+        # the first account's watchlist ID, silently zeroing them out via a
+        # privilege error caught deep in the scoped-fetch retry logic.
+        wl_ids = []
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+            if not cfg.get("accounts"):
+                # Support both new watchlistIds (comma-sep) and legacy watchlistId (single).
+                # Only use watchlistId (legacy) if watchlistIds is empty; ignore placeholder 'wl_prod'.
+                ids_str = cfg.get("watchlistIds") or cfg.get("watchlist_id") or ""
+                if not ids_str:
+                    legacy = cfg.get("watchlistId") or ""
+                    if legacy and legacy != "wl_prod" and not legacy.startswith("wl_"):
+                        ids_str = legacy
+                wl_ids = [w.strip() for w in ids_str.split(",") if w.strip()]
+        except Exception:
+            pass
+        scope_msg = f" ({len(wl_ids)} watchlist(s))" if wl_ids else " (all systems)"
+        accounts = _get_accounts()
+        print(f"  [BACKGROUND] Starting background re-sync{scope_msg} across {len(accounts)} account(s)...", flush=True)
+        _sync_all_accounts(extra_watchlist_ids=wl_ids)
+        print("  [BACKGROUND] Background re-sync complete.", flush=True)
+        # Trigger enrichment scan after harvest — both groups. The fast group
+        # (CVE/KEV/PSIRT/EPSS + OS version catalog) already ran on every
+        # harvest; the slow-crawl group (firmware baselines, EOA/IMT, switch
+        # firmware, and new-platform/hardware discovery) previously ONLY ran
+        # on its own independent 7-day timer, so a fleet could go a full week
+        # without a harvest ever refreshing platform/switch/firmware/drive/
+        # card data even if the user was syncing constantly. Both calls are
+        # cheap to make often: each sub-scanner inside _do_kb_scan checks its
+        # own file's staleness first and no-ops in milliseconds if nothing is
+        # actually due, so this does not mean re-hitting docs.netapp.com/
+        # GitHub/PyPI on every single harvest — only when data has genuinely
+        # gone stale.
+        global _enrichment_scheduler
+        if _enrichment_scheduler:
+            if not _enrichment_scheduler._running:
+                print('  [BACKGROUND] Triggering post-harvest fast enrichment scan...', flush=True)
+                _enrichment_scheduler.run_now()
+            if not _enrichment_scheduler._kb_running:
+                print('  [BACKGROUND] Checking platform/switch/firmware/hardware freshness (staleness-gated)...', flush=True)
+                _enrichment_scheduler.run_kb_now()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"  [BACKGROUND] Sync failed: {e}", flush=True)
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Enrichment Engine — public-source data fetchers
+# ─────────────────────────────────────────────────────────────────────
+
+import re as _re
+import html as _html
+from html.parser import HTMLParser
+
+_ENRICH_UA = 'AIQ-Advisor/1.0 (enrichment; public data only)'
+
+
+def _enrich_fetch(url, timeout=12, extra_headers=None):
+    """Fetch URL, return (text, error). Uses the shared proxy-aware opener so that
+    on corporate networks (Zscaler/WPAD) the request is correctly routed through
+    the system HTTP proxy — docs.netapp.com, nvd.nist.gov, security.netapp.com
+    are all proxied on corporate networks and fail silently without this.
+    Falls back to a cert-store refresh + opener rebuild on any TLS error.
+    extra_headers: optional dict merged into the request (e.g. NVD's apiKey,
+    which NVD API 2.0 only accepts as a header — passing it as a query string
+    parameter silently 404s regardless of whether the key is valid)."""
+    global _opener_cache
+    headers = {'User-Agent': _ENRICH_UA}
+    if extra_headers:
+        headers.update(extra_headers)
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with _get_opener().open(req, timeout=timeout) as r:
+            return r.read().decode('utf-8', errors='replace'), None
+    except ssl.SSLError as e:
+        # Auto-refresh cert store, rebuild opener, and retry once
+        _refresh_ssl_ctx()
+        _opener_cache = None  # force rebuild with refreshed SSL context
+        try:
+            with _get_opener().open(req, timeout=timeout) as r:
+                return r.read().decode('utf-8', errors='replace'), None
+        except Exception as e2:
+            return None, str(e2)
+    except Exception as e:
+        err_str = str(e)
+        # Also catch TLS errors wrapped inside urllib exceptions (e.g. from proxy)
+        if any(k in err_str for k in ('SSL', 'CERTIFICATE', 'certificate verify failed',
+                                       'UNABLE_TO_VERIFY', 'DEPTH_ZERO', 'CERT_UNTRUSTED')):
+            _refresh_ssl_ctx()
+            _opener_cache = None
+            try:
+                with _get_opener().open(req, timeout=timeout) as r:
+                    return r.read().decode('utf-8', errors='replace'), None
+            except Exception as e2:
+                return None, str(e2)
+        return None, err_str
+
+
+def _strip_html_tags(text):
+    """Remove HTML tags, decode entities, collapse whitespace. Skips <script>/<style> content."""
+    class Stripper(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.parts = []
+            self._skip = False
+        def handle_starttag(self, tag, attrs):
+            if tag.lower() in ('script', 'style', 'noscript', 'svg'):
+                self._skip = True
+        def handle_endtag(self, tag):
+            if tag.lower() in ('script', 'style', 'noscript', 'svg'):
+                self._skip = False
+        def handle_data(self, data):
+            if not self._skip:
+                self.parts.append(data)
+    s = Stripper()
+    s.feed(text)
+    cleaned = ' '.join(s.parts)
+    cleaned = _re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
+def fetch_cve_nvd(cve_id, api_key=None):
+    """
+    Query NIST NVD API v2 for a CVE.
+    Returns dict: {id, description, cvss, severity, publishedDate, references, affectedVersions}
+    or None on failure.
+
+    Rate-limited to respect NVD's 5 requests / 30 seconds (no API key) or
+    50 requests / 30 seconds (with API key).
+    """
+    # ── Rate limiter: token bucket ─────────────────────────────────────────────
+    if not hasattr(fetch_cve_nvd, '_timestamps'):
+        fetch_cve_nvd._timestamps = []
+    window = 30  # seconds
+    max_calls = 50 if api_key else 5
+    now = time.time()
+    fetch_cve_nvd._timestamps = [t for t in fetch_cve_nvd._timestamps if now - t < window]
+    if len(fetch_cve_nvd._timestamps) >= max_calls:
+        sleep_time = window - (now - fetch_cve_nvd._timestamps[0]) + 0.5
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+        fetch_cve_nvd._timestamps = [t for t in fetch_cve_nvd._timestamps if time.time() - t < window]
+    fetch_cve_nvd._timestamps.append(time.time())
+
+    url = f'https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={urllib.parse.quote(cve_id)}'
+    # NVD API 2.0 only accepts apiKey as an HTTP header — passing it as a query
+    # string parameter silently 404s regardless of whether the key is valid.
+    text, err = _enrich_fetch(url, extra_headers={'apiKey': api_key} if api_key else None)
+    if err or not text:
+        return None
+    try:
+        data = json.loads(text)
+        items = data.get('vulnerabilities', [])
+        if not items:
+            return {'id': cve_id, 'status': 'not_found'}
+        vuln = items[0].get('cve', {})
+        # Description
+        descs = vuln.get('descriptions', [])
+        desc = next((d['value'] for d in descs if d.get('lang') == 'en'), '')
+        # CVSS — prefer v3.1, fallback v3.0, v2
+        metrics = vuln.get('metrics', {})
+        cvss_score = None
+        severity = None
+        for key in ('cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2'):
+            if key in metrics and metrics[key]:
+                m = metrics[key][0].get('cvssData', {})
+                cvss_score = m.get('baseScore') or metrics[key][0].get('impactScore')
+                severity = m.get('baseSeverity') or metrics[key][0].get('baseSeverity', '')
+                break
+        # Published date
+        published = vuln.get('published', '')[:10]
+        # References
+        refs = [r.get('url', '') for r in vuln.get('references', [])[:5]]
+        # Affected versions from CPE
+        affected = []
+        for cfg in vuln.get('configurations', []):
+            for node in cfg.get('nodes', []):
+                for cpe in node.get('cpeMatch', []):
+                    if cpe.get('vulnerable'):
+                        vi = cpe.get('versionStartIncluding', '')
+                        ve = cpe.get('versionEndExcluding', '')
+                        ve2 = cpe.get('versionEndIncluding', '')
+                        if vi or ve or ve2:
+                            affected.append(f">={vi}" if vi else '' + (f' <{ve}' if ve else '') + (f' <={ve2}' if ve2 else ''))
+        return {
+            'id': cve_id,
+            'description': desc,
+            'cvss': cvss_score,
+            'severity': (severity or 'UNKNOWN').upper(),
+            'publishedDate': published,
+            'references': refs,
+            'affectedVersions': '; '.join(affected[:3]) if affected else 'See NVD for affected versions'
+        }
+    except Exception as e:
+        return {'id': cve_id, 'error': str(e)}
+
+
+def fetch_netapp_psirt(advisory_id):
+    """
+    Fetch a single NetApp PSIRT advisory from NetApp's own JSON API.
+    Returns dict: {id, title, description, severity, affectedProducts, publishedDate, link}
+
+    security.netapp.com is a client-rendered SPA (Create React App) -- the raw
+    HTML for any page there is just a `<div id="root">` shell with no advisory
+    content, so scraping it with regex (the old approach) always found nothing.
+    The SPA itself calls a plain JSON API to render; this hits that same API
+    directly. Discovered via the browser's network panel while the SPA loaded
+    a real advisory page: GET /adv_api/advisory/{adv_id}/ -> {"status":
+    "success", "advisory": {...}}.
+    """
+    url = f'https://security.netapp.com/adv_api/advisory/{urllib.parse.quote(advisory_id)}/'
+    text, err = _enrich_fetch(url)
+    if err or not text:
+        return None
+    try:
+        data = json.loads(text)
+        adv = data.get('advisory') or {}
+        if not adv:
+            return {'id': advisory_id, 'error': 'not found'}
+        severity = 'UNKNOWN'
+        scoring_calc = adv.get('kb_scoring_calc') or []
+        if scoring_calc:
+            severity = (scoring_calc[0].get('range') or 'UNKNOWN').upper()
+        return {
+            'id': advisory_id,
+            'title': adv.get('kb_title') or advisory_id,
+            'description': (adv.get('kb_summary') or '')[:800],
+            'severity': severity,
+            'cve': adv.get('kb_cve') or [],
+            'published': (adv.get('published_date') or '')[:10],
+            'link': f'https://security.netapp.com/advisory/{advisory_id}/',
+            '_raw': adv,
+        }
+    except Exception as e:
+        return {'id': advisory_id, 'error': str(e)}
+
+
+def scan_and_persist_advisories(nvd_api_key=None):
+    """
+    Full advisory scan pipeline:
+    1. Fetch the NTAP advisory index from NetApp's own JSON API (security.netapp.com/adv_api/advisory/)
+    2. Collect all advisory records for tracked products (ONTAP, StorageGRID, SnapCenter, Trident, Active IQ)
+    3. Load existing IDs from data/security_bulletins.json
+    4. For each NEW advisory: build the bulletin entry directly from the API record (CVSS/severity/fixes all included -- no second fetch)
+    5. Upsert into data/security_bulletins.json (atomic write)
+    Returns dict: {added, updated, total, scanned, errors, newIds}
+
+    nvd_api_key: unused now that CVSS comes from NetApp's own kb_scoring_calc
+    (more authoritative than a generic NVD lookup for a NetApp-specific
+    advisory anyway). Kept as a parameter for call-site compatibility.
+    """
+    import time
+    added = updated = errors = 0
+    new_ids = []
+
+    # ── 1. Fetch PSIRT advisory index ──────────────────────────────────────────
+    # security.netapp.com/advisory/ is a client-rendered SPA (Create React
+    # App) -- the raw HTML is just a `<div id="root">` shell with no advisory
+    # links in it, so the old regex-over-HTML approach always found 0 results
+    # (confirmed live: 44 days of silent no-op scans before this was caught).
+    # The SPA renders from a plain JSON API; this calls that API directly.
+    # Discovered via the browser's network panel: GET /adv_api/advisory/?limit=
+    # &skip=&order=desc&sort_by=updated_date -> {"advisories":[...full records...]}.
+    # Each list entry already contains the complete advisory (kb_affected_list,
+    # kb_cve, kb_scoring_calc, kb_summary, etc.) -- no separate detail fetch
+    # needed for entries found here.
+    print('  [SCAN] Fetching NetApp PSIRT advisory index (JSON API)...', flush=True)
+    index_entries = []  # list of {id, link, raw}
+    products = ['ONTAP', 'StorageGRID', 'SnapCenter', 'Trident', 'Active IQ']
+    seen_ids = set()
+    page_limit = 50
+    max_pages = 8  # 400 most-recently-updated advisories -- generous headroom over the ~70-entry local DB
+    for page in range(max_pages):
+        skip = page * page_limit
+        url = (f'https://security.netapp.com/adv_api/advisory/'
+               f'?limit={page_limit}&skip={skip}&order=desc&sort_by=updated_date')
+        text, err = _enrich_fetch(url, timeout=20)
+        if err or not text:
+            print(f'  [SCAN] Index page {page} fetch failed: {err}', flush=True)
+            break
+        try:
+            page_data = json.loads(text)
+        except Exception as ex:
+            print(f'  [SCAN] Index page {page} JSON parse failed: {ex}', flush=True)
+            break
+        advisories = page_data.get('advisories') or []
+        if not advisories:
+            break
+        for adv in advisories:
+            adv_id = (adv.get('adv_id') or '').lower()
+            if not adv_id or adv_id in seen_ids:
+                continue
+            haystack = ' '.join(
+                (adv.get('kb_affected_list') or []) + (adv.get('kb_investigating_list') or [])
+            ).lower()
+            if not any(p.lower() in haystack for p in products):
+                continue
+            seen_ids.add(adv_id)
+            index_entries.append({
+                'id': adv_id,
+                'link': f'https://security.netapp.com/advisory/{adv_id}/',
+                'raw': adv,
+            })
+        time.sleep(0.3)  # be polite
+        if len(advisories) < page_limit:
+            break  # reached the end of the index
+
+    print(f'  [SCAN] Found {len(index_entries)} relevant advisories across {page + 1} index page(s)', flush=True)
+
+    # ── 2. Load existing DB ────────────────────────────────────────────────────
+    if BULLETINS_PATH.exists():
+        try:
+            existing_data = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
+            bulletins = existing_data.get('bulletins', [])
+        except Exception:
+            bulletins = []
+    else:
+        bulletins = []
+
+    id_to_idx = {b['id']: i for i, b in enumerate(bulletins) if b.get('id')}
+    today = datetime.now(timezone.utc).isoformat()[:10]
+
+    # ── 3. Build bulletin entries for new advisories ────────────────────────────
+    # The index fetch above already pulled the complete advisory record from
+    # NetApp's own API (kb_scoring_calc has NetApp's own CVSS score/severity,
+    # kb_affected_list has the real affected-product list) -- no second
+    # per-advisory fetch or NVD lookup needed, unlike the old two-step flow.
+    for entry in index_entries:
+        adv_id = entry['id']
+        is_new = adv_id not in id_to_idx
+        if not is_new:
+            continue  # already in DB, nothing to do
+
+        try:
+            adv = entry['raw']
+            cves = adv.get('kb_cve') or []
+            cvss_score = None
+            severity = 'UNKNOWN'
+            scoring_calc = adv.get('kb_scoring_calc') or []
+            if scoring_calc:
+                cvss_score = scoring_calc[0].get('score')
+                severity = (scoring_calc[0].get('range') or 'UNKNOWN').upper()
+            # kb_affected_list is NetApp's own structured "Affected Products"
+            # list -- authoritative when present. Some advisories (usually
+            # ones still "Under Investigation") ship it empty; only then
+            # fall back to guessing from the title text.
+            affected_text = ' '.join(adv.get('kb_affected_list') or []) or (adv.get('kb_title') or '')
+            fixes = adv.get('kb_fixes') or []
+            fixed_versions = {}
+            for fx in fixes:
+                prod = fx.get('product')
+                links = [f.get('link') for f in (fx.get('fixes') or []) if f.get('link')]
+                if prod and links:
+                    fixed_versions[prod] = links
+
+            # ── Build bulletin entry ────────────────────────────────────────────
+            bulletin = {
+                'id':               adv_id,
+                'cve':              cves,
+                'cvss':             cvss_score,
+                'severity':         severity.lower() if severity != 'UNKNOWN' else 'medium',
+                'category':         'PSIRT',
+                'title':            adv.get('kb_title') or adv_id,
+                'description':      (adv.get('kb_summary') or '')[:800],
+                'affectedProducts': _infer_affected_products(adv_id, affected_text),
+                'affectedVersions': {},
+                'fixedVersions':    fixed_versions,
+                'mitigation':       adv.get('kb_workarounds') or 'Refer to the NetApp advisory for mitigation guidance.',
+                'published':        (adv.get('published_date') or today)[:10],
+                'link':             entry['link'],
+                '_addedAt':         today,
+                '_source':          'scan'
+            }
+
+            bulletins.append(bulletin)
+            id_to_idx[adv_id] = len(bulletins) - 1
+            added += 1
+            new_ids.append(adv_id)
+
+        except Exception as ex:
+            print(f'  [SCAN] Error processing {adv_id}: {ex}', flush=True)
+            errors += 1
+
+    # ── 4. Persist atomically ──────────────────────────────────────────────────
+    if added > 0:
+        out = {
+            'version': 1,
+            'lastUpdated': today,
+            'lastScanned': today,
+            'source': 'dynamic — authoritative store, updated by scan',
+            'bulletinCount': len(bulletins),
+            'bulletins': bulletins
+        }
+        payload = json.dumps(out, indent=2, ensure_ascii=False)
+        tmp_path = BULLETINS_PATH.with_suffix('.tmp')
+        bak_path = BULLETINS_PATH.with_suffix('.bak')
+        tmp_path.write_text(payload, encoding='utf-8')
+        if BULLETINS_PATH.exists():
+            import shutil
+            shutil.copy2(str(BULLETINS_PATH), str(bak_path))
+        tmp_path.replace(BULLETINS_PATH)
+        print(f'  [SCAN] Wrote {len(bulletins)} advisories to database (+{added} new)', flush=True)
+    else:
+        print(f'  [SCAN] No new advisories found (DB already has {len(bulletins)} entries)', flush=True)
+
+    return {
+        'added':   added,
+        'updated': updated,
+        'total':   len(bulletins),
+        'scanned': len(index_entries),
+        'errors':  errors,
+        'newIds':  new_ids
+    }
+
+# ─────────────────────────────────────────────────────────────────────
+# Harvest Scheduler — Scheduled Background Auto-Refresh of Live Fleet Data
+# The EnrichmentScheduler below (and the standalone 48h firmware-baseline
+# loop, and the one-shot startup advisory scan) already keep REFERENCE data
+# fresh -- CVE/PSIRT bulletins, ONTAP/StorageGRID/SANtricity version
+# catalogs, firmware baselines, EOA/EOS, IMT interop -- purely on their own
+# wall-clock timers, independent of any browser/API traffic.
+#
+# What none of that touches is the actual per-customer Active IQ harvest
+# itself (systems, clusters, risks, cases, TAM data, and every real
+# per-system configuration field -- ARP/FabricPool/HA status, contract
+# state, firmware versions, aggregate detail, etc.). That only ever
+# refreshed as a side effect of an incoming /api/harvest request (see
+# handle_harvest's background re-sync trigger) -- if the app is left
+# running with no browser tab open, this data goes stale indefinitely.
+# HarvestScheduler closes that gap: a real, independent timer that calls
+# the exact same _background_sync() used by a manual force-sync, so the
+# cached data /api/harvest serves is always recently refreshed even with
+# zero UI traffic.
+# ─────────────────────────────────────────────────────────────────────
+
+class HarvestScheduler:
+    """Background scheduler that periodically re-syncs live Active IQ
+    harvest data (systems/risks/cases/config), independent of any browser
+    or API traffic, on a configurable interval."""
+
+    def __init__(self, interval_hours=4):
+        self._interval = max(1, interval_hours) * 3600
+        self._timer = None
+        self._running = False
+        self._last_sync = None
+        self._last_error = None
+
+    def start(self):
+        # First run 3 minutes after startup -- long enough that a manual
+        # sync the user kicks off right after launching isn't immediately
+        # duplicated by this timer.
+        self._timer = threading.Timer(180, self._do_sync)
+        self._timer.daemon = True
+        self._timer.start()
+        print(f'  [AUTO-HARVEST] Scheduler started (interval: {self._interval // 3600}h)', flush=True)
+
+    def stop(self):
+        if self._timer:
+            self._timer.cancel()
+            self._timer = None
+
+    def update_config(self, interval_hours=None):
+        if interval_hours is not None:
+            new_interval = max(1, interval_hours) * 3600
+            if new_interval != self._interval:
+                self._interval = new_interval
+                if self._timer:
+                    self._timer.cancel()
+                self._schedule_next()
+                print(f'  [AUTO-HARVEST] Interval updated to {interval_hours}h', flush=True)
+
+    def run_now(self):
+        """Manual trigger (from /api/auto-harvest/run POST)."""
+        if self._running:
+            return {'status': 'already_running'}
+        threading.Thread(target=self._do_sync, daemon=True, name='auto-harvest-manual').start()
+        return {'status': 'started'}
+
+    def status(self):
+        return {
+            'enabled': True,
+            'intervalHours': self._interval // 3600,
+            'lastSync': self._last_sync,
+            'lastError': self._last_error,
+            'isRunning': self._running,
+        }
+
+    def _schedule_next(self):
+        self._timer = threading.Timer(self._interval, self._do_sync)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _do_sync(self):
+        self._running = True
+        try:
+            # _background_sync() catches its own exceptions and no-ops
+            # harmlessly (logs "Sync already in progress") if a manual sync
+            # is already running -- safe to call unconditionally here.
+            print('  [AUTO-HARVEST] Scheduled auto-refresh starting...', flush=True)
+            _background_sync()
+            self._last_sync = datetime.now(timezone.utc).isoformat()
+            self._last_error = None
+        except Exception as e:
+            self._last_error = str(e)
+            print(f'  [AUTO-HARVEST] Scheduled auto-refresh failed: {e}', flush=True)
+        finally:
+            self._running = False
+            self._schedule_next()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Enrichment Scanner — Scheduled Background Auto-Enrichment
+# Scans 6 free public sources on a configurable interval:
+#   1. CISA KEV (Known Exploited Vulnerabilities catalog)
+#   2. NetApp PSIRT (security.netapp.com advisories)
+#   3. NVD API 2.0 (NetApp CVEs with CVSS scores)
+#   4. EPSS (Exploit Prediction Scoring System)
+#   5. docs.netapp.com (version catalog + EOA platforms)
+#   6. KB / Best Practices / Integration Docs
+# ─────────────────────────────────────────────────────────────────────
+
+class EnrichmentScheduler:
+    """Background scheduler that periodically scans external sources for enrichment data."""
+
+    # Files scanner 6 (KB crawl) reads/writes — kept separate from the main
+    # bulletins.json/version_catalog.json group so its own staleness check
+    # doesn't accidentally gate the fast scanners.
+    _KB_STALENESS_FILE = KNOWLEDGE_PATH
+
+    def __init__(self, interval_hours=12, nvd_api_key=None, kb_interval_hours=168):
+        self._interval = max(1, interval_hours) * 3600
+        # Scanner 6 (KB/doc crawl) is the long pole of the old 7-scanner cycle —
+        # potentially 80-150+ sequential HTTP requests. Running it on the same
+        # cadence as the fast security scanners means a closed desktop app can
+        # lose an entire cycle's results for every scanner queued after it, and
+        # forces the fast scanners to wait behind it needlessly. It now runs on
+        # its own, much longer timer (default 7 days) — configurable separately.
+        self._kb_interval = max(1, kb_interval_hours) * 3600
+        self._nvd_api_key = nvd_api_key
+        self._timer = None
+        self._kb_timer = None
+        self._running = False
+        self._kb_running = False
+        self._last_scan = None
+        self._last_kb_scan = None
+        self._last_results = {}
+        self._last_kb_results = {}
+        self._lock = threading.Lock()
+        self._kb_lock = threading.Lock()
+
+    def start(self):
+        """Start both recurring timers. First scan of each after a short delay
+        (staggered so they don't both hit the network in the same instant)."""
+        self._timer = threading.Timer(60, self._do_scan)
+        self._timer.daemon = True
+        self._timer.start()
+        self._kb_timer = threading.Timer(90, self._do_kb_scan)
+        self._kb_timer.daemon = True
+        self._kb_timer.start()
+        print(f'  [ENRICH] Scheduler started (fast scanners: {self._interval // 3600}h, '
+              f'KB crawl: {self._kb_interval // 3600}h)', flush=True)
+
+    def stop(self):
+        """Cancel pending timers."""
+        if self._timer:
+            self._timer.cancel()
+            self._timer = None
+        if self._kb_timer:
+            self._kb_timer.cancel()
+            self._kb_timer = None
+
+    def update_config(self, interval_hours=None, nvd_api_key=None, kb_interval_hours=None):
+        """Update scheduler configuration. Restarts the relevant timer if its interval changed."""
+        if nvd_api_key is not None:
+            self._nvd_api_key = nvd_api_key
+        if interval_hours is not None:
+            new_interval = max(1, interval_hours) * 3600
+            if new_interval != self._interval:
+                self._interval = new_interval
+                if self._timer:
+                    self._timer.cancel()
+                self._schedule_next()
+                print(f'  [ENRICH] Fast-scanner interval updated to {interval_hours}h', flush=True)
+        if kb_interval_hours is not None:
+            new_kb_interval = max(1, kb_interval_hours) * 3600
+            if new_kb_interval != self._kb_interval:
+                self._kb_interval = new_kb_interval
+                if self._kb_timer:
+                    self._kb_timer.cancel()
+                self._schedule_next_kb()
+                print(f'  [ENRICH] KB-crawl interval updated to {kb_interval_hours}h', flush=True)
+
+    def run_now(self):
+        """Manual trigger (from /api/enrich/scan POST) — runs the fast scanner group only."""
+        if self._running:
+            return {'status': 'already_running'}
+        threading.Thread(target=self._do_scan, daemon=True, name='enrich-manual').start()
+        return {'status': 'started'}
+
+    def run_kb_now(self):
+        """Manual trigger for the slow KB crawl specifically."""
+        if self._kb_running:
+            return {'status': 'already_running'}
+        threading.Thread(target=self._do_kb_scan, daemon=True, name='enrich-kb-manual').start()
+        return {'status': 'started'}
+
+    def status(self):
+        """Return current scheduler status for both timers."""
+        return {
+            'enabled': True,
+            'intervalHours': self._interval // 3600,
+            'lastScan': self._last_scan,
+            'isRunning': self._running,
+            'results': self._last_results,
+            'hasNvdKey': bool(self._nvd_api_key),
+            'kbIntervalHours': self._kb_interval // 3600,
+            'lastKbScan': self._last_kb_scan,
+            'isKbRunning': self._kb_running,
+            'kbResults': self._last_kb_results,
+        }
+
+    def _schedule_next(self):
+        self._timer = threading.Timer(self._interval, self._do_scan)
+        self._timer.daemon = True
+        self._timer.start()
+
+    # Sitemap discovery is one sitemap fetch plus a diff (cheap), unlike the KB
+    # crawl / reference library which are 80-150+ requests each. It gets its own
+    # much shorter cadence: the slow-cycle timer ticks at this rate and each
+    # sub-scanner independently skips itself if its own file is still fresh, so
+    # ticking more often costs nothing for the heavy ones.
+    DISCOVERY_TICK_HOURS = 24
+
+    def _schedule_next_kb(self):
+        tick = min(self._kb_interval, self.DISCOVERY_TICK_HOURS * 3600)
+        self._kb_timer = threading.Timer(tick, self._do_kb_scan)
+        self._kb_timer.daemon = True
+        self._kb_timer.start()
+
+    @staticmethod
+    def _file_age_hours(path):
+        """Return hours since path's lastUpdated field (or mtime as fallback),
+        or None if the file doesn't exist / can't be read."""
+        try:
+            if not path.exists():
+                return None
+            mtime = path.stat().st_mtime
+            try:
+                data = json.loads(path.read_text(encoding='utf-8'))
+                last_updated = data.get('lastUpdated') or data.get('_lastUpdated')
+                if last_updated:
+                    parsed = datetime.fromisoformat(last_updated.replace('Z', '+00:00'))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    return (datetime.now(timezone.utc) - parsed).total_seconds() / 3600
+            except Exception:
+                pass
+            return (time.time() - mtime) / 3600
+        except Exception:
+            return None
+
+    def _do_scan(self):
+        """Run the fast scanner group (1-4). Each scanner is skipped if its
+        target file was already refreshed more recently than the configured
+        interval — avoids redundant re-scanning when the desktop app is
+        opened/closed frequently within a single interval window.
+        Scanner 5 (version catalog, writes only version_catalog.json) runs
+        concurrently with the bulletins.json-writing group (1,2,3,4) since
+        they touch disjoint files. Scanner 7 (reference library) turned out to
+        be its own multi-minute crawl (docs.netapp.com/GitHub/PyPI harvesting
+        inside reference_harvester.py) — moved to run alongside scanner 6 on
+        the long KB-crawl timer instead of blocking this fast group.
+        Each bulletin-touching scanner call is wrapped in _bulletins_lock so
+        it can't race with scanner 7 running concurrently on the other timer."""
+        with self._lock:
+            if self._running:
+                return
+            self._running = True
+
+        scan_start = time.time()
+        print(f'  [ENRICH] ══════════════════════════════════════════════════════', flush=True)
+        print(f'  [ENRICH] Starting scheduled enrichment scan (fast group)...', flush=True)
+        results = {}
+        try:
+            interval_h = self._interval / 3600
+
+            def _bulletins_group():
+                out = {}
+                age = self._file_age_hours(BULLETINS_PATH)
+                if age is not None and age < interval_h:
+                    print(f'  [ENRICH] [1-4] security_bulletins.json is {age:.1f}h old '
+                          f'(< {interval_h:.0f}h interval) — skipping bulletin scanners', flush=True)
+                    out['cisa_kev'] = {'skipped': 'fresh'}
+                    out['netapp_psirt'] = {'skipped': 'fresh'}
+                    out['nvd_netapp'] = {'skipped': 'fresh'}
+                    out['epss'] = {'skipped': 'fresh'}
+                    return out
+                with _bulletins_lock:
+                    out['cisa_kev'] = self._scan_cisa_kev()
+                    out['netapp_psirt'] = self._scan_netapp_psirt()
+                    out['nvd_netapp'] = self._scan_nvd_netapp()
+                    out['epss'] = self._scan_epss()
+                return out
+
+            def _version_catalog_group():
+                age = self._file_age_hours(VERSION_CATALOG_PATH)
+                if age is not None and age < interval_h:
+                    print(f'  [ENRICH] [5] version_catalog.json is {age:.1f}h old '
+                          f'(< {interval_h:.0f}h interval) — skipping', flush=True)
+                    return {'skipped': 'fresh'}
+                return self._scan_version_catalog()
+
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix='enrich-fast') as pool:
+                fut_bulletins = pool.submit(_bulletins_group)
+                fut_version = pool.submit(_version_catalog_group)
+                bulletins_results = fut_bulletins.result()
+                results['version_catalog'] = fut_version.result()
+            results.update(bulletins_results)
+
+            elapsed = round(time.time() - scan_start, 1)
+            results['_elapsed'] = elapsed
+            self._last_scan = datetime.now(timezone.utc).isoformat()[:19] + 'Z'
+            self._last_results = results
+            print(f'  [ENRICH] Fast scan complete in {elapsed}s', flush=True)
+            print(f'  [ENRICH] ══════════════════════════════════════════════════════', flush=True)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            results['_error'] = str(e)
+            self._last_results = results
+            print(f'  [ENRICH] Fast scan failed: {e}', flush=True)
+        finally:
+            self._running = False
+            self._schedule_next()
+            # Every fast-scan completion also checks whether the slow-crawl
+            # group (platform/switch/firmware/drive/card/new-hardware data —
+            # scanners 6-8) has gone stale, instead of that only ever being
+            # driven by its own independent 7-day timer. _do_kb_scan's own
+            # per-sub-scanner staleness checks make this cheap to call often —
+            # it no-ops in milliseconds when nothing is actually due.
+            if not self._kb_running:
+                threading.Thread(target=self._do_kb_scan, daemon=True, name='enrich-kb-after-fast').start()
+
+    def _do_kb_scan(self):
+        """Run the two slow, long-running crawls (scanner 6: KB/doc crawl, and
+        scanner 7: reference library — EOA/IMT/firmware, also touches
+        security_bulletins.json) on their own long interval, independent of
+        the fast scanner group above. Each is independently skipped if its
+        own target file is already fresher than the configured interval.
+        Scanner 7's bulletins.json access is wrapped in _bulletins_lock since
+        the fast group can run concurrently on its own (much shorter) timer."""
+        with self._kb_lock:
+            if self._kb_running:
+                return
+            self._kb_running = True
+
+        scan_start = time.time()
+        results = {}
+        try:
+            interval_h = self._kb_interval / 3600
+
+            kb_age = self._file_age_hours(self._KB_STALENESS_FILE)
+            if kb_age is not None and kb_age < interval_h:
+                print(f'  [ENRICH] [KB] knowledge_base.json is {kb_age:.1f}h old '
+                      f'(< {interval_h:.0f}h interval) — skipping crawl', flush=True)
+                results['knowledge_base'] = {'skipped': 'fresh'}
+            else:
+                print('  [ENRICH] Starting knowledge-base crawl (long-running)...', flush=True)
+                results['knowledge_base'] = self._scan_knowledge_base()
+
+            # Gated on eoa_database.json's own age -- this scanner's actual
+            # output file. Previously gated on BULLETINS_PATH's age by
+            # mistake, so once the (unrelated) bulletins scanner kept that
+            # file fresh, this scanner concluded it had nothing to do and
+            # skipped indefinitely, leaving EOA/IMT/firmware reference data
+            # stale for weeks with no error or symptom other than the date.
+            ref_age = self._file_age_hours(EOA_DATABASE_PATH)
+            if ref_age is not None and ref_age < interval_h:
+                print(f'  [ENRICH] [7] eoa_database.json is {ref_age:.1f}h old '
+                      f'(< {interval_h:.0f}h interval) — skipping reference library scan', flush=True)
+                results['reference_library'] = {'skipped': 'fresh'}
+            else:
+                print('  [ENRICH] Starting reference library scan (long-running)...', flush=True)
+                with _bulletins_lock:
+                    results['reference_library'] = self._scan_reference_library()
+
+            # lastUpdated is stored date-only, so "age" is really hours since
+            # 00:00 UTC of that date. A flat hours threshold would skip any
+            # tick landing early in the day; gate on "already ran today (UTC)".
+            _now_utc = datetime.now(timezone.utc)
+            _since_midnight_h = _now_utc.hour + _now_utc.minute / 60 + _now_utc.second / 3600
+            discovery_gate_h = min(interval_h, _since_midnight_h + 0.01)
+            discovery_age = self._file_age_hours(DISCOVERED_PRODUCTS_PATH)
+            if discovery_age is not None and discovery_age < discovery_gate_h:
+                print(f'  [ENRICH] [8] discovered_products.json already refreshed today (UTC) '
+                      f'({discovery_age:.1f}h since its stamp) — skipping sitemap discovery', flush=True)
+                results['sitemap_discovery'] = {'skipped': 'fresh'}
+            else:
+                results['sitemap_discovery'] = self._scan_sitemap_discovery()
+
+            # Scanner 9: current hardware configuration, slot and port assignments from NetApp's official
+            # documentation (hw_docs_harvester.py -> data/platform_hardware.json). Gated on its own file's age.
+            hw_age = self._file_age_hours(PLATFORM_HW_PATH)
+            if hw_age is not None and hw_age < interval_h:
+                print(f'  [ENRICH] [9] platform_hardware.json is {hw_age:.1f}h old (< {interval_h:.0f}h interval) - skipping hardware docs harvest', flush=True)
+                results['hardware_docs'] = {'skipped': 'fresh'}
+            else:
+                results['hardware_docs'] = self._scan_hardware_docs()
+
+            elapsed = round(time.time() - scan_start, 1)
+            results['_elapsed'] = elapsed
+            self._last_kb_results = results
+            print(f'  [ENRICH] Slow-crawl cycle complete in {elapsed}s', flush=True)
+            self._last_kb_scan = datetime.now(timezone.utc).isoformat()[:19] + 'Z'
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            results['_error'] = str(e)
+            self._last_kb_results = results
+            print(f'  [ENRICH] Slow-crawl cycle failed: {e}', flush=True)
+        finally:
+            self._kb_running = False
+            self._schedule_next_kb()
+
+    # ── Scanner 9: hardware configuration / slot / port assignments from NetApp's documentation ──
+    def _scan_hardware_docs(self):
+        """Refresh data/platform_hardware.json from NetApp's official platform documentation (the same pages as
+        docs.netapp.com/us-en/ontap-systems/<platform>/install-cable.html). Facts only, offline-safe: any failure
+        leaves the previous file in place and the Technical Audit falls back to its built-in layouts."""
+        print('  [ENRICH] [9] Hardware documentation (slots, ports, modules) harvest...', flush=True)
+        try:
+            import hw_docs_harvester as _hw
+            return _hw.refresh(log=lambda m: print(m, flush=True))
+        except Exception as e:
+            print(f'  [ENRICH]   Hardware docs harvest failed: {e}', flush=True)
+            return {'updated': False, 'error': str(e)}
+
+    # ── Scanner 8: Sitemap-Based Product/Integration Auto-Discovery ──────────
+    def _scan_sitemap_discovery(self):
+        """Intelligent extensibility: automatically discover NEW NetApp products,
+        integrations, and documentation sections as NetApp adds them — rather
+        than relying solely on the hardcoded seed URL lists in _scan_knowledge_base
+        and reference_harvester.py, which only cover what was known at the time
+        this tool was written.
+
+        Uses docs.netapp.com/sitemap.xml — a real, sanctioned sitemap index
+        (confirmed present in robots.txt, not disallowed for crawling) that
+        enumerates every top-level product/documentation section NetApp
+        publishes. Each run:
+          1. Fetches the sitemap index, extracts en-US top-level section slugs
+             (skips other locales per robots.txt guidance).
+          2. Diffs against the persisted set of previously-seen slugs.
+          3. For any genuinely NEW section (bounded to 10 per run to stay
+             polite and keep each cycle fast), fetches that section's own
+             sitemap and adds a sample of its pages to knowledge_base.json,
+             tagged with source 'sitemap-discovery' and the new section name
+             as category — so a newly-acquired product (e.g. NetApp's real
+             August 2026 JetStream Software acquisition) gets picked up
+             automatically on the next scheduled run once NetApp publishes
+             its docs, with zero code changes required here.
+        """
+        print('  [ENRICH] [8] Sitemap-based product/integration discovery...', flush=True)
+        try:
+            text, err = _enrich_fetch('https://docs.netapp.com/sitemap.xml', timeout=20)
+            if err or not text:
+                print(f'  [ENRICH]   Sitemap discovery: index fetch failed: {err}', flush=True)
+                return {'error': str(err), 'newSections': 0}
+
+            # Extract en-US top-level section sitemap URLs, e.g.
+            # https://docs.netapp.com/us-en/<slug>/sitemap.xml
+            section_urls = sorted(set(_re.findall(
+                r'https://docs\.netapp\.com/us-en/([a-z0-9][a-z0-9_-]*)/sitemap\.xml', text)))
+            print(f'  [ENRICH]   Sitemap index: {len(section_urls)} us-en product sections found', flush=True)
+
+            # Load previously-seen sections
+            if DISCOVERED_PRODUCTS_PATH.exists():
+                try:
+                    known = json.loads(DISCOVERED_PRODUCTS_PATH.read_text(encoding='utf-8'))
+                    known_slugs = set(known.get('knownSlugs', []))
+                except Exception:
+                    known_slugs = set()
+            else:
+                known_slugs = set()
+
+            new_slugs = [s for s in section_urls if s not in known_slugs]
+            print(f'  [ENRICH]   {len(new_slugs)} newly-discovered section(s) since last run', flush=True)
+
+            # Bound how many new sections we deep-crawl per run — stay polite,
+            # keep each enrichment cycle fast. Remaining new slugs are still
+            # marked "known" (so we don't refetch the index-match every run)
+            # but their content isn't crawled until a future run if the cap
+            # is hit — logged, not silently dropped, per the "no silent caps"
+            # principle.
+            MAX_NEW_PER_RUN = 10
+            to_crawl = new_slugs[:MAX_NEW_PER_RUN]
+            if len(new_slugs) > MAX_NEW_PER_RUN:
+                print(f'  [ENRICH]   Capping deep-crawl to {MAX_NEW_PER_RUN} of {len(new_slugs)} new sections this run '
+                      f'(remaining {len(new_slugs) - MAX_NEW_PER_RUN} will be crawled in a future cycle)', flush=True)
+
+            new_articles = []
+            if KNOWLEDGE_PATH.exists():
+                try:
+                    kb_data = json.loads(KNOWLEDGE_PATH.read_text(encoding='utf-8'))
+                except Exception:
+                    kb_data = {'version': 1, 'articles': []}
+            else:
+                kb_data = {'version': 1, 'articles': []}
+            existing_urls = {a.get('url') for a in kb_data.get('articles', [])}
+
+            for slug in to_crawl:
+                try:
+                    sec_url = f'https://docs.netapp.com/us-en/{slug}/sitemap.xml'
+                    sec_text, sec_err = _enrich_fetch(sec_url, timeout=15)
+                    if sec_err or not sec_text:
+                        continue
+                    page_urls = _re.findall(r'<loc>(https://docs\.netapp\.com/us-en/[^<]+)</loc>', sec_text)
+                    # Sample the first 15 pages of a newly-discovered section —
+                    # enough to seed useful KB coverage without over-fetching an
+                    # entire product's doc tree in one enrichment cycle.
+                    for page_url in page_urls[:15]:
+                        if page_url in existing_urls:
+                            continue
+                        title = page_url.rstrip('/').split('/')[-1].replace('-', ' ').replace('.html', '').title() or slug.replace('-', ' ').title()
+                        new_articles.append({
+                            'url': page_url,
+                            'title': title,
+                            'source': 'sitemap-discovery',
+                            'category': slug,
+                            'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                        })
+                        existing_urls.add(page_url)
+                    print(f'  [ENRICH]     New section "{slug}": +{min(len(page_urls), 15)} pages seeded', flush=True)
+                    time.sleep(0.5)  # be polite between section sitemap fetches
+                except Exception as sec_ex:
+                    print(f'  [ENRICH]     Section "{slug}" crawl failed: {sec_ex}', flush=True)
+
+            if new_articles:
+                kb_data['articles'] = kb_data.get('articles', []) + new_articles
+                kb_data['lastUpdated'] = datetime.now(timezone.utc).isoformat()[:10]
+                payload = json.dumps(kb_data, indent=2, ensure_ascii=False)
+                tmp_path = KNOWLEDGE_PATH.with_suffix('.tmp')
+                tmp_path.write_text(payload, encoding='utf-8')
+                tmp_path.replace(KNOWLEDGE_PATH)
+
+            # Persist ALL section slugs seen (not just the crawled ones) so next
+            # run's diff is accurate even for sections we didn't have budget to
+            # deep-crawl this time.
+            DISCOVERED_PRODUCTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            all_known = sorted(set(section_urls) | known_slugs)
+            DISCOVERED_PRODUCTS_PATH.write_text(json.dumps({
+                'lastUpdated': datetime.now(timezone.utc).isoformat()[:10],
+                'knownSlugs': all_known,
+                'lastNewSlugs': new_slugs,
+            }, indent=2), encoding='utf-8')
+
+            print(f'  [ENRICH]   Sitemap discovery: {len(new_articles)} new KB article(s) from {len(to_crawl)} newly-discovered section(s)', flush=True)
+            return {'totalSections': len(section_urls), 'newSections': len(new_slugs), 'crawledSections': to_crawl, 'newArticles': len(new_articles)}
+        except Exception as e:
+            print(f'  [ENRICH]   Sitemap discovery failed: {e}', flush=True)
+            return {'error': str(e)}
+
+    # ── Scanner 1: CISA KEV ──────────────────────────────────────────
+    def _scan_cisa_kev(self):
+        """Download CISA Known Exploited Vulnerabilities catalog and cross-reference."""
+        print('  [ENRICH] [1/7] Scanning CISA KEV catalog...', flush=True)
+        url = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+        text, err = _enrich_fetch(url, timeout=30)
+        if err or not text:
+            print(f'  [ENRICH]   CISA KEV fetch failed: {err}', flush=True)
+            return {'error': str(err), 'matched': 0}
+
+        try:
+            kev_data = json.loads(text)
+            kev_cves = {v.get('cveID'): v for v in kev_data.get('vulnerabilities', [])}
+            print(f'  [ENRICH]   CISA KEV catalog: {len(kev_cves)} entries', flush=True)
+
+            # Cross-reference with existing bulletins
+            matched = 0
+            updated_bulletins = False
+            if BULLETINS_PATH.exists():
+                bdata = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
+                bulletins = bdata.get('bulletins', [])
+                for b in bulletins:
+                    for cve_id in (b.get('cve') or []):
+                        if cve_id in kev_cves:
+                            kev_entry = kev_cves[cve_id]
+                            if not b.get('cisaKev'):
+                                b['cisaKev'] = True
+                                b['cisaKevDateAdded'] = kev_entry.get('dateAdded', '')
+                                b['cisaKevDueDate'] = kev_entry.get('dueDate', '')
+                                b['cisaKevAction'] = kev_entry.get('requiredAction', '')
+                                updated_bulletins = True
+                            matched += 1
+                if updated_bulletins:
+                    bdata['lastUpdated'] = datetime.now(timezone.utc).isoformat()[:10]
+                    payload = json.dumps(bdata, indent=2, ensure_ascii=False)
+                    tmp_path = BULLETINS_PATH.with_suffix('.tmp')
+                    bak_path = BULLETINS_PATH.with_suffix('.bak')
+                    tmp_path.write_text(payload, encoding='utf-8')
+                    if BULLETINS_PATH.exists():
+                        import shutil
+                        shutil.copy2(str(BULLETINS_PATH), str(bak_path))
+                    tmp_path.replace(BULLETINS_PATH)
+                    print(f'  [ENRICH]   Updated bulletins with {matched} KEV cross-references', flush=True)
+
+            # Save full KEV catalog for local reference and offline access
+            kev_out = {
+                'version': 1,
+                'lastUpdated': datetime.now(timezone.utc).isoformat()[:10],
+                'catalogVersion': kev_data.get('catalogVersion', ''),
+                'totalKevEntries': len(kev_cves),
+                'matchedToFleet': matched,
+                'vulnerabilities': [{k: v for k, v in entry.items()
+                                     if k in ('cveID', 'vendorProject', 'product',
+                                              'dateAdded', 'dueDate', 'requiredAction',
+                                              'knownRansomwareCampaignUse')}
+                                    for entry in kev_cves.values()],
+            }
+            KEV_PATH.parent.mkdir(parents=True, exist_ok=True)
+            KEV_PATH.write_text(json.dumps(kev_out, indent=2), encoding='utf-8')
+            print(f'  [ENRICH]   CISA KEV: {matched} matched to fleet advisories', flush=True)
+            return {'total': len(kev_cves), 'matched': matched}
+        except Exception as e:
+            print(f'  [ENRICH]   CISA KEV parse error: {e}', flush=True)
+            return {'error': str(e), 'matched': 0}
+
+    # ── Scanner 2: NetApp PSIRT ──────────────────────────────────────
+    def _scan_netapp_psirt(self):
+        """Run the existing NetApp PSIRT advisory scanner."""
+        print('  [ENRICH] [2/7] Scanning NetApp PSIRT advisories...', flush=True)
+        try:
+            result = scan_and_persist_advisories(nvd_api_key=self._nvd_api_key)
+            print(f'  [ENRICH]   PSIRT: +{result.get("added", 0)} new, {result.get("total", 0)} total', flush=True)
+            return result
+        except Exception as e:
+            print(f'  [ENRICH]   PSIRT scan failed: {e}', flush=True)
+            return {'error': str(e), 'added': 0}
+
+    # ── Scanner 3: NVD API (NetApp CVEs) ─────────────────────────────
+    def _scan_nvd_netapp(self):
+        """Query NVD API 2.0 for new NetApp-related CVEs."""
+        print('  [ENRICH] [3/7] Scanning NVD for NetApp CVEs...', flush=True)
+        base_url = 'https://services.nvd.nist.gov/rest/json/cves/2.0'
+
+        # Get CVEs published in the last 30 days for NetApp
+        from_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%dT00:00:00.000')
+        to_date = datetime.now(timezone.utc).strftime('%Y-%m-%dT23:59:59.999')
+        url = f'{base_url}?keywordSearch=netapp&pubStartDate={from_date}&pubEndDate={to_date}'
+
+        # NVD API 2.0 only accepts apiKey as an HTTP header — passing it as a
+        # query string parameter silently 404s regardless of whether the key
+        # is valid, which was previously breaking every scan when a key was
+        # configured (silently falling back to no results, not to the slower
+        # unauthenticated tier).
+        extra_headers = {'apiKey': self._nvd_api_key} if self._nvd_api_key else None
+        text, err = _enrich_fetch(url, timeout=30, extra_headers=extra_headers)
+        if err or not text:
+            print(f'  [ENRICH]   NVD fetch failed: {err}', flush=True)
+            return {'error': str(err), 'new': 0}
+
+        try:
+            nvd_data = json.loads(text)
+            cves = nvd_data.get('vulnerabilities', [])
+            print(f'  [ENRICH]   NVD returned {len(cves)} CVEs (last 30 days)', flush=True)
+
+            # Load existing bulletin IDs for dedup
+            existing_cves = set()
+            if BULLETINS_PATH.exists():
+                bdata = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
+                for b in bdata.get('bulletins', []):
+                    for c in (b.get('cve') or []):
+                        existing_cves.add(c)
+
+            new_cves = []
+            for vuln in cves:
+                cve_item = vuln.get('cve', {})
+                cve_id = cve_item.get('id', '')
+                if cve_id in existing_cves:
+                    continue
+
+                # Extract CVSS score
+                metrics = cve_item.get('metrics', {})
+                cvss_score = 0.0
+                severity = 'medium'
+                for metric_key in ['cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2']:
+                    metric_list = metrics.get(metric_key, [])
+                    if metric_list:
+                        cvss_data = metric_list[0].get('cvssData', {})
+                        cvss_score = cvss_data.get('baseScore', 0.0)
+                        severity = cvss_data.get('baseSeverity', 'MEDIUM').lower()
+                        break
+
+                # Extract description
+                descriptions = cve_item.get('descriptions', [])
+                desc = ''
+                for d in descriptions:
+                    if d.get('lang') == 'en':
+                        desc = d.get('value', '')
+                        break
+
+                # Only include if it seems NetApp-related based on description
+                desc_lower = desc.lower()
+                if not any(kw in desc_lower for kw in ['netapp', 'ontap', 'storagegrid', 'snapcenter', 'trident', 'active iq', 'santricity']):
+                    continue
+
+                new_cves.append({
+                    'id': f'NVD-{cve_id}',
+                    'cve': [cve_id],
+                    'cvss': cvss_score,
+                    'severity': severity,
+                    'title': f'{cve_id}: {desc[:120]}...' if len(desc) > 120 else f'{cve_id}: {desc}',
+                    'description': desc,
+                    'affectedProducts': _infer_affected_products(cve_id, desc),
+                    'mitigation': 'Review NVD advisory and apply vendor patches.',
+                    'published': cve_item.get('published', '')[:10],
+                    'link': f'https://nvd.nist.gov/vuln/detail/{cve_id}',
+                    '_source': 'nvd_auto_scan',
+                    '_addedAt': datetime.now(timezone.utc).isoformat()[:10],
+                })
+
+            if new_cves:
+                # POST to existing bulletin pipeline
+                if BULLETINS_PATH.exists():
+                    bdata = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
+                    bulletins = bdata.get('bulletins', [])
+                else:
+                    bulletins = []
+                    bdata = {'version': 1, 'source': 'dynamic', 'bulletins': []}
+
+                id_set = {b.get('id') for b in bulletins}
+                added = 0
+                for entry in new_cves:
+                    if entry['id'] not in id_set:
+                        bulletins.append(entry)
+                        id_set.add(entry['id'])
+                        added += 1
+
+                if added > 0:
+                    bdata['lastUpdated'] = datetime.now(timezone.utc).isoformat()[:10]
+                    bdata['bulletinCount'] = len(bulletins)
+                    bdata['bulletins'] = bulletins
+                    payload = json.dumps(bdata, indent=2, ensure_ascii=False)
+                    tmp_path = BULLETINS_PATH.with_suffix('.tmp')
+                    bak_path = BULLETINS_PATH.with_suffix('.bak')
+                    tmp_path.write_text(payload, encoding='utf-8')
+                    if BULLETINS_PATH.exists():
+                        import shutil
+                        shutil.copy2(str(BULLETINS_PATH), str(bak_path))
+                    tmp_path.replace(BULLETINS_PATH)
+                    print(f'  [ENRICH]   NVD: Added {added} new CVEs to bulletin DB', flush=True)
+
+            print(f'  [ENRICH]   NVD: {len(new_cves)} new NetApp CVEs found', flush=True)
+            return {'scanned': len(cves), 'new': len(new_cves)}
+        except Exception as e:
+            print(f'  [ENRICH]   NVD parse error: {e}', flush=True)
+            return {'error': str(e), 'new': 0}
+
+    # ── Scanner 4: EPSS Scores ───────────────────────────────────────
+    def _scan_epss(self):
+        """Enrich existing CVEs with EPSS exploit prediction scores."""
+        print('  [ENRICH] [4/7] Enriching CVEs with EPSS scores...', flush=True)
+        if not BULLETINS_PATH.exists():
+            return {'enriched': 0}
+
+        try:
+            bdata = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
+            bulletins = bdata.get('bulletins', [])
+
+            # Collect all CVE IDs that don't yet have EPSS scores
+            cves_needing_epss = []
+            for b in bulletins:
+                if b.get('epssScore') is not None:
+                    continue
+                for cve_id in (b.get('cve') or []):
+                    if cve_id.startswith('CVE-'):
+                        cves_needing_epss.append((cve_id, b))
+
+            if not cves_needing_epss:
+                print('  [ENRICH]   EPSS: All CVEs already have scores', flush=True)
+                return {'enriched': 0, 'total': len(bulletins)}
+
+            # Batch query EPSS (up to 100 CVEs per request)
+            enriched = 0
+            batch_size = 30
+            for i in range(0, len(cves_needing_epss), batch_size):
+                batch = cves_needing_epss[i:i + batch_size]
+                cve_ids = ','.join(c[0] for c in batch)
+                url = f'https://api.first.org/data/v1/epss?cve={cve_ids}'
+                text, err = _enrich_fetch(url, timeout=15)
+                if err or not text:
+                    continue
+
+                try:
+                    epss_data = json.loads(text)
+                    epss_map = {d['cve']: d for d in epss_data.get('data', [])}
+                    for cve_id, bulletin in batch:
+                        if cve_id in epss_map:
+                            bulletin['epssScore'] = float(epss_map[cve_id].get('epss', 0))
+                            bulletin['epssPercentile'] = float(epss_map[cve_id].get('percentile', 0))
+                            enriched += 1
+                except Exception:
+                    pass
+
+                # Rate limiting: small pause between batches
+                time.sleep(1)
+
+            if enriched > 0:
+                bdata['lastUpdated'] = datetime.now(timezone.utc).isoformat()[:10]
+                payload = json.dumps(bdata, indent=2, ensure_ascii=False)
+                tmp_path = BULLETINS_PATH.with_suffix('.tmp')
+                bak_path = BULLETINS_PATH.with_suffix('.bak')
+                tmp_path.write_text(payload, encoding='utf-8')
+                if BULLETINS_PATH.exists():
+                    import shutil
+                    shutil.copy2(str(BULLETINS_PATH), str(bak_path))
+                tmp_path.replace(BULLETINS_PATH)
+
+            print(f'  [ENRICH]   EPSS: Enriched {enriched}/{len(cves_needing_epss)} CVEs', flush=True)
+            return {'enriched': enriched, 'total': len(bulletins)}
+        except Exception as e:
+            print(f'  [ENRICH]   EPSS error: {e}', flush=True)
+            return {'error': str(e), 'enriched': 0}
+
+    # ── Scanner 5: Version Catalog + EOA ─────────────────────────────
+    def _scan_version_catalog(self):
+        """Refresh ONTAP/StorageGRID/SANtricity version catalog from docs.netapp.com."""
+        print('  [ENRICH] [5/7] Refreshing version catalog from docs.netapp.com...', flush=True)
+        try:
+            catalog = fetch_latest_version_catalog()
+            total = sum(len(v) for v in catalog.values() if isinstance(v, list))
+            # Persist version catalog to local file
+            catalog['_lastUpdated'] = datetime.now(timezone.utc).isoformat()[:10]
+            VERSION_CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = VERSION_CATALOG_PATH.with_suffix('.tmp')
+            tmp_path.write_text(json.dumps(catalog, indent=2, ensure_ascii=False), encoding='utf-8')
+            tmp_path.replace(VERSION_CATALOG_PATH)
+            print(f'  [ENRICH]   Version catalog: {total} versions across {len(catalog)} products', flush=True)
+            return {'products': list(catalog.keys()), 'totalVersions': total}
+        except Exception as e:
+            print(f'  [ENRICH]   Version catalog error: {e}', flush=True)
+            return {'error': str(e)}
+
+    # ── Scanner 6: KB / Best Practices / Integration Docs ────────────
+    def _scan_knowledge_base(self):
+        """Scan NetApp KB, docs.netapp.com, and integration sources for new articles."""
+        print('  [ENRICH] [6/7] Scanning knowledge base sources...', flush=True)
+
+        # Load existing knowledge base
+        if KNOWLEDGE_PATH.exists():
+            try:
+                kb_data = json.loads(KNOWLEDGE_PATH.read_text(encoding='utf-8'))
+            except Exception:
+                kb_data = {'version': 1, 'articles': []}
+        else:
+            kb_data = {'version': 1, 'articles': []}
+
+        existing_urls = {a.get('url') for a in kb_data.get('articles', [])}
+        new_articles = []
+
+        # ── 6a. NetApp KB articles (best practices, troubleshooting) ──
+        import json as _json_mod
+
+        def _fetch_kb_jsonld(url):
+            found_urls = []
+            try:
+                text, err = _enrich_fetch(url, timeout=15)
+                if err or not text:
+                    return found_urls
+                ld_blocks = _re.findall(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', text, _re.DOTALL)
+                for block in ld_blocks:
+                    try:
+                        data = _json_mod.loads(block)
+                        if 'mainEntity' in data:
+                            for item in data['mainEntity'].get('itemListElement', []):
+                                name = item.get('name', '')
+                                iurl = item.get('url', '')
+                                if iurl:
+                                    found_urls.append((iurl, name))
+                    except: pass
+                time.sleep(1)
+            except: pass
+            return found_urls
+
+        kb_root_urls = _fetch_kb_jsonld('https://kb.netapp.com/')
+        kb_level1 = []
+        for curl, cname in kb_root_urls:
+            kb_level1.extend(_fetch_kb_jsonld(curl))
+            
+        ontap_urls = [u for u in kb_level1 if 'ontap' in u[0].lower()]
+        kb_level2 = []
+        for curl, cname in ontap_urls:
+            kb_level2.extend(_fetch_kb_jsonld(curl))
+
+        for curl, cname in kb_root_urls + kb_level1 + kb_level2:
+            if curl not in existing_urls:
+                cat = 'knowledge_base'
+                lower_url = curl.lower()
+                if 'troubleshoot' in lower_url: cat = 'troubleshooting'
+                elif 'best-practice' in lower_url: cat = 'best_practices'
+                elif 'security' in lower_url: cat = 'security'
+                
+                new_articles.append({
+                    'url': curl,
+                    'title': html.unescape(cname).strip() if cname else curl.split('/')[-1].replace('-', ' ').title(),
+                    'source': 'kb.netapp.com',
+                    'category': cat,
+                    'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                })
+                existing_urls.add(curl)
+
+        # ── 6b. Technical Reports (TRs) from docs.netapp.com ──
+        docs_indexes = [
+            'https://docs.netapp.com/us-en/ontap/',
+            'https://docs.netapp.com/us-en/ontap-systems/',
+            'https://docs.netapp.com/us-en/ontap/nas-management/index.html',
+            'https://docs.netapp.com/us-en/ontap/san-management/index.html',
+            'https://docs.netapp.com/us-en/ontap/upgrade/index.html',
+        ]
+        for url in docs_indexes:
+            try:
+                text, err = _enrich_fetch(url, timeout=15)
+                if not err and text:
+                    links = _re.findall(r'href="([^"]+)"[^>]*>([^<]{5,})</a>', text)
+                    for href, title in links:
+                        if href.startswith('http') and not href.startswith('https://docs.netapp.com/'):
+                            continue
+                        if href.startswith('#') or href.startswith('javascript:'):
+                            continue
+                        full_url = href if href.startswith('http') else urllib.parse.urljoin(url, href)
+                        if full_url in existing_urls:
+                            continue
+                        title_clean = html.unescape(title).strip()
+                        lower_url = full_url.lower()
+                        cat = 'reference'
+                        if '/security/' in lower_url: cat = 'security'
+                        elif '/upgrade/' in lower_url: cat = 'upgrade'
+                        elif '/performance/' in lower_url: cat = 'performance'
+                        elif '/san' in lower_url: cat = 'operations'
+                        elif '/nas' in lower_url: cat = 'operations'
+                        elif '/fabricpool/' in lower_url: cat = 'configuration'
+                        
+                        new_articles.append({
+                            'url': full_url,
+                            'title': title_clean,
+                            'source': 'docs.netapp.com',
+                            'category': cat,
+                            'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                        })
+                        existing_urls.add(full_url)
+                time.sleep(2)
+            except Exception:
+                pass
+
+        # ── 6c. 3rd-party integration docs — DYNAMIC DISCOVERY ──
+        integration_seeds = [
+            ('https://docs.netapp.com/us-en/ontap/release-notes/index.html', 'reference', 'Release Notes'),
+            ('https://docs.netapp.com/us-en/ontap/quick-start.html', 'reference', 'Quick Start'),
+            ('https://docs.netapp.com/us-en/ontap/software_setup/workflow-summary.html', 'reference', 'Software Setup Workflow'),
+            ('https://docs.netapp.com/us-en/ontap-cli/index.html', 'automation', 'ONTAP CLI Reference'),
+            ('https://docs.netapp.com/us-en/ontap/setup-upgrade/index.html', 'upgrade', 'Setup and Upgrade'),
+            ('https://docs.netapp.com/us-en/ontap/disks-aggregates/index.html', 'operations', 'Disks and Aggregates Management'),
+            ('https://docs.netapp.com/us-en/ontap/fabricpool/index.html', 'configuration', 'FabricPool Configuration'),
+            ('https://docs.netapp.com/us-en/ontap/flexgroup/index.html', 'operations', 'FlexGroup Volumes'),
+            ('https://docs.netapp.com/us-en/ontap/flexcache/index.html', 'operations', 'FlexCache Volumes'),
+            ('https://docs.netapp.com/us-en/ontap/nfs-config/index.html', 'configuration', 'NFS Configuration'),
+            ('https://docs.netapp.com/us-en/ontap/nfs-admin/index.html', 'operations', 'NFS Administration'),
+            ('https://docs.netapp.com/us-en/ontap/smb-config/index.html', 'configuration', 'SMB Configuration'),
+            ('https://docs.netapp.com/us-en/ontap/smb-admin/index.html', 'operations', 'SMB Administration'),
+            ('https://docs.netapp.com/us-en/ontap/smb-hyper-v-sql/index.html', 'integration', 'SMB for Hyper-V and SQL Server'),
+            ('https://docs.netapp.com/us-en/ontap/san-admin/index.html', 'operations', 'SAN Administration'),
+            ('https://docs.netapp.com/us-en/ontap/san-config/index.html', 'configuration', 'SAN Configuration'),
+            ('https://docs.netapp.com/us-en/ontap-sanhost/', 'integration', 'SAN Host Utilities'),
+            ('https://docs.netapp.com/us-en/ontap/s3-config/workflow-concept.html', 'configuration', 'S3 Configuration Workflow'),
+            ('https://docs.netapp.com/us-en/ontap/s3-snapmirror/index.html', 'data_protection', 'S3 SnapMirror'),
+            ('https://docs.netapp.com/us-en/ontap/authentication/workflow-concept.html', 'security', 'Authentication and RBAC Workflow'),
+            ('https://docs.netapp.com/us-en/ontap/multi-admin-verify/index.html', 'security', 'Multi-Admin Verification'),
+            ('https://docs.netapp.com/us-en/ontap/authentication/overview-oauth2.html', 'security', 'OAuth2 Authentication'),
+            ('https://docs.netapp.com/us-en/ontap/nas-audit/index.html', 'security', 'NAS Auditing'),
+            ('https://docs.netapp.com/us-en/ontap/antivirus/index.html', 'security', 'Antivirus Configuration'),
+            ('https://docs.netapp.com/us-en/ontap/snaplock/index.html', 'compliance', 'SnapLock Compliance'),
+            ('https://docs.netapp.com/us-en/ontap/snapmirror-active-sync/index.html', 'data_protection', 'SnapMirror Active Sync'),
+            ('https://docs.netapp.com/us-en/ontap/tape-backup/index.html', 'integration', 'Tape Backup Integration'),
+            ('https://docs.netapp.com/us-en/ontap/ndmp/index.html', 'integration', 'NDMP Backup Integration'),
+            ('https://docs.netapp.com/us-en/ontap/performance-config/index.html', 'performance', 'Performance Configuration'),
+            ('https://docs.netapp.com/us-en/ontap/performance-admin/index.html', 'performance', 'Performance Administration'),
+            ('https://docs.netapp.com/us-en/ontap/concept_nas_file_system_analytics_overview.html', 'performance', 'File System Analytics'),
+            ('https://docs.netapp.com/us-en/ontap/error-messages/index.html', 'troubleshooting', 'EMS Error Messages'),
+            ('https://docs.netapp.com/us-en/ai-data-engine/index.html', 'integration', 'AI Data Engine'),
+            ('https://docs.netapp.com/us-en/ontap-technical-reports/ransomware-solutions/ransomware-overview.html', 'security', 'Ransomware Solutions Overview'),
+            ('https://docs.netapp.com/us-en/ontap-7mode-transition/index.html', 'migration', '7-Mode to ONTAP Transition'),
+            ('https://docs.netapp.com/us-en/ontap-fli/', 'migration', 'Foreign LUN Import'),
+            ('https://docs.netapp.com/us-en/ontap-select/', 'integration', 'ONTAP Select'),
+            
+            # VMware Integration
+            ('https://docs.netapp.com/us-en/ontap-tools-vmware-vsphere-10/index.html', 'integration', 'ONTAP tools for VMware vSphere'),
+            ('https://docs.netapp.com/us-en/sc-plugin-vmware-vsphere/index.html', 'integration', 'SnapCenter Plug-in for VMware'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vsphere-overview.html', 'integration', 'ONTAP for VMware vSphere Administrators'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-otv-hardening-overview.html', 'best_practices', 'VMware vSphere with ONTAP Best Practices'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-srm-overview.html', 'integration', 'VMware SRM with ONTAP'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vvols-overview.html', 'integration', 'VMware vVols with ONTAP'),
+            ('https://docs.netapp.com/us-en/netapp-solutions-cloud/vmware/vmw-azure-avs-dr-jetstream.html', 'data_protection', 'JetStream DR for VMware on Azure NetApp Files (NetApp acquisition, Aug 2026)'),
+
+            # Kubernetes/Containers
+            ('https://docs.netapp.com/us-en/trident/index.html', 'integration', 'Astra Trident (Kubernetes CSI)'),
+            ('https://docs.netapp.com/us-en/astra-control-center/index.html', 'integration', 'Astra Control Center'),
+
+            # Database Integration
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/oracle/oracle-overview.html', 'integration', 'Oracle on ONTAP'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/mssql/mssql-overview.html', 'integration', 'Microsoft SQL Server on ONTAP'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/sap-hana/sap-hana-overview.html', 'integration', 'SAP HANA on ONTAP'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/postgres/postgres-overview.html', 'integration', 'PostgreSQL on ONTAP'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/mysql/mysql-overview.html', 'integration', 'MySQL on ONTAP'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/mongodb/mongodb-overview.html', 'integration', 'MongoDB on ONTAP'),
+            ('https://docs.netapp.com/us-en/ontap-apps-dbs/epic/epic-overview.html', 'integration', 'Epic EHR on ONTAP'),
+
+            # Automation/DevOps
+            ('https://docs.netapp.com/us-en/ontap-automation/index.html', 'automation', 'ONTAP REST API'),
+            ('https://docs.netapp.com/us-en/ontap/task_configure_ontap.html', 'automation', 'Ansible Automation'),
+            ('https://netapp.github.io/harvest/', 'automation', 'NetApp Harvest (Prometheus/Grafana)'),
+
+            # Backup & Recovery
+            ('https://docs.netapp.com/us-en/snapcenter/index.html', 'data_protection', 'SnapCenter Software'),
+            ('https://docs.netapp.com/us-en/bluexp-backup-recovery/index.html', 'data_protection', 'BlueXP Backup and Recovery'),
+            ('https://docs.netapp.com/us-en/bluexp-backup-recovery/concept-backup-to-cloud.html', 'cloud', 'Cloud Backup'),
+
+            # Cloud Integration
+            ('https://docs.netapp.com/us-en/bluexp-cloud-volumes-ontap/index.html', 'cloud', 'Cloud Volumes ONTAP'),
+            ('https://docs.netapp.com/us-en/bluexp-fsx-ontap/index.html', 'cloud', 'Amazon FSx for ONTAP'),
+            ('https://docs.netapp.com/us-en/bluexp-azure-netapp-files/index.html', 'cloud', 'Azure NetApp Files'),
+            ('https://docs.netapp.com/us-en/bluexp-google-cloud-netapp-volumes/index.html', 'cloud', 'Google Cloud NetApp Volumes'),
+            ('https://docs.netapp.com/us-en/bluexp-tiering/index.html', 'cloud', 'FabricPool Cloud Tiering'),
+            ('https://docs.netapp.com/us-en/bluexp-classification/index.html', 'compliance', 'BlueXP Classification (Data Sense)'),
+
+            # Monitoring & Observability
+            ('https://docs.netapp.com/us-en/active-iq-unified-manager/index.html', 'monitoring', 'Active IQ Unified Manager'),
+            ('https://docs.netapp.com/us-en/active-iq/index.html', 'monitoring', 'Active IQ Digital Advisor'),
+            ('https://docs.netapp.com/us-en/bluexp-digital-wallet/index.html', 'monitoring', 'BlueXP Digital Wallet'),
+            ('https://docs.netapp.com/us-en/storagegrid-enable/technical-reports/monitor-storagegrid-app-splunk.html', 'monitoring', 'Splunk Add-on for StorageGRID'),
+            ('https://docs.netapp.com/us-en/netapp-solutions-ai/data-analytics/stgr-splunkss-introduction.html', 'monitoring', 'Splunk SmartStore on StorageGRID S3'),
+            ('https://docs.netapp.com/us-en/storagegrid-enable/tools-apps-guides/use-datadog-snmp.html', 'monitoring', 'Datadog SNMP Monitoring for StorageGRID'),
+            ('https://docs.netapp.com/us-en/data-infrastructure-insights/task_dc_na_cdot.html', 'monitoring', 'Data Infrastructure Insights ONTAP Collector'),
+
+            # ITSM / SIEM / SOAR Integration
+            ('https://docs.netapp.com/us-en/data-services-ransomware-resilience/reference-soar.html', 'security', 'Ransomware Resilience SOAR Integration (Sentinel/Splunk)'),
+            ('https://docs.netapp.com/us-en/oncommand-insight/howto/servicenow-integration-set-up-user.html', 'automation', 'ServiceNow CMDB Integration for OnCommand Insight'),
+            ('https://docs.netapp.com/us-en/oncommand-insight/howto/servicenow-integration-install-update-set.html', 'automation', 'ServiceNow Update Set Installation'),
+
+            # Container Platforms — Red Hat OpenShift
+            ('https://docs.netapp.com/us-en/netapp-solutions/containers/rh-os-n_solution_overview.html', 'integration', 'Red Hat OpenShift on NetApp (NVA-1160)'),
+            ('https://docs.netapp.com/us-en/netapp-solutions-virtualization/openshift/osv-vm-dr-using-tp.html', 'data_protection', 'OpenShift Virtualization DR with Trident Protect'),
+            ('https://docs.netapp.com/us-en/netapp-solutions/rhhc/rhhc-op-data-protection.html', 'data_protection', 'OpenShift Container Data Protection (Astra/Trident Protect)'),
+
+            # Additional Database Integration
+            ('https://docs.netapp.com/us-en/snapcenter/protect-db2/snapcenter-plug-in-for-ibm-db2-overview.html', 'integration', 'SnapCenter Plug-in for IBM Db2'),
+            ('https://docs.netapp.com/us-en/netapp-solutions-sap/backup/snapcenter-ibm-db2.html', 'integration', 'SnapCenter for IBM Db2 on SAP'),
+
+            # Security & Compliance
+            ('https://docs.netapp.com/us-en/ontap/security/index.html', 'security', 'ONTAP Security Hardening Guide'),
+            ('https://docs.netapp.com/us-en/ontap/anti-ransomware/index.html', 'security', 'Autonomous Ransomware Protection'),
+            ('https://docs.netapp.com/us-en/ontap/encryption-at-rest/index.html', 'security', 'ONTAP Encryption at Rest (NVE/NAE)'),
+            ('https://docs.netapp.com/us-en/ontap/zero-trust/zero-trust-overview.html', 'security', 'Zero Trust with ONTAP'),
+
+            # Data Protection & DR
+            ('https://docs.netapp.com/us-en/ontap-metrocluster/index.html', 'data_protection', 'MetroCluster Configuration'),
+            ('https://docs.netapp.com/us-en/ontap/mediator/index.html', 'data_protection', 'ONTAP Mediator'),
+            ('https://docs.netapp.com/us-en/ontap/volumes/flexclone-efficient-copies-concept.html', 'data_protection', 'FlexClone'),
+
+            # Storage Efficiency
+            ('https://docs.netapp.com/us-en/ontap/volumes/deduplication-data-compression-efficiency-concept.html', 'performance', 'Storage Efficiency Overview'),
+        ]
+        for doc_url, category, title in integration_seeds:
+            if doc_url not in existing_urls:
+                new_articles.append({
+                    'url': doc_url,
+                    'title': title,
+                    'source': 'docs.netapp.com',
+                    'category': category,
+                    'relevance': f'Fleet-relevant {category} documentation',
+                    'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                })
+                existing_urls.add(doc_url)
+
+        # ── 6c-auto. Dynamic discovery: crawl docs.netapp.com product index ──
+        _discovery_urls = [
+            'https://docs.netapp.com/us-en/',
+            'https://docs.netapp.com/us-en/netapp-solutions/',
+        ]
+        for catalog_url in _discovery_urls:
+            try:
+                text, err = _enrich_fetch(catalog_url, timeout=20)
+                if err or not text:
+                    continue
+                links = _re.findall(
+                    r'href="((?:https://docs\.netapp\.com)?/us-en/([a-z0-9][a-z0-9_-]{3,60})(?:/[^"]{0,80})?\.html)"[^>]*>([^<]{5,120})</a>',
+                    text, _re.IGNORECASE
+                )
+                for href, repo_slug, link_title in links:
+                    full_url = href if href.startswith('http') else f'https://docs.netapp.com{href}'
+                    if full_url in existing_urls:
+                        continue
+                    if any(x in full_url for x in ['#', '.png', '.jpg', '.svg', 'mailto:', 'javascript:']):
+                        continue
+                    title_clean = html.unescape(link_title).strip()
+                    if len(title_clean) < 8 or title_clean.lower() in ('index', 'home', 'back', 'next', 'previous'):
+                        continue
+                    slug_lower = repo_slug.lower()
+                    title_lower = title_clean.lower()
+                    cat = 'reference'
+                    if any(k in slug_lower or k in title_lower for k in ['vmware', 'vsphere', 'vcenter', 'vvol']):
+                        cat = 'integration'
+                    elif any(k in slug_lower or k in title_lower for k in ['trident', 'kubernetes', 'k8s', 'astra', 'openshift', 'container', 'docker', 'rancher']):
+                        cat = 'integration'
+                    elif any(k in slug_lower or k in title_lower for k in ['oracle', 'sql', 'sap', 'hana', 'db2', 'mysql', 'postgres', 'mongo', 'database', 'epic']):
+                        cat = 'integration'
+                    elif any(k in slug_lower or k in title_lower for k in ['ansible', 'terraform', 'automation', 'rest-api', 'powershell']):
+                        cat = 'automation'
+                    elif any(k in slug_lower or k in title_lower for k in ['aws', 'azure', 'gcp', 'cloud', 'fsx', 'bluexp', 'occm']):
+                        cat = 'cloud'
+                    elif any(k in slug_lower or k in title_lower for k in ['backup', 'commvault', 'veeam', 'veritas', 'ndmp', 'snapcenter']):
+                        cat = 'integration'
+                    elif any(k in slug_lower or k in title_lower for k in ['splunk', 'kafka', 'spark', 'hadoop', 'analytics', 'ai', 'gpu', 'nvidia', 'ml']):
+                        cat = 'integration'
+                    elif any(k in slug_lower or k in title_lower for k in ['migrate', 'transition', 'import', 'xcp']):
+                        cat = 'migration'
+                    elif any(k in slug_lower or k in title_lower for k in ['security', 'ransomware', 'encrypt', 'zero-trust']):
+                        cat = 'security'
+                    elif any(k in slug_lower or k in title_lower for k in ['san', 'nvme', 'iscsi', 'fc', 'host']):
+                        cat = 'integration'
+                    elif any(k in slug_lower or k in title_lower for k in ['storagegrid', 's3', 'object']):
+                        cat = 'integration'
+                    elif any(k in slug_lower or k in title_lower for k in ['solution', 'best-practice', 'validated', 'design']):
+                        cat = 'best_practices'
+
+                    new_articles.append({
+                        'url': full_url,
+                        'title': title_clean,
+                        'source': 'docs.netapp.com',
+                        'category': cat,
+                        'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                        '_autoDiscovered': True,
+                    })
+                    existing_urls.add(full_url)
+                time.sleep(2)
+            except Exception:
+                pass
+
+        # ── 6d. Scan for new EOA announcements ──
+        try:
+            eoa_url = 'https://docs.netapp.com/us-en/ontap-systems/endofavail/'
+            text, err = _enrich_fetch(eoa_url, timeout=15)
+            if text and not err:
+                eoa_links = _re.findall(r'href="([^"]*end-of-avail[^"]*\.html)"', text)
+                for link in eoa_links:
+                    full_url = f'https://docs.netapp.com/us-en/ontap-systems/endofavail/{link}' if not link.startswith('http') else link
+                    if full_url not in existing_urls:
+                        new_articles.append({
+                            'url': full_url,
+                            'title': f'EOA Notice: {link.replace(".html", "").replace("-", " ").title()}',
+                            'source': 'docs.netapp.com',
+                            'category': 'lifecycle',
+                            'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                        })
+                        existing_urls.add(full_url)
+        except Exception:
+            pass
+
+        # ── 6e. Fleet-aware operational / troubleshooting / remediation docs ──
+        fleet_articles_added = 0
+        try:
+            db = _init_db()
+            cached_result, _ = _load_cached(db)
+            db.close()
+        except Exception:
+            cached_result = None
+
+        if cached_result:
+            fleet_systems = cached_result.get('systems', [])
+            fleet_versions = set()
+            fleet_major_versions = set()
+            fleet_platforms = set()
+            fleet_products = set()
+            fleet_models = set()
+            for sys in fleet_systems:
+                ver = sys.get('osVersion') or ''
+                if ver:
+                    fleet_versions.add(ver)
+                    m = _re.match(r'(\d+\.\d+)', ver)
+                    if m:
+                        fleet_major_versions.add(m.group(1))
+                plat = (sys.get('platform') or sys.get('platformType') or '').lower()
+                if plat:
+                    fleet_platforms.add(plat)
+                prod = (sys.get('productType') or sys.get('systemType') or '').lower()
+                if prod:
+                    fleet_products.add(prod)
+                model = (sys.get('model') or '').upper()
+                if model:
+                    model_family = _re.sub(r'\s+', '-', model.strip())
+                    fleet_models.add(model_family)
+
+            print(f'  [ENRICH]   Fleet profile: {len(fleet_systems)} systems, '
+                  f'{len(fleet_major_versions)} ONTAP versions, '
+                  f'{len(fleet_models)} model families', flush=True)
+
+            # ── 6e-i. Version-specific ONTAP documentation ──
+            for major_ver in sorted(fleet_major_versions):
+                ver_docs = [
+                    ('https://docs.netapp.com/us-en/ontap/release-notes/index.html', 'operations', f'ONTAP Release Notes'),
+                    ('https://docs.netapp.com/us-en/ontap/upgrade/index.html', 'upgrade', f'ONTAP Upgrade Guide'),
+                    ('https://docs.netapp.com/us-en/ontap/revert/index.html', 'operations', f'ONTAP Revert Procedures'),
+                    ('https://docs.netapp.com/us-en/ontap/system-admin/index.html', 'operations', f'ONTAP System Administration'),
+                    ('https://docs.netapp.com/us-en/ontap-cli/index.html', 'operations', f'ONTAP CLI Reference'),
+                    ('https://docs.netapp.com/us-en/ontap/networking/index.html', 'operations', f'ONTAP Network Management'),
+                    ('https://docs.netapp.com/us-en/ontap/security/index.html', 'security', f'ONTAP Security Hardening'),
+                    ('https://docs.netapp.com/us-en/ontap/anti-ransomware/index.html', 'security', f'ONTAP Anti-Ransomware'),
+                    ('https://docs.netapp.com/us-en/ontap/data-protection/index.html', 'data_protection', f'ONTAP Data Protection'),
+                    ('https://docs.netapp.com/us-en/ontap/performance-admin/index.html', 'performance', f'ONTAP Performance Monitoring'),
+                    ('https://docs.netapp.com/us-en/ontap/error-messages/index.html', 'troubleshooting', f'ONTAP Error Messages & Remediation'),
+                    ('https://docs.netapp.com/us-en/ontap/volumes/index.html', 'operations', f'ONTAP Volume Management'),
+                    ('https://docs.netapp.com/us-en/ontap/san-admin/index.html', 'operations', f'ONTAP SAN Administration'),
+                    ('https://docs.netapp.com/us-en/ontap/nas-audit/index.html', 'operations', f'ONTAP NAS Audit & Tracking'),
+                    ('https://docs.netapp.com/us-en/ontap/fabricpool/index.html', 'configuration', f'ONTAP FabricPool Configuration'),
+                    ('https://docs.netapp.com/us-en/ontap/peering/index.html', 'data_protection', f'ONTAP Cluster Peering'),
+                    ('https://docs.netapp.com/us-en/ontap/mediator/index.html', 'data_protection', f'ONTAP Mediator for MetroCluster/SMBC'),
+                    ('https://docs.netapp.com/us-en/ontap/encryption-at-rest/index.html', 'security', f'ONTAP Encryption at Rest'),
+                ]
+                
+                for doc_url, category, title in ver_docs:
+                    if doc_url not in existing_urls:
+                        new_articles.append({
+                            'url': doc_url,
+                            'title': title,
+                            'source': 'docs.netapp.com',
+                            'category': category,
+                            'relevance': f'ONTAP {major_ver} deployed in fleet',
+                            'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                            '_fleetRelevant': True,
+                        })
+                        existing_urls.add(doc_url)
+                        fleet_articles_added += 1
+
+            # ── 6e-ii. Platform-specific hardware & maintenance docs ──
+            platform_doc_map = {
+                'aff': [
+                    ('https://docs.netapp.com/us-en/ontap-systems/index.html', 'operations', 'AFF/FAS Hardware Installation & Maintenance'),
+                    ('https://docs.netapp.com/us-en/ontap-systems/aff-aseries/index.html', 'operations', 'AFF A-Series Systems Installation'),
+                    ('https://docs.netapp.com/us-en/ontap-systems/aff-cseries/index.html', 'operations', 'AFF C-Series Systems Installation'),
+                ],
+                'fas': [
+                    ('https://docs.netapp.com/us-en/ontap-systems/index.html', 'operations', 'AFF/FAS Hardware Installation & Maintenance'),
+                    ('https://docs.netapp.com/us-en/ontap-systems/fas/index.html', 'operations', 'FAS Systems Installation'),
+                ],
+                'asa': [
+                    ('https://docs.netapp.com/us-en/ontap-systems/index.html', 'operations', 'AFF/FAS Hardware Installation & Maintenance'),
+                    ('https://docs.netapp.com/us-en/ontap/san-admin/index.html', 'operations', 'ASA — SAN Administration (Block-Optimised)'),
+                    ('https://docs.netapp.com/us-en/ontap-systems/allsan-landing/index.html', 'operations', 'ASA Systems Documentation'),
+                    ('https://docs.netapp.com/us-en/asa-r2/index.html', 'operations', 'ASA r2 Systems Documentation'),
+                ],
+                'afx': [
+                    ('https://docs.netapp.com/us-en/ontap-systems/afx/index.html', 'operations', 'AFX Systems Documentation'),
+                ],
+                'shelves': [
+                    ('https://docs.netapp.com/us-en/ontap-systems/drive-shelves/index.html', 'operations', 'Drive Shelves Installation'),
+                ],
+                'switches': [
+                    ('https://docs.netapp.com/us-en/ontap-systems-switches/index.html', 'operations', 'Switches Documentation'),
+                ]
+            }
+            
+            detected_families = set()
+            for plat in fleet_platforms:
+                for family_key in platform_doc_map:
+                    if family_key in plat: detected_families.add(family_key)
+            for prod in fleet_products:
+                for family_key in platform_doc_map:
+                    if family_key in prod: detected_families.add(family_key)
+            for model in fleet_models:
+                model_l = model.lower()
+                if 'aff' in model_l or model_l.startswith('a'): detected_families.add('aff')
+                if 'fas' in model_l: detected_families.add('fas')
+                if 'asa' in model_l: detected_families.add('asa')
+                if 'afx' in model_l: detected_families.add('afx')
+
+            if not detected_families:
+                detected_families = {'aff', 'fas'}
+
+            detected_families.add('shelves')
+            detected_families.add('switches')
+
+            for family in detected_families:
+                docs = platform_doc_map.get(family, [])
+                for doc_url, category, title in docs:
+                    if doc_url not in existing_urls:
+                        new_articles.append({
+                            'url': doc_url,
+                            'title': title,
+                            'source': 'docs.netapp.com',
+                            'category': category,
+                            'relevance': f'{family.upper()} platform in fleet',
+                            'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                            '_fleetRelevant': True,
+                        })
+                        existing_urls.add(doc_url)
+                        fleet_articles_added += 1
+
+            # ── 6e-iii. Model-specific hardware procedures ──
+            for model in sorted(fleet_models):
+                model_slug = model.lower().replace(' ', '-')
+                hw_docs = [
+                    (f'https://docs.netapp.com/us-en/ontap-systems/{model_slug}/install-setup.html',
+                     'operations', f'{model} — Installation & Setup'),
+                    (f'https://docs.netapp.com/us-en/ontap-systems/{model_slug}/maintain-overview.html',
+                     'operations', f'{model} — Hardware Maintenance'),
+                ]
+                for doc_url, category, title in hw_docs:
+                    if doc_url not in existing_urls:
+                        new_articles.append({
+                            'url': doc_url,
+                            'title': title,
+                            'source': 'docs.netapp.com',
+                            'category': category,
+                            'relevance': f'{model} deployed in fleet',
+                            'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                            '_fleetRelevant': True,
+                        })
+                        existing_urls.add(doc_url)
+                        fleet_articles_added += 1
+
+            # ── 6e-iv. Fleet KB searches (JSON-LD category crawling) ──
+            fleet_kb_urls = [
+                'https://kb.netapp.com/on-prem/ontap/da',
+                'https://kb.netapp.com/on-prem/ontap/DP',
+                'https://kb.netapp.com/on-prem/ontap/DM',
+                'https://kb.netapp.com/on-prem/ontap/mc',
+                'https://kb.netapp.com/on-prem/ontap/DP/SnapMirror',
+                'https://kb.netapp.com/on-prem/ontap/DP/SnapLock',
+                'https://kb.netapp.com/on-prem/ontap/da/NAS',
+                'https://kb.netapp.com/on-prem/ontap/da/SAN',
+            ]
+            
+            for base_url in fleet_kb_urls:
+                try:
+                    text, err = _enrich_fetch(base_url, timeout=15)
+                    if not err and text:
+                        ld_blocks = _re.findall(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', text, _re.DOTALL)
+                        for block in ld_blocks:
+                            try:
+                                data = _json_mod.loads(block)
+                                if 'mainEntity' in data:
+                                    for item in data['mainEntity'].get('itemListElement', []):
+                                        url = item.get('url', '')
+                                        name = item.get('name', '')
+                                        if url and url.startswith('https://kb.netapp.com/'):
+                                            if url not in existing_urls:
+                                                new_articles.append({
+                                                    'url': url,
+                                                    'title': html.unescape(name).strip() if name else url.split('/')[-1].replace('-', ' ').title(),
+                                                    'source': 'kb.netapp.com',
+                                                    'category': 'troubleshooting',
+                                                    'relevance': 'fleet-specific',
+                                                    'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                                                    '_fleetRelevant': True,
+                                                })
+                                                existing_urls.add(url)
+                                                fleet_articles_added += 1
+                            except: pass
+                    time.sleep(2)
+                except Exception:
+                    pass
+
+            # ── 6e-v. Remediation docs for active risks/advisories ──
+            if BULLETINS_PATH.exists():
+                try:
+                    bdata = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
+                    bulletins = bdata.get('bulletins', [])
+                    critical_bulletins = [
+                        b for b in bulletins
+                        if b.get('severity', '').lower() in ('critical', 'high')
+                    ]
+                    
+                    remediation_docs = [
+                        ('https://docs.netapp.com/us-en/ontap/antivirus/index.html', 'Antivirus Configuration'),
+                        ('https://docs.netapp.com/us-en/ontap/anti-ransomware/index.html', 'Anti-Ransomware Configuration'),
+                        ('https://docs.netapp.com/us-en/ontap/nas-audit/index.html', 'NAS Audit Configuration'),
+                        ('https://docs.netapp.com/us-en/ontap/multi-admin-verify/index.html', 'Multi-Admin Verify'),
+                        ('https://docs.netapp.com/us-en/ontap/snaplock/index.html', 'SnapLock Configuration'),
+                        ('https://docs.netapp.com/us-en/ontap/authentication/workflow-concept.html', 'Authentication Workflow'),
+                        ('https://docs.netapp.com/us-en/ontap-technical-reports/ransomware-solutions/ransomware-overview.html', 'Ransomware Solutions Overview'),
+                    ]
+                    
+                    for b in critical_bulletins[:20]:
+                        adv_url = b.get('url')
+                        if adv_url and adv_url.startswith('https://security.netapp.com/') and adv_url not in existing_urls:
+                            new_articles.append({
+                                'url': adv_url,
+                                'title': f"Advisory Remediation: {b.get('title', 'Security Bulletin')}",
+                                'source': 'security.netapp.com',
+                                'category': 'remediation',
+                                'relevance': 'Active critical advisory',
+                                'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                                '_fleetRelevant': True,
+                            })
+                            existing_urls.add(adv_url)
+                            fleet_articles_added += 1
+                            
+                    for r_url, r_title in remediation_docs:
+                        if r_url not in existing_urls:
+                            new_articles.append({
+                                'url': r_url,
+                                'title': r_title,
+                                'source': 'docs.netapp.com',
+                                'category': 'remediation',
+                                'relevance': 'Security Remediation Guide',
+                                'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                                '_fleetRelevant': True,
+                            })
+                            existing_urls.add(r_url)
+                            fleet_articles_added += 1
+                            
+                except Exception:
+                    pass
+
+            print(f'  [ENRICH]   Fleet-aware docs: +{fleet_articles_added} articles '
+                  f'for {len(fleet_major_versions)} ONTAP versions, '
+                  f'{len(detected_families)} platform families', flush=True)
+
+            # ── 6f. 3rd Party Vendor Documentation & Best Practice Alignment ──
+            # Comprehensive vendor guideline enrichment: detects which 3rd party
+            # integrations are in use (or likely in use) based on fleet telemetry,
+            # then pulls relevant vendor documentation, NetApp configuration
+            # guidelines, and best practice alignment notes.
+            vendor_articles_added = 0
+
+            # ── Fleet Integration Detection Heuristics ──
+            # Scan fleet telemetry for signals that indicate which 3rd party
+            # platforms/tools are in use or relevant.
+            fleet_signals = {
+                'vmware':    False, 'hyperv':     False, 'kvm_linux':  False,
+                'proxmox':   False, 'nutanix':    False, 'kubernetes': False,
+                'cisco_san': False, 'brocade_fc': False, 'broadcom_eth': False,
+                'oracle_db': False, 'mssql':      False, 'sap_hana':   False,
+                'veeam':     False, 'commvault':  False, 'rubrik':     False,
+                'cohesity':  False, 'hycu':       False, 'veritas':    False,
+                'snapcenter': False, 'fabricpool': False, 'metrocluster': False,
+                'snapmirror': False, 'arp':        False, 'fpolicy':    False,
+                'eseries':   False, 'storagegrid': False, 'asa_r2':     False,
+                'afx':       False, 'nvme':       False, 'iscsi':      False,
+                'fc_san':    False, 'nfs':        False, 'smb_cifs':   False,
+                'ai_ml':     False, 'splunk':     False, 'crowdstrike': False,
+                'paloalto':  False, 'varonis':    False, 'cyberark':   False,
+                'flexpod':   False,
+            }
+
+            for sys_item in fleet_systems:
+                plat_str = (sys_item.get('platform') or sys_item.get('platformType') or '').lower()
+                model_str = (sys_item.get('model') or '').lower()
+                prod_str = (sys_item.get('productType') or sys_item.get('systemType') or '').lower()
+                ver_str = sys_item.get('osVersion') or ''
+                all_text = f'{plat_str} {model_str} {prod_str}'.lower()
+
+                # Platform type detection
+                if 'storagegrid' in all_text: fleet_signals['storagegrid'] = True
+                if 'e-series' in all_text or 'ef6' in all_text or 'ef3' in all_text or 'ef50' in all_text or 'ef80' in all_text or 'e2800' in all_text or 'e5700' in all_text:
+                    fleet_signals['eseries'] = True
+                if 'asa' in all_text and ('r2' in all_text or 'a20' in model_str or 'a30' in model_str or 'a50' in model_str or 'a70' in model_str or 'a90' in model_str):
+                    fleet_signals['asa_r2'] = True
+                if 'afx' in all_text: fleet_signals['afx'] = True
+                if 'flexpod' in all_text or 'ucs' in all_text: fleet_signals['flexpod'] = True
+                if 'nutanix' in all_text: fleet_signals['nutanix'] = True
+
+                # Feature/protocol detection from system properties
+                if sys_item.get('isARPEnabled'): fleet_signals['arp'] = True
+                if sys_item.get('isFabricPoolEnabled') or (sys_item.get('efficiency') or {}).get('fabricPoolTieredTB', 0) > 0:
+                    fleet_signals['fabricpool'] = True
+                if sys_item.get('snapmirror') and sys_item.get('snapmirror', {}).get('enabled'):
+                    fleet_signals['snapmirror'] = True
+                # Fixed field-name mismatch: the harvested field is "isMetroCluster"
+                # (server.py systems_out), not "isMetroClusterConfigured" -- the old
+                # key was never set anywhere, so this signal was permanently False
+                # even for genuine MetroCluster fleets, silently suppressing the
+                # MetroCluster vendor-guidelines articles from ever being recommended.
+                if sys_item.get('isMetroCluster'):
+                    fleet_signals['metrocluster'] = True
+
+                # Switch detection from switch data
+                switches = sys_item.get('switches') or sys_item.get('clusterSwitches') or []
+                if isinstance(switches, list):
+                    for sw in switches:
+                        sw_model = (sw.get('model') or sw.get('switchModel') or '').lower()
+                        sw_vendor = (sw.get('vendor') or '').lower()
+                        if 'cisco' in sw_model or 'cisco' in sw_vendor or 'nexus' in sw_model or 'mds' in sw_model:
+                            fleet_signals['cisco_san'] = True
+                        if 'brocade' in sw_model or 'brocade' in sw_vendor:
+                            fleet_signals['brocade_fc'] = True
+                        if 'broadcom' in sw_model or 'bes-53248' in sw_model:
+                            fleet_signals['broadcom_eth'] = True
+
+                # Host/hypervisor detection from connected hosts
+                hosts = sys_item.get('hosts') or sys_item.get('connectedHosts') or []
+                if isinstance(hosts, list):
+                    for host in hosts:
+                        host_os = (host.get('os') or host.get('osType') or host.get('type') or '').lower()
+                        if 'vmware' in host_os or 'esxi' in host_os or 'vsphere' in host_os:
+                            fleet_signals['vmware'] = True
+                        if 'hyper-v' in host_os or 'hyperv' in host_os or 'windows' in host_os:
+                            fleet_signals['hyperv'] = True
+                        if 'linux' in host_os or 'rhel' in host_os or 'suse' in host_os or 'ubuntu' in host_os or 'centos' in host_os:
+                            fleet_signals['kvm_linux'] = True
+
+                # Protocol detection from LIF/interface data
+                lifs = sys_item.get('lifs') or sys_item.get('interfaces') or []
+                if isinstance(lifs, list):
+                    for lif in lifs:
+                        proto = (lif.get('dataProtocol') or lif.get('protocol') or '').lower()
+                        if 'nfs' in proto: fleet_signals['nfs'] = True
+                        if 'cifs' in proto or 'smb' in proto: fleet_signals['smb_cifs'] = True
+                        if 'iscsi' in proto: fleet_signals['iscsi'] = True
+                        if 'fc' in proto or 'fcp' in proto: fleet_signals['fc_san'] = True
+                        if 'nvme' in proto: fleet_signals['nvme'] = True
+
+                # Risk-based detection (risks mentioning 3rd party tools)
+                risks = sys_item.get('risks') or []
+                if isinstance(risks, list):
+                    for risk in risks:
+                        risk_text = (risk.get('description') or risk.get('name') or '').lower()
+                        if 'snapcenter' in risk_text: fleet_signals['snapcenter'] = True
+                        if 'fpolicy' in risk_text: fleet_signals['fpolicy'] = True
+                        if 'veeam' in risk_text: fleet_signals['veeam'] = True
+                        if 'commvault' in risk_text or 'intellisnap' in risk_text: fleet_signals['commvault'] = True
+                        if 'flexPod' in risk_text or 'flexpod' in risk_text or 'ucs' in risk_text: fleet_signals['flexpod'] = True
+                        if 'nutanix' in risk_text or 'ahv' in risk_text: fleet_signals['nutanix'] = True
+                        # Backup vendors
+                        if 'rubrik' in risk_text: fleet_signals['rubrik'] = True
+                        if 'cohesity' in risk_text: fleet_signals['cohesity'] = True
+                        if 'hycu' in risk_text: fleet_signals['hycu'] = True
+                        if 'veritas' in risk_text or 'netbackup' in risk_text or 'backup exec' in risk_text: fleet_signals['veritas'] = True
+                        # Databases
+                        if 'oracle' in risk_text or 'dnfs' in risk_text or 'asm' in risk_text: fleet_signals['oracle_db'] = True
+                        if 'sql server' in risk_text or 'mssql' in risk_text or 'always on' in risk_text: fleet_signals['mssql'] = True
+                        if 'sap hana' in risk_text or 'sap' in risk_text: fleet_signals['sap_hana'] = True
+                        # Security & observability
+                        if 'crowdstrike' in risk_text or 'falcon' in risk_text: fleet_signals['crowdstrike'] = True
+                        if 'palo alto' in risk_text or 'prisma' in risk_text or 'cortex' in risk_text: fleet_signals['paloalto'] = True
+                        if 'varonis' in risk_text: fleet_signals['varonis'] = True
+                        if 'cyberark' in risk_text: fleet_signals['cyberark'] = True
+                        if 'splunk' in risk_text: fleet_signals['splunk'] = True
+                        # Kubernetes / containers
+                        if 'kubernetes' in risk_text or 'trident' in risk_text or 'openshift' in risk_text: fleet_signals['kubernetes'] = True
+                        # AI/ML workloads
+                        if 'gpu' in risk_text or 'dgx' in risk_text or 'nvidia' in risk_text or 'ai ' in risk_text or 'machine learning' in risk_text: fleet_signals['ai_ml'] = True
+
+                # Host-based extended detection (Proxmox, Nutanix, Kubernetes)
+                if isinstance(hosts, list):
+                    for host in hosts:
+                        host_os = (host.get('os') or host.get('osType') or host.get('type') or '').lower()
+                        if 'proxmox' in host_os or 'pve' in host_os: fleet_signals['proxmox'] = True
+                        if 'nutanix' in host_os or 'ahv' in host_os: fleet_signals['nutanix'] = True
+
+            # Count detected integrations
+            detected_count = sum(1 for v in fleet_signals.values() if v)
+            print(f'  [ENRICH]   Fleet integration signals: {detected_count} detected '
+                  f'({", ".join(k for k, v in fleet_signals.items() if v) or "none"})', flush=True)
+
+            # ── Vendor Documentation Source Registry ──
+            # Maps vendor documentation URLs to categories, with fleet signal
+            # conditions for relevance-aware enrichment. URLs with condition=None
+            # are always fetched (core NetApp best practices). URLs with a
+            # condition are only fetched when that fleet signal is detected.
+            VENDOR_GUIDELINE_SOURCES = [
+                # ═══════════════════════════════════════════════════════════════
+                # CORE NETAPP BEST PRACTICES (always fetched)
+                # ═══════════════════════════════════════════════════════════════
+                # Security hardening & zero trust
+                {'url': 'https://docs.netapp.com/us-en/ontap/security/index.html',
+                 'title': 'ONTAP Security Hardening Guide', 'category': 'best_practices',
+                 'alignment': 'TLS 1.2+ minimum, disable HTTP, MFA, MAV for destructive ops',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap/zero-trust/zero-trust-overview.html',
+                 'title': 'Zero Trust Architecture with ONTAP', 'category': 'best_practices',
+                 'alignment': 'Zero-trust microsegmentation, least-privilege SVM isolation',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap/anti-ransomware/index.html',
+                 'title': 'Autonomous Ransomware Protection (ARP) Configuration',
+                 'category': 'best_practices',
+                 'alignment': 'ARP/AI (9.16.1+) zero-learning ML detection, 99% precision',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap/encryption-at-rest/index.html',
+                 'title': 'ONTAP Encryption at Rest (NVE/NAE)', 'category': 'best_practices',
+                 'alignment': 'Data-at-rest encryption, key management, FIPS 140-2 compliance',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap/multi-admin-verify/index.html',
+                 'title': 'Multi-Admin Verification (MAV)', 'category': 'best_practices',
+                 'alignment': 'MAV prevents single-admin destructive operations (9.11.1+)',
+                 'condition': None},
+                # Data protection & DR
+                {'url': 'https://docs.netapp.com/us-en/ontap/data-protection/index.html',
+                 'title': 'ONTAP Data Protection Overview', 'category': 'best_practices',
+                 'alignment': 'SnapMirror, SnapVault, snapshot policies, consistency groups',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap/snapmirror-active-sync/index.html',
+                 'title': 'SnapMirror Active Sync (zero RPO/RTO)', 'category': 'best_practices',
+                 'alignment': 'Transparent app failover <15s, requires Mediator + AFF/ASA',
+                 'condition': None},
+                # Performance & efficiency
+                {'url': 'https://docs.netapp.com/us-en/ontap/performance-admin/index.html',
+                 'title': 'ONTAP Performance Monitoring & QoS', 'category': 'best_practices',
+                 'alignment': 'Adaptive QoS policies, workload balancing, latency monitoring',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap/volumes/deduplication-data-compression-efficiency-concept.html',
+                 'title': 'Storage Efficiency (Dedup/Compression)', 'category': 'best_practices',
+                 'alignment': 'Inline dedup+compression, post-process dedup scheduling',
+                 'condition': None},
+
+                # ═══════════════════════════════════════════════════════════════
+                # VIRTUALIZATION — VMware vSphere
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-tools-vmware-vsphere-10/index.html',
+                 'title': 'ONTAP Tools for VMware vSphere 10.x', 'category': 'vendor_guidelines',
+                 'alignment': 'OTV 10.x for VAAI, VASA 3.0, vVols provisioning',
+                 'condition': 'vmware'},
+                {'url': 'https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vsphere-overview.html',
+                 'title': 'VMware vSphere with ONTAP Best Practices', 'category': 'vendor_guidelines',
+                 'alignment': 'NFS/iSCSI/FC datastore config, ESXi host settings, VAAI',
+                 'condition': 'vmware'},
+                {'url': 'https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-otv-hardening-overview.html',
+                 'title': 'VMware OTV Security Hardening', 'category': 'vendor_guidelines',
+                 'alignment': 'OTV appliance hardening, certificate management',
+                 'condition': 'vmware'},
+                {'url': 'https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-srm-overview.html',
+                 'title': 'VMware SRM with ONTAP (DR Automation)', 'category': 'vendor_guidelines',
+                 'alignment': 'SRA configuration, SnapMirror-based DR failover for VMs',
+                 'condition': 'vmware'},
+                {'url': 'https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vvols-overview.html',
+                 'title': 'VMware vVols with ONTAP', 'category': 'vendor_guidelines',
+                 'alignment': 'Per-VM storage policy, VASA Provider, FlexVol-backed vVols',
+                 'condition': 'vmware'},
+                {'url': 'https://docs.netapp.com/us-en/sc-plugin-vmware-vsphere/index.html',
+                 'title': 'SnapCenter Plugin for VMware vSphere', 'category': 'vendor_guidelines',
+                 'alignment': 'Application-consistent VM snapshots, backup scheduling',
+                 'condition': 'vmware'},
+                # VMware 3rd party docs
+                {'url': 'https://docs.vmware.com/en/VMware-vSphere/index.html',
+                 'title': 'VMware vSphere Documentation Portal', 'category': 'vendor_guidelines',
+                 'alignment': 'Official VMware vSphere release docs and compatibility',
+                 'condition': 'vmware'},
+                {'url': 'https://knowledge.broadcom.com/external/article?articleNumber=315039',
+                 'title': 'VMware NFS Best Practices (Broadcom KB)', 'category': 'vendor_guidelines',
+                 'alignment': 'ESXi NFS mount options, timeout settings, multipath',
+                 'condition': 'vmware'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # VIRTUALIZATION — Microsoft Hyper-V
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap/smb-hyper-v-sql/index.html',
+                 'title': 'ONTAP SMB for Hyper-V and SQL Server', 'category': 'vendor_guidelines',
+                 'alignment': 'SMB 3.0 ODX, CSV with iSCSI, Hyper-V over SMB best practices',
+                 'condition': 'hyperv'},
+                {'url': 'https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/best-practices-analyzer/best-practices-analyzer-for-hyper-v',
+                 'title': 'Microsoft Hyper-V Best Practices Analyzer', 'category': 'vendor_guidelines',
+                 'alignment': 'Microsoft-recommended Hyper-V configuration guidelines',
+                 'condition': 'hyperv'},
+                {'url': 'https://docs.netapp.com/us-en/ontap-sanhost/hu_wuhu_72.html',
+                 'title': 'Windows Unified Host Utilities 7.2', 'category': 'vendor_guidelines',
+                 'alignment': 'MPIO configuration, disk timeout settings, iSCSI initiator',
+                 'condition': 'hyperv'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # VIRTUALIZATION — KVM/Linux
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-sanhost/hu_luhu_71.html',
+                 'title': 'Linux Host Utilities 7.1 Configuration', 'category': 'vendor_guidelines',
+                 'alignment': 'dm-multipath, iSCSI initiator, NFS mount options for Linux',
+                 'condition': 'kvm_linux'},
+                {'url': 'https://docs.netapp.com/us-en/ontap/nfs-config/index.html',
+                 'title': 'ONTAP NFS Configuration for Linux Hosts', 'category': 'vendor_guidelines',
+                 'alignment': 'NFSv4.1 export policies, Kerberos, pNFS for FlexGroup',
+                 'condition': 'kvm_linux'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # CONTAINERS — Kubernetes / OpenShift
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/trident/index.html',
+                 'title': 'Astra Trident CSI Driver Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'Trident 26.02.1 GA, StorageClass config, backend setup',
+                 'condition': 'kubernetes'},
+                {'url': 'https://docs.netapp.com/us-en/astra-control-center/index.html',
+                 'title': 'Astra Control Center (K8s App Data Management)',
+                 'category': 'vendor_guidelines',
+                 'alignment': 'Application-aware backup/restore/clone for Kubernetes',
+                 'condition': 'kubernetes'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # SAN SWITCHING — Cisco
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-systems-switches/index.html',
+                 'title': 'NetApp Switch Documentation Portal', 'category': 'vendor_guidelines',
+                 'alignment': 'Cluster/MetroCluster switch install, firmware upgrade procedures',
+                 'condition': 'cisco_san'},
+                {'url': 'https://www.cisco.com/c/en/us/support/switches/nexus-9000-series-switches/series.html',
+                 'title': 'Cisco Nexus 9000 Series Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'NX-OS 10.4.2 recommended for AFX, 9.3(12) for legacy 9336C-FX2',
+                 'condition': 'cisco_san'},
+                {'url': 'https://www.cisco.com/c/en/us/support/switches/mds-9000-series-multilayer-switches/series.html',
+                 'title': 'Cisco MDS 9000 FC SAN Switch Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'MDS firmware 9.2(2) recommended, FC zone configuration',
+                 'condition': 'cisco_san'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # SAN SWITCHING — Broadcom/Brocade
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.broadcom.com/docs/FOS-92x-Admin',
+                 'title': 'Brocade Fabric OS 9.2.x Administration Guide',
+                 'category': 'vendor_guidelines',
+                 'alignment': 'FOS 9.2.1 recommended, TruFOS certificate requirements',
+                 'condition': 'brocade_fc'},
+                {'url': 'https://techdocs.broadcom.com/us/en/fibre-channel-networking/fabric-os/fabric-os-administration/9-2-x.html',
+                 'title': 'Broadcom Fabric OS Administration (9.2.x)',
+                 'category': 'vendor_guidelines',
+                 'alignment': 'Zone configuration, ISL trunking, firmware management',
+                 'condition': 'brocade_fc'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # BACKUP & DATA PROTECTION — Veeam
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://helpcenter.veeam.com/docs/backup/plugins/netapp_ontap_plugin.html',
+                 'title': 'Veeam NetApp ONTAP Plugin Guide', 'category': 'vendor_guidelines',
+                 'alignment': 'NetApp Plugin v2 for VBR 12.3+, snapshot orchestration',
+                 'condition': 'veeam'},
+                {'url': 'https://helpcenter.veeam.com/docs/backup/plugins/netapp_ontap_snapdiff.html',
+                 'title': 'Veeam SnapDiff CFT Configuration', 'category': 'vendor_guidelines',
+                 'alignment': 'Changed File Tracking via ONTAP SnapDiff API, NOT on 9.10.1-P10',
+                 'condition': 'veeam'},
+                {'url': 'https://www.veeam.com/kb4516',
+                 'title': 'Veeam NetApp ONTAP Integration Requirements', 'category': 'vendor_guidelines',
+                 'alignment': 'Storage integration compatibility matrix, plugin versions',
+                 'condition': 'veeam'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # BACKUP & DATA PROTECTION — Commvault
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://documentation.commvault.com/2024e/essential/snap_backup_netapp.html',
+                 'title': 'Commvault IntelliSnap for NetApp ONTAP', 'category': 'vendor_guidelines',
+                 'alignment': 'IntelliSnap snapshot orchestration, SnapVault integration',
+                 'condition': 'commvault'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # BACKUP & DATA PROTECTION — Rubrik
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://www.rubrik.com/solutions/netapp',
+                 'title': 'Rubrik for NetApp ONTAP Integration', 'category': 'vendor_guidelines',
+                 'alignment': 'NAS Cloud Direct, NDMP backup, Security Cloud DSPM',
+                 'condition': 'rubrik'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # BACKUP & DATA PROTECTION — Cohesity
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.cohesity.com/',
+                 'title': 'Cohesity DataProtect Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'NDMP/NFS registration, DataHawk threat scanning',
+                 'condition': 'cohesity'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # BACKUP & DATA PROTECTION — HYCU
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://support.hycu.com/hc/en-us/categories/360001985619-HYCU-for-NetApp',
+                 'title': 'HYCU for NetApp ONTAP Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'Agentless REST API integration, R-Shield YARA scanning',
+                 'condition': 'hycu'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # BACKUP & DATA PROTECTION — SnapCenter (always if ONTAP)
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/snapcenter/index.html',
+                 'title': 'SnapCenter Software Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'Application-consistent backups for Oracle, SQL, VMware, SAP',
+                 'condition': None},
+
+                # ═══════════════════════════════════════════════════════════════
+                # DATABASES — Oracle
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-apps-dbs/oracle/oracle-overview.html',
+                 'title': 'Oracle Database on ONTAP Best Practices', 'category': 'vendor_guidelines',
+                 'alignment': 'dNFS config, ASM on iSCSI/FC, RMAN to NFS, SnapCenter Oracle',
+                 'condition': 'oracle_db'},
+                {'url': 'https://docs.oracle.com/en/database/oracle/oracle-database/23/ntdbi/',
+                 'title': 'Oracle Database NFS Direct (dNFS) Guide', 'category': 'vendor_guidelines',
+                 'alignment': 'Oracle-side dNFS setup, oranfstab, multipath dispatchers',
+                 'condition': 'oracle_db'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # DATABASES — Microsoft SQL Server
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-apps-dbs/mssql/mssql-overview.html',
+                 'title': 'Microsoft SQL Server on ONTAP Best Practices', 'category': 'vendor_guidelines',
+                 'alignment': 'SMB 3.0 for .mdf/.ldf, iSCSI MPIO, tempdb on NVMe/TCP',
+                 'condition': 'mssql'},
+                {'url': 'https://learn.microsoft.com/en-us/sql/sql-server/install/hardware-and-software-requirements-for-installing-sql-server',
+                 'title': 'SQL Server Hardware & Software Requirements', 'category': 'vendor_guidelines',
+                 'alignment': 'Microsoft storage requirements for SQL Server deployments',
+                 'condition': 'mssql'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # DATABASES — SAP HANA
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-apps-dbs/sap-hana/sap-hana-overview.html',
+                 'title': 'SAP HANA on ONTAP Best Practices', 'category': 'vendor_guidelines',
+                 'alignment': 'SAP HANA TDI certification, NFS data/log volume layout',
+                 'condition': 'sap_hana'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # SAN HOST UTILITIES & MULTIPATH
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-sanhost/',
+                 'title': 'NetApp SAN Host Configuration Guide', 'category': 'vendor_guidelines',
+                 'alignment': 'OS-specific SAN host settings, multipath, HBA drivers',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap-sanhost/hu_vsphere_8.html',
+                 'title': 'VMware ESXi 8.x SAN Host Settings', 'category': 'vendor_guidelines',
+                 'alignment': 'ESXi multipath PSP, disk timeout, NFS VAAI plugin',
+                 'condition': 'vmware'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # PROTOCOLS — NVMe, iSCSI, FC, NFS, SMB
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap/san-admin/index.html',
+                 'title': 'ONTAP SAN Administration (iSCSI/FC/NVMe)', 'category': 'best_practices',
+                 'alignment': 'LUN provisioning, igroup config, ALUA, port sets',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap/nvme/index.html',
+                 'title': 'ONTAP NVMe-oF Configuration', 'category': 'vendor_guidelines',
+                 'alignment': 'NVMe/FC and NVMe/TCP setup, namespace management (9.14.1+)',
+                 'condition': 'nvme'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # CLOUD TIERING — FabricPool
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap/fabricpool/index.html',
+                 'title': 'FabricPool Cloud Tiering Configuration', 'category': 'best_practices',
+                 'alignment': 'Cold data tiering to S3/Azure/GCS, auto/snapshot-only policies',
+                 'condition': 'fabricpool'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # METROCLUSTER & HA
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-metrocluster/index.html',
+                 'title': 'MetroCluster Configuration & Management', 'category': 'vendor_guidelines',
+                 'alignment': 'FC/IP MetroCluster, ISL requirements, switchover/switchback',
+                 'condition': 'metrocluster'},
+                {'url': 'https://docs.netapp.com/us-en/ontap/mediator/index.html',
+                 'title': 'ONTAP Mediator for MetroCluster/SMBC', 'category': 'vendor_guidelines',
+                 'alignment': 'Mediator deployment for automatic unplanned switchover (AUSO)',
+                 'condition': 'metrocluster'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # SECURITY & CYBER VENDORS
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap/nas-audit/index.html',
+                 'title': 'ONTAP NAS Auditing & FPolicy', 'category': 'vendor_guidelines',
+                 'alignment': 'FPolicy for 3rd party security (Varonis, Netwrix, Superna)',
+                 'condition': 'fpolicy'},
+                {'url': 'https://docs.netapp.com/us-en/ontap/antivirus/index.html',
+                 'title': 'ONTAP Antivirus (Vscan) Configuration', 'category': 'best_practices',
+                 'alignment': 'Vscan integration with CrowdStrike, Sophos, Symantec, McAfee',
+                 'condition': None},
+
+                # ═══════════════════════════════════════════════════════════════
+                # AI / ML WORKLOADS
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/netapp-dataops-toolkit/',
+                 'title': 'NetApp DataOps Toolkit (AI/ML)', 'category': 'vendor_guidelines',
+                 'alignment': 'Python library for data scientists, NearClone, Jupyter',
+                 'condition': 'ai_ml'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # MONITORING & OBSERVABILITY
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://netapp.github.io/harvest/',
+                 'title': 'NetApp Harvest 2.0 (Prometheus/Grafana)', 'category': 'vendor_guidelines',
+                 'alignment': 'Open-source ONTAP metrics, pre-built Grafana dashboards',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/active-iq-unified-manager/index.html',
+                 'title': 'Active IQ Unified Manager', 'category': 'vendor_guidelines',
+                 'alignment': 'Fleet-wide ONTAP monitoring, health scoring, event management',
+                 'condition': None},
+
+                # ═══════════════════════════════════════════════════════════════
+                # E-SERIES / STORAGEGRID
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/e-series-santricity/index.html',
+                 'title': 'SANtricity System Manager Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'E-Series block array management, firmware updates',
+                 'condition': 'eseries'},
+                {'url': 'https://docs.netapp.com/us-en/storagegrid/index.html',
+                 'title': 'StorageGRID Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'Object storage grid management, ILM policies, S3 API',
+                 'condition': 'storagegrid'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # ASA r2 / AFX
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/asa-r2/index.html',
+                 'title': 'ASA r2 Systems Documentation', 'category': 'vendor_guidelines',
+                 'alignment': 'Storage units, SAN-optimized provisioning, SAZ topology',
+                 'condition': 'asa_r2'},
+                {'url': 'https://docs.netapp.com/us-en/ontap-systems/afx/index.html',
+                 'title': 'AFX Disaggregated ONTAP Systems', 'category': 'vendor_guidelines',
+                 'alignment': 'AFX 1K/2K hardware, NSM140 shelves, REST-only API',
+                 'condition': 'afx'},
+
+                # ═══════════════════════════════════════════════════════════════
+                # AUTOMATION & DEVOPS
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-automation/index.html',
+                 'title': 'ONTAP REST API Automation', 'category': 'best_practices',
+                 'alignment': 'REST API for all ONTAP operations, Ansible modules',
+                 'condition': None},
+
+                # ═══════════════════════════════════════════════════════════════
+                # CLOUD INTEGRATIONS
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/bluexp-cloud-volumes-ontap/index.html',
+                 'title': 'Cloud Volumes ONTAP (CVO)', 'category': 'vendor_guidelines',
+                 'alignment': 'CVO 9.18.1 across AWS/Azure/GCP, same Trident/SnapCenter surface',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/bluexp-fsx-ontap/index.html',
+                 'title': 'Amazon FSx for ONTAP', 'category': 'vendor_guidelines',
+                 'alignment': 'Fully managed ONTAP on AWS, sub-ms SSD latency',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/bluexp-azure-netapp-files/index.html',
+                 'title': 'Azure NetApp Files (ANF)', 'category': 'vendor_guidelines',
+                 'alignment': 'Azure-native file storage, migration assistant, cache volumes',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/bluexp-google-cloud-netapp-volumes/index.html',
+                 'title': 'Google Cloud NetApp Volumes (GCNV)', 'category': 'vendor_guidelines',
+                 'alignment': 'GCNV Flex Unified service level, backup/replication GA',
+                 'condition': None},
+
+                # ═══════════════════════════════════════════════════════════════
+                # MIGRATION
+                # ═══════════════════════════════════════════════════════════════
+                {'url': 'https://docs.netapp.com/us-en/ontap-fli/',
+                 'title': 'Foreign LUN Import (FLI)', 'category': 'vendor_guidelines',
+                 'alignment': 'Non-disruptive LUN migration from 3rd party arrays to ONTAP',
+                 'condition': None},
+
+                # ═══════════════════════════════════════════════════════════════
+                # CERTIFIED REFERENCE ARCHITECTURES & VALIDATED DESIGNS (NVA/CVD)
+                # ═══════════════════════════════════════════════════════════════
+                # FlexPod (Cisco + NetApp converged infrastructure)
+                {'url': 'https://www.cisco.com/c/en/us/solutions/design-zone/data-center-design-guides/flexpod-design-guides.html',
+                 'title': 'FlexPod Design Zone — Cisco Validated Designs (CVDs)',
+                 'category': 'reference_architecture',
+                 'alignment': 'Cisco UCS + NetApp ONTAP converged infrastructure — validated end-to-end designs for enterprise workloads',
+                 'condition': None},
+                {'url': 'https://www.netapp.com/flexpod/',
+                 'title': 'FlexPod Solutions Portal',
+                 'category': 'reference_architecture',
+                 'alignment': 'NetApp + Cisco joint solution: compute, network, storage — pre-validated reference architectures',
+                 'condition': 'flexpod'},
+                {'url': 'https://docs.netapp.com/us-en/flexpod/',
+                 'title': 'FlexPod Documentation Center',
+                 'category': 'reference_architecture',
+                 'alignment': 'FlexPod deployment guides, upgrade procedures, and architecture updates',
+                 'condition': 'flexpod'},
+
+                # NetApp Verified Architectures (NVA) — workload-specific validated designs
+                {'url': 'https://www.netapp.com/data-management/resources/?type=verified-architecture',
+                 'title': 'NetApp Verified Architectures (NVA) Library',
+                 'category': 'reference_architecture',
+                 'alignment': 'Workload-specific validated architectures: databases, VDI, AI/ML, healthcare, SAP, analytics',
+                 'condition': None},
+
+                # Technical Reports (TRs) — deep-dive reference documents
+                {'url': 'https://www.netapp.com/media/10674-tr4569.pdf',
+                 'title': 'TR-4569: ONTAP 9 Security Hardening Guide',
+                 'category': 'reference_architecture',
+                 'alignment': 'NetApp-certified security hardening procedures, CIS benchmarks, STIG compliance, zero-trust',
+                 'condition': None},
+                {'url': 'https://www.netapp.com/media/10720-tr4067.pdf',
+                 'title': 'TR-4067: NFS on ONTAP Best Practices',
+                 'category': 'reference_architecture',
+                 'alignment': 'NFS v3/v4.1 tuning, mount options, pNFS, VMware NFS datastores',
+                 'condition': 'nfs'},
+                {'url': 'https://www.netapp.com/media/16423-tr-4515.pdf',
+                 'title': 'TR-4515: ONTAP AFF All-SAN Array Systems',
+                 'category': 'reference_architecture',
+                 'alignment': 'AFF/ASA SAN design: FC, iSCSI, NVMe/FC, multipathing, ALUA',
+                 'condition': 'fc_san'},
+                {'url': 'https://www.netapp.com/media/85481-tr-4929.pdf',
+                 'title': 'TR-4929: FlexPod Datacenter with Cisco UCS',
+                 'category': 'reference_architecture',
+                 'alignment': 'FlexPod DC reference architecture: Cisco UCS X-Series + AFF A-Series + Nexus 9000',
+                 'condition': 'flexpod'},
+                {'url': 'https://www.netapp.com/media/21702-tr-4616.pdf',
+                 'title': 'TR-4616: NFS Kerberos in ONTAP',
+                 'category': 'reference_architecture',
+                 'alignment': 'NFS Kerberos krb5p in-flight encryption, Microsoft AD integration, mutual authentication',
+                 'condition': None},
+                {'url': 'https://www.netapp.com/media/17229-tr4571.pdf',
+                 'title': 'TR-4571: FlexPod Solution Architecture',
+                 'category': 'reference_architecture',
+                 'alignment': 'End-to-end FlexPod architectural deep-dive: compute, network, storage tiers',
+                 'condition': 'flexpod'},
+                {'url': 'https://www.netapp.com/media/7334-tr4613.pdf',
+                 'title': 'TR-4613: NVMe/FC SAN Host Configuration',
+                 'category': 'reference_architecture',
+                 'alignment': 'NVMe/FC host setup for Linux, Windows, ESXi — multipath, queues, tuning',
+                 'condition': 'nvme'},
+                {'url': 'https://www.netapp.com/media/17068-tr4733.pdf',
+                 'title': 'TR-4733: SnapMirror Business Continuity',
+                 'category': 'reference_architecture',
+                 'alignment': 'SM-BC/Active Sync zero-RPO design, Mediator deployment, application failover',
+                 'condition': 'snapmirror'},
+                {'url': 'https://docs.netapp.com/us-en/ontap/san-admin/san-host-reporting-concept.html',
+                 'title': 'ONTAP SAN Host Reporting & Alignment Guide',
+                 'category': 'reference_architecture',
+                 'alignment': 'SAN host configuration verification, LUN alignment, SCSI timeout tuning',
+                 'condition': 'fc_san'},
+                {'url': 'https://www.netapp.com/media/10680-tr4614.pdf',
+                 'title': 'TR-4614: SAP HANA Backup & Recovery with SnapCenter',
+                 'category': 'reference_architecture',
+                 'alignment': 'SAP HANA SnapCenter backup, HANA Studio integration, file-based and snapshot-based backup',
+                 'condition': None},
+                {'url': 'https://www.netapp.com/media/17009-tr4668.pdf',
+                 'title': 'TR-4668: Oracle Database Deployment on ONTAP',
+                 'category': 'reference_architecture',
+                 'alignment': 'Oracle NVA: dNFS, ASM, RAC, RMAN, SnapCenter — validated architecture',
+                 'condition': None},
+                {'url': 'https://www.netapp.com/media/8585-tr4590.pdf',
+                 'title': 'TR-4590: Microsoft SQL Server on ONTAP',
+                 'category': 'reference_architecture',
+                 'alignment': 'SQL Server NVA: iSCSI/SMB, Always On AG, SnapCenter, tempdb tuning',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/ontap-apps-dbs/sap-hana/sap-hana-overview.html',
+                 'title': 'SAP HANA on ONTAP Best Practices (NVA)',
+                 'category': 'reference_architecture',
+                 'alignment': 'SAP HANA TDI certified, NFS/FC, data tiering, backup with SnapCenter',
+                 'condition': None},
+
+                # AI/ML/DL Reference Architectures
+                {'url': 'https://www.netapp.com/artificial-intelligence/',
+                 'title': 'NetApp AI Solutions — NVIDIA DGX + ONTAP',
+                 'category': 'reference_architecture',
+                 'alignment': 'NVIDIA DGX SuperPOD + AFF A900/A90/A1K, BeeGFS on E-Series, AI/ML data pipelines',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/netapp-solutions/ai/index.html',
+                 'title': 'NetApp AI Solutions Documentation',
+                 'category': 'reference_architecture',
+                 'alignment': 'NVA for AI/ML: NVIDIA DGX, MLOps, data lakehouse, Domino Data Lab',
+                 'condition': None},
+
+                # Industry-Specific Validated Designs
+                {'url': 'https://www.netapp.com/solutions/healthcare/',
+                 'title': 'NetApp Healthcare Solutions (Epic, Cerner, Imaging)',
+                 'category': 'reference_architecture',
+                 'alignment': 'Healthcare NVA: Epic EHR, medical imaging (DICOM), HIPAA compliance, FlexPod for Healthcare',
+                 'condition': None},
+                {'url': 'https://www.netapp.com/solutions/financial-services/',
+                 'title': 'NetApp Financial Services Solutions',
+                 'category': 'reference_architecture',
+                 'alignment': 'Low-latency trading, regulatory compliance (SEC 17a-4), SnapLock WORM',
+                 'condition': None},
+
+                # Automation & Infrastructure-as-Code
+                {'url': 'https://docs.netapp.com/us-en/ontap-automation/migrate/mapping.html',
+                 'title': 'ONTAP Automation Toolkit — Ansible, Terraform, PowerShell',
+                 'category': 'reference_architecture',
+                 'alignment': 'NetApp-certified Ansible modules (na_ontap_*), Terraform provider, PowerShell Toolkit 9.x',
+                 'condition': None},
+                {'url': 'https://galaxy.ansible.com/netapp/ontap',
+                 'title': 'NetApp ONTAP Ansible Collection (Ansible Galaxy)',
+                 'category': 'reference_architecture',
+                 'alignment': 'Certified Ansible modules for ONTAP provisioning, SVM, LIF, volume, snapshot automation',
+                 'condition': None},
+                {'url': 'https://registry.terraform.io/providers/NetApp/netapp-ontap/latest/docs',
+                 'title': 'NetApp ONTAP Terraform Provider',
+                 'category': 'reference_architecture',
+                 'alignment': 'Infrastructure-as-code: declarative ONTAP resource management via Terraform',
+                 'condition': None},
+
+                # BlueXP Services (SaaS management layer)
+                {'url': 'https://docs.netapp.com/us-en/bluexp-ransomware-protection/index.html',
+                 'title': 'BlueXP Ransomware Protection',
+                 'category': 'reference_architecture',
+                 'alignment': 'SaaS-based ransomware dashboard: ARP status, backup readiness, workload risk scoring',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/bluexp-classification/index.html',
+                 'title': 'BlueXP Classification (Data Sense)',
+                 'category': 'reference_architecture',
+                 'alignment': 'AI-driven data discovery, PII/PHI scanning, GDPR/HIPAA compliance automation',
+                 'condition': None},
+                {'url': 'https://docs.netapp.com/us-en/bluexp-tiering/index.html',
+                 'title': 'BlueXP Tiering (FabricPool Management)',
+                 'category': 'reference_architecture',
+                 'alignment': 'Policy-driven cold data tiering to S3/Azure Blob/GCS, capacity savings dashboard',
+                 'condition': 'fabricpool'},
+                {'url': 'https://docs.netapp.com/us-en/bluexp-disaster-recovery/index.html',
+                 'title': 'BlueXP Disaster Recovery',
+                 'category': 'reference_architecture',
+                 'alignment': 'VMware DR orchestration via SnapMirror, automated failover/failback runbooks',
+                 'condition': 'vmware'},
+                {'url': 'https://docs.netapp.com/us-en/bluexp-backup-recovery/index.html',
+                 'title': 'BlueXP Backup & Recovery',
+                 'category': 'reference_architecture',
+                 'alignment': 'Policy-based cloud backup for ONTAP volumes, 3-2-1 rule automation',
+                 'condition': None},
+
+                # Keystone STaaS
+                {'url': 'https://docs.netapp.com/us-en/keystone/',
+                 'title': 'NetApp Keystone STaaS — Subscription Storage',
+                 'category': 'reference_architecture',
+                 'alignment': 'Subscription-based opex storage: AFF/FAS/ASA/AFX/CVO, usage-based billing, SLA-guaranteed',
+                 'condition': None},
+
+                # Nutanix AHV (Early Access)
+                {'url': 'https://docs.netapp.com/us-en/ontap/san-admin/index.html',
+                 'title': 'Nutanix AHV with ONTAP (Early Access — Q3 2026 GA target)',
+                 'category': 'reference_architecture',
+                 'alignment': 'Nutanix AHV + AFF all-flash A-series: iSCSI SAN integration (Early Access, GA targeted Q3 2026)',
+                 'condition': 'nutanix'},
+            ]
+
+            # ── Fetch and persist vendor guideline articles ──
+            for source in VENDOR_GUIDELINE_SOURCES:
+                doc_url = source['url']
+                if doc_url in existing_urls:
+                    continue
+
+                # Conditional fetch: only pull if fleet signal is detected (or unconditional)
+                condition = source.get('condition')
+                if condition and not fleet_signals.get(condition, False):
+                    continue
+
+                # Build article entry — lightweight: we store the URL and metadata,
+                # not the full page content (same pattern as existing KB articles)
+                new_articles.append({
+                    'url': doc_url,
+                    'title': source['title'],
+                    'source': 'vendor-docs' if condition else 'docs.netapp.com',
+                    'category': source['category'],
+                    'alignment': source.get('alignment', ''),
+                    'relevance': f'Fleet integration: {condition}' if condition else 'Core NetApp best practice',
+                    'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                    '_vendorGuideline': True,
+                    '_fleetRelevant': bool(condition),
+                    '_integrationKey': condition or 'core',
+                })
+                existing_urls.add(doc_url)
+                vendor_articles_added += 1
+
+            # ── Vendor page title enrichment (scrape titles for new articles) ──
+            # For articles that were just added, attempt to fetch actual page
+            # titles from the vendor sites to improve KB display quality.
+            vendor_scrape_count = 0
+            vendor_scrape_errors = 0
+            for article in new_articles:
+                if not article.get('_vendorGuideline'):
+                    continue
+                if vendor_scrape_count >= 40:  # rate limit: max 40 vendor fetches per scan cycle
+                    break
+                try:
+                    text, err = _enrich_fetch(article['url'], timeout=10)
+                    vendor_scrape_count += 1
+                    if text and not err:
+                        # Extract <title> tag
+                        title_match = _re.search(r'<title[^>]*>([^<]{5,200})</title>', text, _re.IGNORECASE)
+                        if title_match:
+                            scraped_title = html.unescape(title_match.group(1)).strip()
+                            # Clean up common suffixes
+                            for suffix in [' — NetApp', ' | NetApp', ' - NetApp', ' — Cisco', ' | Cisco',
+                                           ' - Broadcom', ' | Broadcom', ' - VMware', ' | VMware',
+                                           ' - Veeam', ' | Veeam', ' — docs.netapp.com',
+                                           ' — Oracle', ' - Oracle', ' | Oracle',
+                                           ' | Microsoft Learn', ' - Microsoft Learn',
+                                           ' :: NetApp', ' — HYCU', ' | Rubrik']:
+                                if scraped_title.endswith(suffix):
+                                    scraped_title = scraped_title[:-len(suffix)].strip()
+                            if len(scraped_title) > 10:
+                                article['_scrapedTitle'] = scraped_title
+
+                        # Extract key configuration directives/version numbers
+                        # Look for version patterns, CLI commands, requirements
+                        config_hints = []
+                        ver_matches = _re.findall(
+                            r'(?:version|requires?|minimum|recommended|supported)[:\s]+([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:P[0-9]+)?)',
+                            text, _re.IGNORECASE
+                        )
+                        if ver_matches:
+                            config_hints.extend([f'Version: {v}' for v in set(ver_matches[:5])])
+
+                        cmd_matches = _re.findall(
+                            r'(?:run|execute|configure|command)[:\s]*[`"]([a-z][a-z0-9 \-_]{10,80})[`"]',
+                            text, _re.IGNORECASE
+                        )
+                        if cmd_matches:
+                            config_hints.extend([f'CLI: {c.strip()}' for c in cmd_matches[:3]])
+
+                        if config_hints:
+                            article['_configHints'] = config_hints[:5]
+
+                    else:
+                        vendor_scrape_errors += 1
+                    time.sleep(1.5)  # polite rate limit for vendor sites
+                except Exception:
+                    vendor_scrape_errors += 1
+
+            # ── Gap Analysis: detect uncovered integrations ──
+            # Identify integrations that are likely in use but have no
+            # corresponding vendor documentation or NetApp best practice guide.
+            gap_signals = []
+            # Common backup vendors not explicitly detected but likely present
+            backup_signals = ['veeam', 'commvault', 'rubrik', 'cohesity', 'hycu', 'veritas']
+            if fleet_signals.get('snapmirror') and not any(fleet_signals.get(b) for b in backup_signals):
+                gap_signals.append({
+                    'type': 'backup_gap',
+                    'message': 'SnapMirror active but no 3rd party backup vendor detected — verify backup strategy covers application-consistent protection',
+                    'recommendation': 'Consider SnapCenter for application-consistent snapshots, or integrate Veeam/Commvault/Rubrik for comprehensive backup'
+                })
+
+            if fleet_signals.get('smb_cifs') and not fleet_signals.get('hyperv'):
+                gap_signals.append({
+                    'type': 'smb_gap',
+                    'message': 'SMB/CIFS protocol in use — verify Windows host configuration aligns with ONTAP SMB best practices',
+                    'recommendation': 'Review ODX offload settings, SMB 3.0 encryption, and Kerberos AES compliance'
+                })
+
+            if fleet_signals.get('fc_san') and not fleet_signals.get('cisco_san') and not fleet_signals.get('brocade_fc'):
+                gap_signals.append({
+                    'type': 'fc_switch_gap',
+                    'message': 'FC SAN protocol detected but no switch vendor identified — verify switch firmware alignment with NetApp IMT',
+                    'recommendation': 'Cross-reference switch firmware against REFERENCE_LIBRARY_FIRMWARE_BASELINES'
+                })
+
+            if fleet_signals.get('nfs') and not fleet_signals.get('vmware') and not fleet_signals.get('kvm_linux'):
+                gap_signals.append({
+                    'type': 'nfs_host_gap',
+                    'message': 'NFS protocol active but host platform not detected — verify NFS mount options and host utility versions',
+                    'recommendation': 'Install NetApp Host Utilities, configure recommended mount options (rsize/wsize=1048576, hard,nointr)'
+                })
+
+            if not fleet_signals.get('arp') and any(fleet_signals.get(p) for p in ['nfs', 'smb_cifs']):
+                gap_signals.append({
+                    'type': 'security_gap',
+                    'message': 'NAS protocols active but ARP (Anti-Ransomware Protection) not detected — security gap',
+                    'recommendation': 'Enable ARP on NAS volumes (9.10.1+ FlexVol, 9.13.1+ FlexGroup, 9.16.1+ ARP/AI)'
+                })
+
+            # ── Integration version alignment gaps ──
+            # Check if fleet ONTAP versions meet minimum requirements for detected integrations
+            integration_version_reqs = {
+                'vmware':     {'tool': 'ONTAP Tools for VMware (OTV)', 'minOntap': '9.12', 'recommended': '10.3'},
+                'kubernetes': {'tool': 'Astra Trident', 'minOntap': '9.8', 'recommended': '26.06'},
+                'snapcenter': {'tool': 'SnapCenter', 'minOntap': '9.12', 'recommended': '6.2.2'},
+                'veeam':      {'tool': 'Veeam VBR + NetApp Plugin', 'minOntap': '9.8', 'recommended': '12.3'},
+                'commvault':  {'tool': 'Commvault IntelliSnap', 'minOntap': '9.10', 'recommended': '2024'},
+                'oracle_db':  {'tool': 'SnapCenter for Oracle', 'minOntap': '9.12', 'recommended': '6.2'},
+                'mssql':      {'tool': 'SnapCenter for SQL Server', 'minOntap': '9.12', 'recommended': '6.2'},
+                'sap_hana':   {'tool': 'SnapCenter for SAP HANA', 'minOntap': '9.12', 'recommended': '6.2'},
+                'cisco_san':  {'tool': 'Cisco NX-OS (cluster/SAN switch)', 'minOntap': '9.8', 'recommended': 'NX-OS 10.4.2'},
+                'brocade_fc': {'tool': 'Brocade Fabric OS (FC switch)', 'minOntap': '9.8', 'recommended': 'FOS 9.2.1'},
+                'rubrik':     {'tool': 'Rubrik NAS Direct Archive', 'minOntap': '9.5', 'recommended': 'latest'},
+                'cohesity':   {'tool': 'Cohesity DataProtect', 'minOntap': '9.5', 'recommended': 'latest'},
+                'hycu':       {'tool': 'HYCU for ONTAP', 'minOntap': '9.8', 'recommended': 'latest'},
+            }
+
+            for signal_key, req in integration_version_reqs.items():
+                if not fleet_signals.get(signal_key):
+                    continue
+                req_major = float(req['minOntap'])
+                fleet_below = False
+                below_system = ''
+                below_ver = ''
+                for sys_item in fleet_systems:
+                    os_ver = sys_item.get('osVersion', '')
+                    if not os_ver:
+                        continue
+                    ver_match = _re.match(r'(\d+\.\d+)', os_ver)
+                    if not ver_match:
+                        continue
+                    ver_num = float(ver_match.group(1))
+                    if ver_num < req_major:
+                        fleet_below = True
+                        below_system = sys_item.get('hostname') or sys_item.get('serialNumber') or 'unknown'
+                        below_ver = os_ver
+                        break
+                if fleet_below:
+                    gap_signals.append({
+                        'type': f'imt_version_gap_{signal_key}',
+                        'message': f'{req["tool"]} v{req["recommended"]} requires minimum ONTAP {req["minOntap"]} — system {below_system} is running ONTAP {below_ver}',
+                        'recommendation': f'Upgrade ONTAP to {req["minOntap"]}+ or verify compatibility of an older {req["tool"]} version in the NetApp IMT (imt.netapp.com)',
+                    })
+
+            if gap_signals:
+                for gap in gap_signals:
+                    new_articles.append({
+                        'url': f'https://docs.netapp.com/us-en/ontap/{gap["type"]}-gap',
+                        'title': f'⚠ Gap Detected: {gap["message"][:80]}',
+                        'source': 'gap-analysis',
+                        'category': 'gap_analysis',
+                        'alignment': gap['recommendation'],
+                        'relevance': 'Fleet gap analysis',
+                        'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                        '_vendorGuideline': True,
+                        '_gapAnalysis': True,
+                        '_fleetRelevant': True,
+                        '_integrationKey': gap['type'],
+                    })
+
+            # ── Version-specific NetApp feature mapping ──
+            # Map detected ONTAP versions to key features, enhancements, and
+            # configuration changes introduced in each release.
+            ontap_feature_map = {
+                '9.19': [
+                    ('SnapMirror active sync transparent failover for AIX', 'data_protection', 'Requires ONTAP Mediator 1.12: mediator show'),
+                    ('Tamperproof snapshot locking for SnapMirror Synchronous', 'data_protection', 'Enable: snapmirror modify -destination-path <path> -is-lock-enabled true'),
+                    ('ASA r2 direct-attach FC (switchless)', 'configuration', 'No FC switch required for 2-node ASA r2 HA pairs — verify cabling with Hardware Universe'),
+                    ('ARP/AI within SnapMirror active sync relationships', 'security', 'Verify ARP/AI status on both source and destination: security anti-ransomware volume show'),
+                    ('AFX global deduplication across SAZ', 'configuration', 'Enabled by default on AFX — verify: storage aggregate show -fields dedupe-enabled'),
+                    ('S3 idle connection timeout reduced 20min to 5min', 'configuration', 'Update S3 client timeout settings if applications rely on long-lived idle connections'),
+                ],
+                '9.18': [
+                    ('SnapMirror cloud for MetroCluster FlexGroup volumes', 'data_protection', 'Enable: snapmirror create -type XDP -source-path <svm:vol> -destination-path <cloud-target>'),
+                    ('100Gbps ISL minimum for high-speed MC-IP platforms', 'configuration', 'Verify ISL bandwidth: metrocluster interconnect show — must be 100Gbps for A70/A90/A1K'),
+                    ('AFX ATM performance-aware balancing', 'configuration', 'ATM now balances by node load, not just volume count — monitor: storage aggregate show -fields atm-status'),
+                    ('FlexCache/SnapMirror interop between AFX and Unified ONTAP', 'configuration', 'Unified ONTAP side must be 9.16.1+ for FlexCache/SnapMirror with AFX nodes'),
+                    ('Controller replace combos for MC-IP (A70→A90, FAS70→FAS90)', 'operations', 'Use: system controller replace start — NDU controller upgrade in MetroCluster IP'),
+                ],
+                '9.17': [
+                    ('AFX platform GA — minimum ONTAP for AFX 1K and AFX 2K', 'configuration', 'AFX requires 9.17.1+, REST-only API (no ZAPI), NX224 shelves with NSM140 only'),
+                    ('Zero Copy Volume Move (ZCVM) for AFX', 'operations', 'Metadata-only volume relocation — triggered on failover/node events: volume move show'),
+                    ('JIT privilege elevation for RBAC', 'security', 'Just-in-time admin access: security login role create -role <name> -cmddirname <cmd> -access all -query -jit-elevation true'),
+                    ('MetroCluster IP E2E encryption extended to full lineup', 'security', 'Enable: metrocluster modify -is-encryption-enabled true — covers A20/A30/C30/A50/C60/A70/A90/A1K/C80, FAS50/70/90'),
+                ],
+                '9.16': [
+                    ('ARP/AI zero-learning ML ransomware detection', 'security', 'Enable on all NAS volumes: security anti-ransomware volume enable -vserver <svm> -volume <vol> -state active'),
+                    ('TLS 1.3 for S3, SnapMirror, FabricPool', 'security', 'SSLv3/TLS 1.0/1.1 disabled — verify client compatibility: security ssl show'),
+                    ('NVMe/TCP UNMAP/TRIM default enabled', 'configuration', 'Verify host HBA UNMAP/TRIM support before upgrading SAN hosts: lun show -fields space-allocation'),
+                    ('MAV expanded to Consistency Groups, VScan, ARP, LUN delete, NVMe', 'security', 'Review MAV rule coverage: security multi-admin-verify rule show'),
+                    ('IPsec hardware offload', 'security', 'Enable: security ipsec config modify -is-enabled true — hardware offload automatic on supported platforms'),
+                    ('WebAuthn MFA for System Manager', 'security', 'Register FIDO2 keys: security webauthn credentials create -username <admin>'),
+                    ('OAuth 2.0 Entra ID integration', 'security', 'Configure: security oauth2 client create -name <name> -issuer-uri <entra-endpoint>'),
+                ],
+                '9.15': [
+                    ('SnapMirror active sync symmetric active/active for all-SAN', 'data_protection', 'Requires ASA or AFF SAN-only volumes — transparent failover <15s: snapmirror show -fields active-sync-status'),
+                    ('NFS over TLS GA', 'security', 'Enable: vserver nfs tls interface enable -vserver <svm> -lif <lif> -certificate-name <cert>'),
+                    ('MetroCluster E2E backend encryption', 'security', 'Validate switch firmware compatibility before enabling: metrocluster check run'),
+                    ('3-node ROBO cluster support', 'configuration', 'Reduced node count for remote office/branch office — cluster show'),
+                    ('ARP FlexGroup support', 'security', 'Extend ARP to FlexGroup: security anti-ransomware volume enable (all nodes must be 9.13.1+)'),
+                ],
+                '9.14': [
+                    ('NVMe/TCP GA for SAN workloads', 'configuration', 'Requires NVMe-oF host driver — configure: vserver nvme subsystem create'),
+                    ('CLI support for consistency groups', 'data_protection', 'Create: consistency-group create -vserver <svm> -consistency-group <name> -volume <vol1,vol2>'),
+                    ('FPolicy persistent stores', 'security', 'Enable persistent store: vserver fpolicy persistent-store create -vserver <svm> -persistent-store <name> -volume <vol>'),
+                    ('TSSE physical-used semantics changed', 'configuration', 'Capacity dashboards may show different values — not a data issue. Recalibrate alert thresholds.'),
+                    ('Cisco Duo 2FA for SSH', 'security', 'Enable MFA: security login create -user-or-group-name <admin> -authentication-method duosecurity'),
+                ],
+                '9.13': [
+                    ('ARP for FlexGroup volumes', 'security', 'Enable: security anti-ransomware volume enable — all cluster nodes must be 9.13.1+'),
+                    ('AES Kerberos encryption DEFAULT-ON for new CIFS SVMs', 'security', 'Critical for KB5073381/CVE-2026-20833: vserver cifs security show -fields kerberos-encryption-types'),
+                    ('FPolicy v2 persistent store mode', 'security', 'Buffers FPolicy events locally — prevents event loss: vserver fpolicy show -fields is-persistent-store-enabled'),
+                    ('S3 object versioning', 'configuration', 'Required for Veeam immutable backup: vserver object-store-server bucket modify -bucket <name> -versioning-state enabled'),
+                    ('NVMe/FC 4-node cluster support', 'configuration', 'Expanded from 2-node: vserver nvme show'),
+                ],
+                '9.12': [
+                    ('TSSE default-on for AFF C-Series', 'configuration', 'Changes efficiency ratio reporting — verify capacity dashboards: storage aggregate show -fields efficiency-data-reduction'),
+                    ('Tamper-proof audit logging default-on', 'security', 'Immutable audit log — vserver audit show -fields log-format,guaranteed-purge'),
+                    ('REST API parity with ZAPI', 'automation', 'Begin migration from ZAPI to REST API: curl -X GET https://<cluster>/api/cluster'),
+                    ('NVMe/FC in MetroCluster IP', 'configuration', 'Enable NVMe/FC on MC-IP: vserver nvme create -vserver <svm>'),
+                ],
+                '9.11': [
+                    ('Multi-Admin Verification (MAV) introduced', 'security', 'Enable: security multi-admin-verify modify -approval-groups <group> -enabled true'),
+                    ('Consistency groups GA in System Manager', 'data_protection', 'System Manager: Storage > Consistency Groups — create, snapshot, replicate'),
+                    ('SnapMirror active sync expanded platform support', 'data_protection', 'Requires ONTAP Mediator: snapmirror mediator show'),
+                ],
+                '9.10': [
+                    ('ARP for FlexVol NAS (30-day learning)', 'security', 'Enable per volume: security anti-ransomware volume enable -vserver <svm> -volume <vol>'),
+                    ('Firewall policies DEPRECATED to LIF service policies', 'configuration', 'BREAKING: migrate before upgrade — network interface service-policy show'),
+                    ('NVMe/TCP introduced', 'configuration', 'New SAN protocol: vserver nvme subsystem show'),
+                    ('SnapLock+non-SnapLock coexistence on same aggregate', 'configuration', 'Mixed SnapLock: storage aggregate show -fields snaplock-type'),
+                ],
+                '9.9': [
+                    ('SnapMirror active sync (SM-BC) GA', 'data_protection', 'Configure: snapmirror create -source-path <src> -destination-path <dst> -type automatedfailover'),
+                    ('MetroCluster IP 8-node support', 'configuration', 'Expanded from 4-node: metrocluster show -fields cluster-type,node-count'),
+                    ('L3 IP-routed MetroCluster backend', 'configuration', 'IP routing for MC backend: metrocluster configuration-settings network show'),
+                ],
+                '9.8': [
+                    ('ONTAP REST API parity begins (ZAPI deprecated)', 'automation', 'Migrate scripts from ZAPI to REST: https://<cluster>/api — ZAPI removed entirely from AFX'),
+                    ('SnapDiff v3 for backup integrations', 'data_protection', 'Veeam/Rubrik CFT: volume snapshot diff start -vserver <svm> -volume <vol>'),
+                ],
+                '9.7': [
+                    ('FabricPool for all platforms', 'configuration', 'Enable cold data tiering: storage aggregate object-store config create -object-store-name <name>'),
+                    ('WAFL metadata format upgrade', 'operations', 'Ensure aggregates have >15% free capacity: storage aggregate show -fields percent-used'),
+                    ('TLS 1.0/1.1 disabled for management APIs', 'security', 'Verify client TLS version support: security ssl show -fields minimum-protocol'),
+                ],
+            }
+
+            # ── StorageGRID version-specific feature mapping ──
+            storagegrid_feature_map = {
+                '12.1': [
+                    ('12 TB/s aggregate throughput (400% vs 12.0)', 'performance', 'Validate network bandwidth for upgraded throughput: grid topology show'),
+                    ('Global Federated Namespace up to 10EB', 'configuration', 'Cross-grid bucket federation — configure via Grid Manager: CONFIGURATION > Cross-grid federation'),
+                    ('Batch operations on billions of objects', 'operations', 'S3 batch ops for lifecycle, tagging, copy — configure via Grid Manager'),
+                    ('Multi-Admin Verification for StorageGRID', 'security', 'Requires approval for destructive admin operations: Grid Manager > CONFIGURATION > Access control'),
+                    ('AI-agent change tracking on buckets', 'automation', 'Bucket-level change feed for AI/ML data pipelines — enable via bucket settings'),
+                ],
+                '12.0': [
+                    ('StorageGRID 12.0 GA architecture refresh', 'operations', 'Major version upgrade — backup Grid Manager configuration before upgrading'),
+                    ('Enhanced ILM rule engine', 'configuration', 'Information Lifecycle Management v2 rules — review existing policies for compatibility'),
+                ],
+                '11.9': [
+                    ('S3 Select support for Parquet', 'configuration', 'Query objects server-side without full download — configure via bucket policy'),
+                    ('Improved erasure coding profiles', 'data_protection', 'New EC 6+3 profile for improved storage efficiency with fault tolerance'),
+                ],
+            }
+
+            # ── SANtricity version-specific feature mapping ──
+            santricity_feature_map = {
+                '12.0': [
+                    ('SANtricity 12.0 GA for EF50/EF80 NVMe arrays', 'operations', 'Required for new-gen NVMe: 110+ GB/s read, 1.5PB capacity, AI/ML scratch workloads'),
+                    ('NVMe-oF support expanded (NVMe/TCP, NVMe/FC, NVMe/RoCE)', 'configuration', 'Configure host-side NVMe-oF initiators: eseries cli host-port identify'),
+                ],
+                '11.90': [
+                    ('Enhanced volume snapshots for E-Series', 'data_protection', 'Point-in-time copies: SANtricity System Manager > Storage > Snapshots'),
+                    ('Improved SSD wear-leveling algorithms', 'operations', 'Monitor drive wear: SANtricity System Manager > Hardware > Drives > SSD statistics'),
+                ],
+                '11.80': [
+                    ('E-Series REST API GA', 'automation', 'Migrate from Symbol/SMcli to REST: https://<controller>/devmgr/v2'),
+                    ('Dynamic Disk Pool rebalancing', 'operations', 'Automatic capacity optimization across pool: Storage > Pools > Rebalance'),
+                ],
+            }
+
+            # ── SnapCenter version-specific feature mapping ──
+            snapcenter_feature_map = {
+                '6.2': [
+                    ('SnapCenter 6.2 with ONTAP 9.16.1+ validation', 'operations', 'Verify SnapCenter-ONTAP compatibility: Get-SmStorageConnection | Select Version'),
+                    ('Enhanced Oracle RAC backup coordination', 'data_protection', 'Multi-node RAC snapshot orchestration: New-SmBackup -Resources <rac-db>'),
+                    ('SQL Server Always On AG log backup improvements', 'data_protection', 'Cross-replica log coordination: New-SmBackup -Resources <ag-name> -BackupType Log'),
+                ],
+                '6.0': [
+                    ('Linux Server support (RHEL/Oracle Linux/SLES)', 'operations', 'Install SnapCenter Server on Linux: ./InstallSnapCenter -AcceptEULA'),
+                    ('Plug-in for VMware vSphere 6.x with NVMe/TCP VMFS', 'configuration', 'Deploy SnapCenter Plug-in for VMware: register-vsc -vcenter <vcenter-ip>'),
+                ],
+                '5.0': [
+                    ('SnapCenter 5.0 — cloud-native plugin architecture', 'operations', 'Modernized plug-in framework: Get-SmHost | Select PluginVersion'),
+                ],
+            }
+
+            # ── Trident version-specific feature mapping ──
+            trident_feature_map = {
+                '26.06': [
+                    ('Trident 26.06 GA with Kubernetes 1.36 support', 'configuration', 'Upgrade: tridentctl upgrade --to 26.06 — verify: tridentctl version'),
+                    ('AFX FlexGroup driver support (ontap-nas-flexgroup on AFX)', 'configuration', 'Configure AFX backend: tridentctl create backend -f afx-flexgroup-backend.json'),
+                    ('GCNV NAS+SAN AutoGrow GA', 'configuration', 'Enable auto-expand for GCNV PVCs: storageClass.parameters.autoGrow=true'),
+                    ('Read-only root filesystems support', 'security', 'Pod security: securityContext.readOnlyRootFilesystem: true — Trident handles mount setup'),
+                ],
+                '26.02': [
+                    ('CVE-2026-24051 fix (PATH hijacking in OpenTelemetry-Go)', 'security', 'CRITICAL: upgrade from any version below 26.02 — tridentctl upgrade'),
+                    ('Concurrency GA for Economy/SolidFire backends', 'performance', 'Parallel provisioning: tridentctl get backends -o json | grep concurrency'),
+                ],
+                '25.10': [
+                    ('Trident Operator improvements', 'operations', 'Helm chart v25.10: helm upgrade trident netapp-trident/trident-operator'),
+                ],
+            }
+
+            for major_ver in sorted(fleet_major_versions):
+                features = ontap_feature_map.get(major_ver, [])
+                for feat_name, feat_cat, feat_guidance in features:
+                    feat_url = f'https://docs.netapp.com/us-en/ontap/release-notes/ontap-{major_ver}-features'
+                    if feat_url not in existing_urls:
+                        new_articles.append({
+                            'url': feat_url,
+                            'title': f'ONTAP {major_ver}: {feat_name}',
+                            'source': 'version-features',
+                            'category': feat_cat,
+                            'alignment': feat_guidance,
+                            'relevance': f'ONTAP {major_ver} deployed in fleet',
+                            'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                            '_vendorGuideline': True,
+                            '_versionFeature': True,
+                            '_fleetRelevant': True,
+                            '_integrationKey': f'ontap-{major_ver}',
+                        })
+                        existing_urls.add(feat_url)
+                        vendor_articles_added += 1
+
+            # ── Multi-platform version feature enrichment ──
+            # StorageGRID, SANtricity, SnapCenter, and Trident version features
+            platform_feature_maps = [
+                (storagegrid_feature_map, 'storagegrid', fleet_signals.get('storagegrid', False),
+                 'https://docs.netapp.com/us-en/storagegrid/release-notes/',
+                 'StorageGRID'),
+                (santricity_feature_map, 'eseries', fleet_signals.get('eseries', False),
+                 'https://docs.netapp.com/us-en/e-series/getting-started/',
+                 'SANtricity'),
+                (snapcenter_feature_map, 'snapcenter', fleet_signals.get('snapcenter', False),
+                 'https://docs.netapp.com/us-en/snapcenter/release-notes/',
+                 'SnapCenter'),
+                (trident_feature_map, 'kubernetes', fleet_signals.get('kubernetes', False),
+                 'https://docs.netapp.com/us-en/trident/trident-rn.html',
+                 'Trident'),
+            ]
+
+            for feat_map, signal_key, is_detected, base_url, product_name in platform_feature_maps:
+                if not is_detected:
+                    continue
+                for ver, features in feat_map.items():
+                    for feat_name, feat_cat, feat_guidance in features:
+                        feat_url = f'{base_url}#{product_name.lower()}-{ver}-features'
+                        if feat_url not in existing_urls:
+                            new_articles.append({
+                                'url': feat_url,
+                                'title': f'{product_name} {ver}: {feat_name}',
+                                'source': 'version-features',
+                                'category': feat_cat,
+                                'alignment': feat_guidance,
+                                'relevance': f'{product_name} detected in fleet',
+                                'discoveredAt': datetime.now(timezone.utc).isoformat()[:10],
+                                '_vendorGuideline': True,
+                                '_versionFeature': True,
+                                '_fleetRelevant': True,
+                                '_integrationKey': f'{signal_key}-{ver}',
+                            })
+                            existing_urls.add(feat_url)
+                            vendor_articles_added += 1
+
+            print(f'  [ENRICH]   Vendor guidelines: +{vendor_articles_added} articles '
+                  f'(scraped {vendor_scrape_count}, errors {vendor_scrape_errors})', flush=True)
+            if gap_signals:
+                print(f'  [ENRICH]   Gap analysis: {len(gap_signals)} coverage gaps detected', flush=True)
+
+        else:
+            print('  [ENRICH]   Fleet-aware docs: skipped (no cached fleet data)', flush=True)
+
+
+        # Persist
+        if new_articles:
+            all_articles = kb_data.get('articles', []) + new_articles
+            kb_out = {
+                'version': 1,
+                'lastUpdated': datetime.now(timezone.utc).isoformat()[:10],
+                'articleCount': len(all_articles),
+                'articles': all_articles,
+            }
+            KNOWLEDGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = KNOWLEDGE_PATH.with_suffix('.tmp')
+            tmp_path.write_text(json.dumps(kb_out, indent=2, ensure_ascii=False), encoding='utf-8')
+            tmp_path.replace(KNOWLEDGE_PATH)
+            print(f'  [ENRICH]   Knowledge base: +{len(new_articles)} new articles ({len(all_articles)} total)', flush=True)
+
+        return {'new': len(new_articles), 'total': len(kb_data.get('articles', [])) + len(new_articles)}
+
+    # ── Scanner 7: Reference Library Auto-Update (EOA, IMT, Firmware) ──
+    def _scan_reference_library(self):
+        """Automated reference data refresh: firmware baselines, EOA database,
+        IMT interop matrix, and integration version discovery.
+        Uses fuzzy-matching against GitHub, PyPI, vendor docs, and endoflife.date."""
+        print('  [ENRICH] [7/7] Scanning reference library (firmware + EOA + IMT)...', flush=True)
+        _data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        changes = {}
+        # ── 7a. Firmware baselines harvester ──
+        try:
+            import sys as _sys7
+            _tools_dir = os.path.join(os.path.dirname(__file__), 'tools')
+            if _tools_dir not in _sys7.path:
+                _sys7.path.insert(0, _tools_dir)
+            from firmware_harvester import scheduled_harvest as _fw_harvest
+            fw_changes = _fw_harvest(_data_dir)
+            if fw_changes:
+                changes['firmware_baselines'] = fw_changes
+                print(f'  [ENRICH]   Firmware baselines: {len(fw_changes)} updates', flush=True)
+                for k, v in fw_changes.items():
+                    print(f'    {k}: {v.get("old","")} -> {v.get("new","")}', flush=True)
+            else:
+                print('  [ENRICH]   Firmware baselines: up to date', flush=True)
+        except Exception as _fw_err:
+            print(f'  [ENRICH]   Firmware baselines harvest failed: {_fw_err}', flush=True)
+
+        # ── 7b. Reference library harvester (EOA, IMT, advisories) ──
+        try:
+            from reference_harvester import scheduled_reference_harvest as _ref_harvest
+            # Pass GitHub PAT from config if available
+            _gh_token = ""
+            try:
+                _cfg_for_gh = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+                _gh_token = _cfg_for_gh.get("githubToken", "") or ""
+            except Exception:
+                pass
+            ref_changes = _ref_harvest(_data_dir, github_token=_gh_token)
+            if ref_changes:
+                changes['reference_library'] = ref_changes
+                _ref_summary = []
+                if ref_changes.get('eoa'):
+                    _ref_summary.append(f"EOA: {len(ref_changes['eoa'])} changes")
+                if ref_changes.get('imt'):
+                    _ref_summary.append(f"IMT: {len(ref_changes['imt'])} updates")
+                if ref_changes.get('advisories'):
+                    _ref_summary.append(f"Advisories: {len(ref_changes['advisories'])} new")
+                if ref_changes.get('docs_discovered'):
+                    _ref_summary.append(f"Docs: {ref_changes['docs_discovered']} discovered")
+                print(f'  [ENRICH]   Reference library: {", ".join(_ref_summary) if _ref_summary else "up to date"}', flush=True)
+            else:
+                print('  [ENRICH]   Reference library: up to date', flush=True)
+        except Exception as _ref_err:
+            print(f'  [ENRICH]   Reference library harvest failed: {_ref_err}', flush=True)
+
+        return changes
+
+
+def _infer_affected_products(adv_id, title):
+    """Classify which products an advisory affects from NetApp's own text
+    (ideally the structured kb_affected_list joined into a string -- see the
+    two call sites -- falling back to the advisory title when that's empty).
+
+    Previously defaulted unmatched advisories to ['ONTAP'], on the theory
+    that ONTAP was the "safe" guess. Live-verified this was badly wrong:
+    of the 341 bulletins in data/security_bulletins.json, 185 (54%) had
+    been silently defaulted to ONTAP -- confirmed via NetApp's own API that
+    their real kb_affected_list was things like 'Management Services for
+    Element Software and NetApp HCI', 'NetApp Data Classification', 'NetApp
+    HCI Baseboard Management Controller (BMC) - H610S', or 'Active IQ
+    Unified Manager for Microsoft Windows' -- none of which are ONTAP, none
+    of which run on a customer's storage array. That default meant every
+    such advisory was misapplied as a CVE against every ONTAP system in
+    every fleet, inflating CVE Exposure / Cost of Inaction / risk scores
+    fleet-wide with false positives. Also fixed: 'ONTAP tools for VMware
+    vSphere' (a vCenter plugin) was matching the bare 'ontap' substring as
+    if it were the storage OS itself -- now checked and excluded first.
+    New default is 'Unknown' -- which getApplicableSecurityBulletins() in
+    app.js does not match against any system type, so an advisory we can't
+    confidently classify is excluded from every system's CVE list instead
+    of being force-fit onto ONTAP. Under-counting an unclassifiable
+    advisory is honest; over-counting it as a false ONTAP finding is not."""
+    text_l = (title or '').lower()
+    products = []
+    if 'ontap tools for vmware' in text_l or 'ontap tools 10' in text_l:
+        products.append('ONTAP Tools for VMware vSphere')
+    elif 'ontap' in text_l:
+        products.append('ONTAP')
+    if 'storagegrid' in text_l or 'storage grid' in text_l:
+        products.append('StorageGRID')
+    if 'snapcenter' in text_l or 'snap center' in text_l:
+        products.append('SnapCenter')
+    if 'trident' in text_l:
+        products.append('Astra Trident')
+    if 'active iq' in text_l or 'activeiq' in text_l or 'oncommand unified manager' in text_l:
+        products.append('Active IQ Unified Manager')
+    if 'sanhost' in text_l or 'san host' in text_l:
+        products.append('SAN Host Utilities')
+    if 'santricity' in text_l or 'e-series' in text_l or 'eseries' in text_l:
+        products.append('SANtricity/E-Series')
+    if ('element software' in text_l or 'solidfire' in text_l) and 'netapp hci' in text_l:
+        products.append('Element Software / NetApp HCI')
+    elif 'element software' in text_l or 'solidfire' in text_l:
+        products.append('Element Software')
+    if 'netapp hci' in text_l and 'element software' not in text_l:
+        products.append('NetApp HCI')
+    if 'baseboard management controller' in text_l or re.search(r'\bbmc\b', text_l):
+        products.append('Hardware BMC/Firmware')
+    if 'data classification' in text_l:
+        products.append('NetApp Data Classification')
+    if 'sannav' in text_l or 'san navigator' in text_l:
+        products.append('Brocade SAN Navigator')
+    if 'bluexp' in text_l or 'cloud manager' in text_l:
+        products.append('BlueXP / Cloud Manager')
+    if 'astra control' in text_l:
+        products.append('Astra Control')
+    if 'cloud insights' in text_l or 'data infrastructure insights' in text_l:
+        products.append('Data Infrastructure Insights')
+    if 'harvest' in text_l:
+        products.append('NetApp Harvest')
+    return products or ['Unknown']  # honest "can't classify" -- excluded from every system, not force-fit onto ONTAP
+
+
+
+def _parse_netapp_release_notes(text, version, platform):
+    """
+    Extract known issues, fixed issues, and what's-new blurbs from
+    NetApp docs HTML for a given version/platform.
+    Uses section-aware parsing: looks for headings like 'Known Issues',
+    'Fixed Issues', "What's New", then reads the <li> items under each.
+    Returns dict: {knownIssues, fixedIssues, whatsNew, upgradeMotivation}
+    """
+    known = []
+    fixed = []
+    whatsnew = []
+
+    # Pre-strip <script>, <style>, <noscript>, <svg> blocks to prevent
+    # raw JavaScript/CSS from leaking into extracted release notes.
+    text = _re.sub(r'<(script|style|noscript|svg)[^>]*>.*?</\1>', '', text, flags=_re.DOTALL | _re.IGNORECASE)
+    # ── Section-aware extraction ──────────────────────────────────────────────
+    # Split HTML into segments by heading text so we pull issues from the right
+    # section rather than from any random <li> on the page.
+    def _items_under_heading(html, *heading_patterns):
+        """Find text of <li> items in the section immediately after a heading."""
+        pat = '|'.join(heading_patterns)
+        m = _re.search(
+            rf'<h[2-4][^>]*>(?:[^<]*<[^>]+>)*[^<]*(?:{pat})[^<]*(?:<[^>]+>[^<]*)*</h[2-4]>',
+            html, _re.IGNORECASE
+        )
+        if not m:
+            return []
+        segment = html[m.end():m.end() + 8000]
+        # Stop at next heading
+        next_h = _re.search(r'<h[2-4][\s>]', segment)
+        if next_h:
+            segment = segment[:next_h.start()]
+        items = _re.findall(r'<li[^>]*>(.*?)</li>', segment, _re.DOTALL)
+        return [_strip_html_tags(i)[:300].strip() for i in items if len(_strip_html_tags(i).strip()) > 20]
+
+    # Known issues
+    known = _items_under_heading(text, r'known\s+issue', r'known\s+problem', r'known\s+limitation')[:8]
+    # Fixed bugs / resolved issues
+    fixed = _items_under_heading(text, r'fixed\s+bug', r'resolved\s+issue', r'bug\s+fix', r'fixed\s+issue')[:8]
+    # What's new / new features
+    whatsnew = _items_under_heading(text, r"what.{0,4}s\s+new", r'new\s+feature', r'enhancements?')[:5]
+
+    # ── Fallback: scan all <li> by keyword if sections not found ─────────────
+    if not known and not whatsnew:
+        all_li = _re.findall(r'<li[^>]*>(.*?)</li>', text, _re.DOTALL)
+        issue_kw  = ['issue', 'problem', 'bug', 'fail', 'error', 'crash', 'panic', 'incorrect', 'missing', 'not work', 'defect', 'caveat']
+        feature_kw = ['support', 'introduc', 'enabl', 'improve', 'new', 'add', 'enhanc', 'increas', 'extend']
+        for item in all_li[:100]:
+            clean = _strip_html_tags(item)[:250].strip()
+            if len(clean) < 25:
+                continue
+            cl = clean.lower()
+            if any(k in cl for k in issue_kw) and len(known) < 6:
+                known.append(clean)
+            elif any(k in cl for k in feature_kw) and len(whatsnew) < 4:
+                whatsnew.append(clean)
+
+    motivation_parts = []
+    if known:
+        motivation_parts.append(f"{len(known)} known issue(s) documented for {version}")
+    if fixed:
+        motivation_parts.append(f"{len(fixed)} issue(s) fixed in this release")
+    if whatsnew:
+        motivation_parts.append(f"new in {version}: {whatsnew[0][:80]}")
+    motivation = '. '.join(motivation_parts) or 'Check docs.netapp.com for current release status.'
+
+    return {
+        'knownIssues': known[:8],
+        'fixedIssues': fixed[:8],
+        'whatsNew':    whatsnew[:5],
+        'upgradeMotivation': motivation
+    }
+
+
+def _search_netapp_psirt_for_version(version, product_keyword):
+    """
+    Search the NetApp PSIRT advisory list for advisories that mention
+    a given software version. Scrapes security.netapp.com/advisory/ index.
+    Returns list of {id, title, severity, link} dicts.
+    """
+    results = []
+    try:
+        # PSIRT search page — queries by product keyword
+        search_url = f'https://security.netapp.com/advisory/?q={urllib.parse.quote(product_keyword)}'
+        text, err = _enrich_fetch(search_url, timeout=15)
+        if err or not text:
+            return results
+        # Extract advisory links + titles from the listing
+        adv_matches = _re.findall(
+            r'href="(/advisory/ntap-[^"]+)"[^>]*>.*?<[^>]+>([^<]{10,120})',
+            text, _re.DOTALL
+        )
+        for path, raw_title in adv_matches[:20]:
+            title = _strip_html_tags(raw_title).strip()
+            # Only include if the version string or major.minor appears in the listing
+            major_minor = _re.match(r'^(\d+\.\d+)', version)
+            ver_str = major_minor.group(1) if major_minor else version[:5]
+            if ver_str not in text:
+                continue
+            adv_id = path.strip('/').split('/')[-1]
+            results.append({
+                'id': adv_id,
+                'title': title[:200],
+                'link': f'https://security.netapp.com{path}',
+                'severity': 'UNKNOWN'
+            })
+    except Exception:
+        pass
+    return results[:5]
+
+
+# Real NVD CPE Dictionary product names for NetApp platforms — verified via a
+# live query against services.nvd.nist.gov/rest/json/cpes/2.0 (2026-08-10), not
+# guessed. Wrong names here would silently return zero CPE-matched results:
+#   ONTAP        -> clustered_data_ontap (modern cluster-mode, matches 9.x)
+#   StorageGRID  -> storagegrid
+#   SANtricity   -> e-series_santricity_os_controller (232 CVEs confirmed live)
+_NVD_CPE_PRODUCT = {
+    'ONTAP': 'clustered_data_ontap',
+    'StorageGRID': 'storagegrid',
+    'SANtricity': 'e-series_santricity_os_controller',
+}
+
+
+def _parse_nvd_vulnerabilities(vulnerabilities):
+    """Shared parser: NVD vulnerabilities[] -> [{id, description, cvss, severity, publishedDate}]."""
+    parsed = []
+    for item in vulnerabilities:
+        vuln = item.get('cve', {})
+        cve_id = vuln.get('id', '')
+        if not cve_id:
+            continue
+        descs = vuln.get('descriptions', [])
+        desc = next((d['value'] for d in descs if d.get('lang') == 'en'), '')
+        metrics = vuln.get('metrics', {})
+        cvss_score = None
+        severity = 'UNKNOWN'
+        for key in ('cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2'):
+            if key in metrics and metrics[key]:
+                m = metrics[key][0].get('cvssData', {})
+                cvss_score = m.get('baseScore')
+                severity = (m.get('baseSeverity') or 'UNKNOWN').upper()
+                break
+        parsed.append({
+            'id': cve_id,
+            'description': desc[:400],
+            'cvss': cvss_score,
+            'severity': severity,
+            'publishedDate': vuln.get('published', '')[:10],
+        })
+    return parsed
+
+
+def _search_nvd_for_version(version, cpe_product_keyword, nvd_api_key=None):
+    """
+    Find CVEs affecting this platform/version. Tries a precise CPE
+    (Common Platform Enumeration) match first — using NetApp's real, verified
+    NVD Dictionary product names — since keywordSearch alone is a blunt
+    instrument that also surfaces loosely-related historical CVEs matching
+    the product name in unrelated contexts. Falls back to / supplements with
+    keyword search for broader recall, deduplicated by CVE ID.
+    Returns list of {id, description, cvss, severity, publishedDate} dicts.
+
+    nvd_api_key: if not passed explicitly, read directly from aiq_config.json
+    (same pattern as scan_and_persist_advisories) so existing callers benefit
+    from the configured key without needing to thread it through.
+    """
+    if nvd_api_key is None:
+        try:
+            if CONFIG_PATH.exists():
+                nvd_api_key = json.loads(CONFIG_PATH.read_text(encoding='utf-8')).get('nvdApiKey') or None
+        except Exception:
+            nvd_api_key = None
+    headers = {'apiKey': nvd_api_key} if nvd_api_key else None
+    by_id = {}
+
+    # ── 1. Precise CPE match (versionless prefix — catches all versions of
+    #      this product; NVD's virtualMatchString does prefix matching) ──────
+    cpe_product = _NVD_CPE_PRODUCT.get(cpe_product_keyword)
+    if cpe_product:
+        try:
+            cpe_str = urllib.parse.quote(f'cpe:2.3:*:netapp:{cpe_product}:*', safe=':*')
+            url = f'https://services.nvd.nist.gov/rest/json/cves/2.0?virtualMatchString={cpe_str}&resultsPerPage=10'
+            text, err = _enrich_fetch(url, timeout=20, extra_headers=headers)
+            if not err and text:
+                data = json.loads(text)
+                for r in _parse_nvd_vulnerabilities(data.get('vulnerabilities', [])):
+                    by_id[r['id']] = r
+        except Exception:
+            pass
+
+    # ── 2. Keyword search (product + version) — supplements CPE match with
+    #      version-specific text hits the CPE prefix match wouldn't isolate ──
+    try:
+        q = urllib.parse.quote(f'{cpe_product_keyword} {version}')
+        url = f'https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={q}&resultsPerPage=10'
+        text, err = _enrich_fetch(url, timeout=20, extra_headers=headers)
+        if not err and text:
+            data = json.loads(text)
+            for r in _parse_nvd_vulnerabilities(data.get('vulnerabilities', [])):
+                by_id.setdefault(r['id'], r)
+    except Exception:
+        pass
+
+    return list(by_id.values())[:8]
+
+
+def _search_netapp_bugs_online(version, product_keyword):
+    """
+    Search NetApp Bugs Online public RSS feed for bugs matching a version.
+    Returns list of {id, title, description, component} dicts.
+    """
+    results = []
+    return results   # disabled: mysupport.netapp.com is a support-portal site; ARIA does not query it
+    try:
+        # NetApp Bugs Online has a public search interface
+        # The query format: product=ONTAP&release=X.Y&type=bug
+        q = urllib.parse.quote(f'{product_keyword} {version}')
+        url = f'https://mysupport.netapp.com/site/bugs-online/product/ONTAP/qosb?searchContext=&queryKeywords={q}'
+        text, err = _enrich_fetch(url, timeout=15)
+        if err or not text:
+            return results
+        # Parse bug entries — Bugs Online returns HTML with bug IDs and titles
+        bug_matches = _re.findall(
+            r'bug[_\-\s]?id[^>]*>([0-9]{5,10})[^<]*<.*?(?:title|summary)[^>]*>([^<]{20,300})',
+            text, _re.IGNORECASE | _re.DOTALL
+        )
+        for bug_id, title in bug_matches[:10]:
+            clean_title = _strip_html_tags(title).strip()
+            if clean_title and len(clean_title) > 15:
+                results.append({
+                    'id':    f'Bug {bug_id}',
+                    'title': clean_title[:200],
+                    'link':  f'https://mysupport.netapp.com/site/bugs-online/product/ONTAP/{bug_id}'
+                })
+    except Exception:
+        pass
+    return results[:5]
+
+
+def fetch_ontap_version_info(version):
+    """
+    Multi-source enrichment for an ONTAP version:
+      1. docs.netapp.com release notes (version-specific URL)
+      2. NetApp PSIRT advisories mentioning this ONTAP version
+      3. NVD CVE search for ONTAP + version
+      4. NetApp Bugs Online public search
+    All sources are merged; any missing source fails silently.
+    """
+    ver_m = _re.match(r'^(\d+)\.(\d+)(?:\.(\d+))?', version)
+    if not ver_m:
+        return None
+    major, minor = ver_m.group(1), ver_m.group(2)
+    ver_slug = f'{major}-{minor}'
+
+    result = {
+        'version': version,
+        'platform': 'ONTAP',
+        'knownIssues': [],
+        'fixedIssues': [],
+        'whatsNew': [],
+        'kbArticles': [],
+        'upgradePath': {},
+        'bestPractices': [],
+        'upgradeMotivation': '',
+        'relatedCVEs': [],
+        'relatedAdvisories': [],
+        'relatedBugs': [],
+        'sources': [],
+        'source_url': ''
+    }
+
+    # ── Source 1: docs.netapp.com release notes ───────────────────────────────
+    doc_urls = [
+        f'https://docs.netapp.com/us-en/ontap/release-notes/ontap-{ver_slug}-release-notes.html',
+        f'https://docs.netapp.com/us-en/ontap/{major}-{minor}/release-notes/index.html',
+    ]
+    for url in doc_urls:
+        text, err = _enrich_fetch(url)
+        if text and not err and '<html' in text.lower():
+            parsed = _parse_netapp_release_notes(text, version, 'ontap')
+            result['knownIssues']  = parsed['knownIssues']
+            result['fixedIssues']  = parsed['fixedIssues']
+            result['whatsNew']     = parsed['whatsNew']
+            result['source_url']   = url
+            result['sources'].append('docs.netapp.com')
+            print(f'  [ENRICH] ONTAP {version} docs: {len(parsed["knownIssues"])} issues, {len(parsed["whatsNew"])} new features', flush=True)
+            break
+
+    # ── Source 2: NetApp PSIRT advisories ────────────────────────────────────
+    try:
+        advisories = _search_netapp_psirt_for_version(version, 'ONTAP')
+        if advisories:
+            result['relatedAdvisories'] = advisories
+            result['sources'].append('security.netapp.com')
+            print(f'  [ENRICH] ONTAP {version} PSIRT: {len(advisories)} advisory/advisories', flush=True)
+    except Exception:
+        pass
+
+    # ── Source 3: NVD CVE search ──────────────────────────────────────────────
+    try:
+        cves = _search_nvd_for_version(version, 'ONTAP')
+        if cves:
+            result['relatedCVEs'] = cves
+            result['sources'].append('nvd.nist.gov')
+            print(f'  [ENRICH] ONTAP {version} NVD: {len(cves)} CVE(s)', flush=True)
+    except Exception:
+        pass
+
+    # ── Source 4: NetApp Bugs Online ──────────────────────────────────────────
+    try:
+        bugs = _search_netapp_bugs_online(version, 'ONTAP')
+        if bugs:
+            result['relatedBugs'] = bugs
+            if 'mysupport.netapp.com' not in result['sources']:
+                result['sources'].append('mysupport.netapp.com')
+            print(f'  [ENRICH] ONTAP {version} Bugs Online: {len(bugs)} bug(s)', flush=True)
+    except Exception:
+        pass
+
+    try:
+        kbs = fetch_kb_articles(version, 'ONTAP')
+        if kbs:
+            result['kbArticles'] = kbs
+            result['sources'].append('kb.netapp.com')
+    except Exception:
+        pass
+
+    try:
+        up = fetch_upgrade_path_info(version, 'ONTAP')
+        if up and up.get('recommendedTarget'):
+            result['upgradePath'] = up
+            result['sources'].append('docs.netapp.com (upgrade)')
+    except Exception:
+        pass
+
+    try:
+        bps = fetch_best_practice_guides(version, 'ONTAP')
+        if bps:
+            result['bestPractices'] = bps
+            result['sources'].append('docs.netapp.com (TRs)')
+    except Exception:
+        pass
+
+    # ── Upgrade motivation: synthesise from all sources ───────────────────────
+    parts = []
+    if result['knownIssues']:
+        parts.append(f"{len(result['knownIssues'])} known issue(s) in release notes")
+    if result['relatedCVEs']:
+        high = [c for c in result['relatedCVEs'] if (c.get('cvss') or 0) >= 7]
+        parts.append(f"{len(result['relatedCVEs'])} CVE(s) found ({len(high)} high/critical)")
+    if result['relatedAdvisories']:
+        parts.append(f"{len(result['relatedAdvisories'])} PSIRT advisory/advisories")
+    if result['relatedBugs']:
+        parts.append(f"{len(result['relatedBugs'])} tracked bug(s)")
+    if result['fixedIssues']:
+        parts.append(f"{len(result['fixedIssues'])} issue(s) fixed in this release")
+    if result.get('kbArticles'):
+        parts.append(f"{len(result['kbArticles'])} KB article(s)")
+    if result.get('upgradePath') and result['upgradePath'].get('recommendedTarget'):
+        parts.append(f"Upgrade path available")
+    if result.get('bestPractices'):
+        parts.append(f"{len(result['bestPractices'])} best practice guide(s)")
+        
+    result['upgradeMotivation'] = '. '.join(parts) if parts else 'No major issues found in public sources for this version.'
+
+    return result if result['sources'] else None
+
+
+def fetch_sg_version_info(version):
+    """
+    Multi-source enrichment for a StorageGRID version:
+      1. docs.netapp.com StorageGRID release notes
+      2. NetApp PSIRT advisories mentioning StorageGRID + version
+      3. NVD CVE search for StorageGRID + version
+    """
+    ver_m = _re.match(r'^(\d+)\.(\d+)', version)
+    if not ver_m:
+        return None
+    major, minor = ver_m.group(1), ver_m.group(2)
+    ver_slug = f'{major}{minor}'   # e.g. '119' for 11.9
+
+    result = {
+        'version': version,
+        'platform': 'StorageGRID',
+        'knownIssues': [],
+        'fixedIssues': [],
+        'whatsNew': [],
+        'kbArticles': [],
+        'upgradePath': {},
+        'bestPractices': [],
+        'upgradeMotivation': '',
+        'relatedCVEs': [],
+        'relatedAdvisories': [],
+        'relatedBugs': [],
+        'sources': [],
+        'source_url': ''
+    }
+
+    # ── Source 1: docs.netapp.com ─────────────────────────────────────────────
+    doc_urls = [
+        f'https://docs.netapp.com/us-en/storagegrid-{ver_slug}/release-notes/index.html',
+        f'https://docs.netapp.com/us-en/storagegrid-{major}-{minor}/release-notes/index.html',
+    ]
+    for url in doc_urls:
+        text, err = _enrich_fetch(url)
+        if text and not err and '<html' in text.lower():
+            parsed = _parse_netapp_release_notes(text, version, 'storagegrid')
+            result['knownIssues'] = parsed['knownIssues']
+            result['fixedIssues'] = parsed['fixedIssues']
+            result['whatsNew']    = parsed['whatsNew']
+            result['source_url']  = url
+            result['sources'].append('docs.netapp.com')
+            print(f'  [ENRICH] StorageGRID {version} docs: {len(parsed["knownIssues"])} issues', flush=True)
+            break
+
+    # ── Source 2: PSIRT ───────────────────────────────────────────────────────
+    try:
+        advisories = _search_netapp_psirt_for_version(version, 'StorageGRID')
+        if advisories:
+            result['relatedAdvisories'] = advisories
+            result['sources'].append('security.netapp.com')
+    except Exception:
+        pass
+
+    # ── Source 3: NVD ────────────────────────────────────────────────────────
+    try:
+        cves = _search_nvd_for_version(version, 'StorageGRID')
+        if cves:
+            result['relatedCVEs'] = cves
+            result['sources'].append('nvd.nist.gov')
+    except Exception:
+        pass
+
+    try:
+        kbs = fetch_kb_articles(version, 'StorageGRID')
+        if kbs:
+            result['kbArticles'] = kbs
+            result['sources'].append('kb.netapp.com')
+    except Exception:
+        pass
+
+    try:
+        up = fetch_upgrade_path_info(version, 'StorageGRID')
+        if up and up.get('recommendedTarget'):
+            result['upgradePath'] = up
+            result['sources'].append('docs.netapp.com (upgrade)')
+    except Exception:
+        pass
+
+    try:
+        bps = fetch_best_practice_guides(version, 'StorageGRID')
+        if bps:
+            result['bestPractices'] = bps
+            result['sources'].append('docs.netapp.com (TRs)')
+    except Exception:
+        pass
+
+    # ── Motivation ────────────────────────────────────────────────────────────
+    parts = []
+    if result['knownIssues']:
+        parts.append(f"{len(result['knownIssues'])} known issue(s)")
+    if result['relatedCVEs']:
+        parts.append(f"{len(result['relatedCVEs'])} CVE(s) found via NVD")
+    if result['relatedAdvisories']:
+        parts.append(f"{len(result['relatedAdvisories'])} PSIRT advisory/advisories")
+    if result.get('kbArticles'):
+        parts.append(f"{len(result['kbArticles'])} KB article(s)")
+    if result.get('upgradePath') and result['upgradePath'].get('recommendedTarget'):
+        parts.append(f"Upgrade path available")
+    if result.get('bestPractices'):
+        parts.append(f"{len(result['bestPractices'])} best practice guide(s)")
+        
+    result['upgradeMotivation'] = '. '.join(parts) if parts else 'No major issues found in public sources for this version.'
+
+    return result if result['sources'] else None
+
+
+def fetch_santricity_version_info(version):
+    """
+    Multi-source enrichment for a SANtricity / E-Series version:
+      1. docs.netapp.com SANtricity what's-new page (no per-version URL)
+      2. NetApp PSIRT advisories mentioning SANtricity + version
+      3. NVD CVE search for SANtricity + version
+    """
+    ver_m = _re.match(r'^(\d+)\.(\d+)', version)
+    if not ver_m:
+        return None
+
+    result = {
+        'version': version,
+        'platform': 'SANtricity',
+        'knownIssues': [],
+        'fixedIssues': [],
+        'whatsNew': [],
+        'kbArticles': [],
+        'upgradePath': {},
+        'bestPractices': [],
+        'upgradeMotivation': '',
+        'relatedCVEs': [],
+        'relatedAdvisories': [],
+        'relatedBugs': [],
+        'sources': [],
+        'source_url': ''
+    }
+
+    # ── Source 1: docs.netapp.com (SANtricity what's-new is a single page) ────
+    url = 'https://docs.netapp.com/us-en/e-series-santricity/whats-new.html'
+    text, err = _enrich_fetch(url)
+    if text and not err and '<html' in text.lower():
+        # Filter the page to the section that matches our version
+        ver_section_m = _re.search(
+            rf'(?:<h[2-4][^>]*>[^<]*{_re.escape(version[:5])}[^<]*</h[2-4]>)(.*?)(?=<h[2-4]|\Z)',
+            text, _re.DOTALL | _re.IGNORECASE
+        )
+        segment = ver_section_m.group(1) if ver_section_m else text
+        parsed = _parse_netapp_release_notes(segment, version, 'santricity')
+        result['knownIssues'] = parsed['knownIssues']
+        result['fixedIssues'] = parsed['fixedIssues']
+        result['whatsNew']    = parsed['whatsNew']
+        result['source_url']  = url
+        result['sources'].append('docs.netapp.com')
+        print(f'  [ENRICH] SANtricity {version} docs: {len(parsed["knownIssues"])} issues', flush=True)
+
+    # ── Source 2: PSIRT ───────────────────────────────────────────────────────
+    try:
+        advisories = _search_netapp_psirt_for_version(version, 'SANtricity')
+        if advisories:
+            result['relatedAdvisories'] = advisories
+            result['sources'].append('security.netapp.com')
+    except Exception:
+        pass
+
+    # ── Source 3: NVD ────────────────────────────────────────────────────────
+    try:
+        cves = _search_nvd_for_version(version, 'SANtricity')
+        if cves:
+            result['relatedCVEs'] = cves
+            result['sources'].append('nvd.nist.gov')
+    except Exception:
+        pass
+
+    try:
+        kbs = fetch_kb_articles(version, 'SANtricity')
+        if kbs:
+            result['kbArticles'] = kbs
+            result['sources'].append('kb.netapp.com')
+    except Exception:
+        pass
+
+    try:
+        up = fetch_upgrade_path_info(version, 'SANtricity')
+        if up and up.get('recommendedTarget'):
+            result['upgradePath'] = up
+            result['sources'].append('docs.netapp.com (upgrade)')
+    except Exception:
+        pass
+
+    try:
+        bps = fetch_best_practice_guides(version, 'SANtricity')
+        if bps:
+            result['bestPractices'] = bps
+            result['sources'].append('docs.netapp.com (TRs)')
+    except Exception:
+        pass
+
+    # ── Motivation ────────────────────────────────────────────────────────────
+    parts = []
+    if result['knownIssues']:
+        parts.append(f"{len(result['knownIssues'])} known issue(s)")
+    if result['relatedCVEs']:
+        parts.append(f"{len(result['relatedCVEs'])} CVE(s) found via NVD")
+    if result['relatedAdvisories']:
+        parts.append(f"{len(result['relatedAdvisories'])} PSIRT advisory/advisories")
+    if result.get('kbArticles'):
+        parts.append(f"{len(result['kbArticles'])} KB article(s)")
+    if result.get('upgradePath') and result['upgradePath'].get('recommendedTarget'):
+        parts.append(f"Upgrade path available")
+    if result.get('bestPractices'):
+        parts.append(f"{len(result['bestPractices'])} best practice guide(s)")
+        
+    result['upgradeMotivation'] = '. '.join(parts) if parts else 'No major issues found in public sources for this version.'
+
+    return result if result['sources'] else None
+
+def fetch_kb_articles(version, platform='ONTAP'):
+    articles = []
+    try:
+        urls = []
+        if platform == 'StorageGRID':
+            urls.append('https://kb.netapp.com/hybrid_cloud_infrastructure/StorageGRID/')
+        else:
+            urls.append(f'https://kb.netapp.com/onprem/ontap/da/NAS/ONTAP_{version}_troubleshooting')
+            urls.append(f'https://kb.netapp.com/?q=ONTAP+{version}+issue')
+            ver_m = _re.match(r'^(\d+)\.(\d+)', version)
+            if ver_m:
+                urls.append(f'https://kb.netapp.com/on-prem/ontap/os/ONTAP_{ver_m.group(1)}_{ver_m.group(2)}')
+
+        for url in urls:
+            time.sleep(1.0)
+            text, err = _enrich_fetch(url)
+            if not text or err:
+                continue
+            
+            matches = _re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(?:<[^>]+>)*([^<]+)(?:<[^>]+>)*</a>', text)
+            for href, title in matches:
+                title = title.strip()
+                if not title or len(title) < 5 or title.lower() in ('home', 'login', 'search'): continue
+                if href.startswith('/'):
+                    href = 'https://kb.netapp.com' + href
+                articles.append({
+                    'id': f"kb-{len(articles)}",
+                    'title': title,
+                    'summary': 'Found matching KB article',
+                    'remediation': 'See article for details.',
+                    'url': href,
+                    'category': 'Troubleshooting'
+                })
+                if len(articles) >= 8:
+                    break
+            if len(articles) >= 8:
+                break
+    except Exception:
+        pass
+    print(f"  [ENRICH] KB Articles for {platform} {version}: {len(articles)} found", flush=True)
+    return articles[:8]
+
+def fetch_upgrade_path_info(current_version, platform='ONTAP'):
+    res = {
+        'currentVersion': current_version,
+        'recommendedTarget': '',
+        'directUpgradeSupported': False,
+        'prerequisites': [],
+        'notes': [],
+        'upgradeGuideUrl': ''
+    }
+    try:
+        if platform == 'StorageGRID':
+            url = 'https://docs.netapp.com/us-en/storagegrid/upgrade/index.html'
+            ver_regex = r'1[12]\.\d+\.\d+'
+        elif platform == 'SANtricity':
+            url = 'https://docs.netapp.com/us-en/e-series-santricity/whats-new.html'
+            ver_regex = r'1[12]\.\d+(?:\.\d+)?'
+        else:
+            url = 'https://docs.netapp.com/us-en/ontap/upgrade/concept_upgrade_paths.html'
+            ver_regex = r'9\.\d+\.\d+'
+            
+        time.sleep(1.0)
+        text, err = _enrich_fetch(url)
+        res['upgradeGuideUrl'] = url
+        if text and not err:
+            ver_m = _re.match(r'^(\d+)\.(\d+)', current_version)
+            if ver_m:
+                maj_min = f"{ver_m.group(1)}.{ver_m.group(2)}"
+                if maj_min in text:
+                    res['notes'].append(f"Found upgrade path details for {maj_min}")
+                    res['directUpgradeSupported'] = True
+            
+            versions = _re.findall(ver_regex, text)
+            if versions:
+                def _vkey(v):
+                    p = v.split('.')
+                    return tuple(int(x) if x.isdigit() else 0 for x in p)
+                versions.sort(key=_vkey, reverse=True)
+                # Don't recommend the current version as the target
+                target = versions[0]
+                cur_m = _re.match(r'^(\d+\.\d+)', current_version)
+                tgt_m = _re.match(r'^(\d+\.\d+)', target)
+                if cur_m and tgt_m and cur_m.group(1) != tgt_m.group(1):
+                    res['recommendedTarget'] = target
+                elif len(versions) > 1:
+                    res['recommendedTarget'] = target
+                else:
+                    res['recommendedTarget'] = target
+    except Exception:
+        pass
+    print(f"  [ENRICH] Upgrade path info for {platform} {current_version}: {'Found' if res['recommendedTarget'] else 'Not found'}", flush=True)
+    return res
+
+def fetch_best_practice_guides(version, platform='ONTAP'):
+    guides = []
+    try:
+        urls = [
+            'https://docs.netapp.com/us-en/ontap/concepts/index.html',
+            'https://docs.netapp.com/us-en/ontap/security/index.html',
+            'https://docs.netapp.com/us-en/ontap/performance/index.html'
+        ]
+        
+        time.sleep(1.0)
+        tr_text, err = _enrich_fetch('https://www.netapp.com/media/10720-tr4569.pdf', timeout=5)
+        if not err:
+            guides.append({
+                'trNumber': 'TR-4569',
+                'title': 'Security Hardening Guide for ONTAP 9',
+                'summary': 'Best practices for securing ONTAP systems',
+                'url': 'https://www.netapp.com/media/10720-tr4569.pdf',
+                'relevantFeatures': ['Security', 'Hardening']
+            })
+
+        for url in urls:
+            if len(guides) >= 6: break
+            time.sleep(1.0)
+            text, err = _enrich_fetch(url)
+            if not text or err:
+                continue
+                
+            matches = _re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(?:<[^>]+>)*([^<]+)(?:<[^>]+>)*</a>', text)
+            for href, title in matches:
+                title = title.strip()
+                if 'best practice' in title.lower() or 'technical report' in title.lower() or ' TR' in title:
+                    if href.startswith('/'):
+                        href = 'https://docs.netapp.com' + href
+                    guides.append({
+                        'trNumber': 'TR-Unknown',
+                        'title': title,
+                        'summary': f"Best practice guide found on {url.split('/')[-2]}",
+                        'url': href,
+                        'relevantFeatures': [url.split('/')[-2].capitalize()]
+                    })
+                    if len(guides) >= 6:
+                        break
+    except Exception:
+        pass
+    print(f"  [ENRICH] Best practice guides for {platform} {version}: {len(guides)} found", flush=True)
+    return guides[:6]
+
+def fetch_latest_version_catalog():
+    catalog = {
+        'ontap': [],
+        'storagegrid': [],
+        'santricity': [],
+        'fetchedAt': datetime.now(timezone.utc).isoformat()
+    }
+    def _vkey(v):
+        p = v.split('.')
+        return tuple(int(x) if x.isdigit() else 0 for x in p)
+
+    # ── ONTAP: Try endoflife.date API first (structured JSON, no WAF) ──
+    ontap_found = False
+    try:
+        time.sleep(0.5)
+        eol_raw, _ = _enrich_fetch('https://endoflife.date/api/netapp-ontap.json')
+        if eol_raw:
+            eol_data = json.loads(eol_raw)
+            if isinstance(eol_data, list) and eol_data:
+                ontap_versions = []
+                for entry in eol_data:
+                    cycle = entry.get('cycle', '')
+                    if _re.match(r'^9\.\d{1,2}\.\d+', cycle):
+                        ontap_versions.append(cycle)
+                if ontap_versions:
+                    ontap_versions = sorted(set(ontap_versions), key=_vkey, reverse=True)
+                    catalog['ontap'] = ontap_versions[:20]
+                    ontap_found = True
+    except Exception:
+        pass
+
+    # ── ONTAP fallback: PyPI netapp-ontap SDK releases ──
+    if not ontap_found:
+        try:
+            time.sleep(0.5)
+            pypi_raw, _ = _enrich_fetch('https://pypi.org/pypi/netapp-ontap/json')
+            if pypi_raw:
+                pypi_data = json.loads(pypi_raw)
+                releases = pypi_data.get('releases', {})
+                ontap_versions = []
+                for ver in releases.keys():
+                    m = _re.match(r'^(9\.\d{1,2}\.\d+)', ver)
+                    if m:
+                        ontap_versions.append(m.group(1))
+                if ontap_versions:
+                    ontap_versions = sorted(set(ontap_versions), key=_vkey, reverse=True)
+                    catalog['ontap'] = ontap_versions[:20]
+                    ontap_found = True
+        except Exception:
+            pass
+
+    # ── ONTAP fallback: docs.netapp.com (may 403) ──
+    if not ontap_found:
+        try:
+            time.sleep(1.0)
+            ontap_text, _ = _enrich_fetch('https://docs.netapp.com/us-en/ontap/release-notes/index.html')
+            if ontap_text:
+                ontap_raw = _re.findall(r'\b(9\.(?:[3-9]|1[0-9])\.\d{1})\b', ontap_text)
+                ontap_versions = sorted(set(ontap_raw), key=_vkey, reverse=True)
+                catalog['ontap'] = ontap_versions[:20]
+        except Exception:
+            pass
+
+    # ── StorageGRID: docs.netapp.com (no alternative API available) ──
+    try:
+        time.sleep(1.0)
+        sg_text, _ = _enrich_fetch('https://docs.netapp.com/us-en/storagegrid/release-notes/index.html')
+        if sg_text:
+            sg_raw = _re.findall(r'\b(1[12]\.\d{1,2}(?:\.\d{1,2})?)\b', sg_text)
+            sg_versions = sorted(set(v for v in sg_raw if _vkey(v)[1] < 20), key=_vkey, reverse=True)
+            catalog['storagegrid'] = sg_versions[:20]
+    except Exception:
+        pass
+
+    # ── SANtricity: docs.netapp.com ──
+    try:
+        time.sleep(1.0)
+        san_text, _ = _enrich_fetch('https://docs.netapp.com/us-en/e-series-santricity/whats-new.html')
+        if san_text:
+            san_raw = _re.findall(r'\b(1[12]\.\d{1,2}(?:\.\d{1,2})?)\b', san_text)
+            san_versions = sorted(set(v for v in san_raw if _vkey(v)[1] < 100), key=_vkey, reverse=True)
+            catalog['santricity'] = san_versions[:20]
+    except Exception:
+        pass
+
+    print(f"  [ENRICH] Version Catalog refreshed. ONTAP: {len(catalog['ontap'])}, SG: {len(catalog['storagegrid'])}, SAN: {len(catalog['santricity'])}", flush=True)
+    return catalog
+
+
+
+# Version types that are ALWAYS fetched in background — never block the server thread
+_VERSION_ENRICH_TYPES = {'ontap-version', 'sg-version', 'santricity-version'}
+
+
+def handle_enrich_request(params, db):
+    """
+    Main dispatcher for /api/enrich. Returns a JSON-serializable dict.
+
+    Version enrichment (ontap-version, sg-version, santricity-version):
+      Cache-only. Returns {status:'pending'} on miss — the background thread
+      (_enrich_all_versions) does the actual fetching after every harvest.
+      This keeps the server non-blocking (it is single-threaded).
+
+    CVE / advisory enrichment:
+      Fetches live — these are targeted NVD/PSIRT JSON calls, fast, user-initiated.
+
+    params: dict from parse_qs (values are lists)
+    db: sqlite3 connection
+    """
+    enrich_type = (params.get('type', [''])[0] or '').strip()
+    item_id = (params.get('id', params.get('ver', ['']))[0] or '').strip()
+    nvd_key = (params.get('apiKey', [''])[0] or '').strip() or None
+
+    if not enrich_type or not item_id:
+        return {'status': 'error', 'error': 'Missing type or id parameter'}
+
+    # Sanitize: only allow safe characters in identifiers
+    if not _re.match(r'^[A-Za-z0-9.:\-_/ ]+$', item_id):
+        return {'status': 'error', 'error': 'Invalid id format'}
+
+    cache_key = f'{enrich_type}:{item_id}'
+
+    # ── Always check cache first (applies to all types) ──────────────────────
+    row = db.execute(
+        'SELECT result_json, fetched_at, source FROM enrich_cache WHERE cache_key = ?',
+        (cache_key,)
+    ).fetchone()
+    if row:
+        try:
+            data = json.loads(row[0])
+            return {'status': 'ok', 'source': row[2], 'cached': True, 'fetched_at': row[1], 'data': data}
+        except Exception:
+            pass  # corrupt entry — fall through
+
+    if enrich_type in _VERSION_ENRICH_TYPES:
+        # Cache miss — try a synchronous fetch as fallback so the first
+        # request returns data instead of always saying 'pending'.
+        # This blocks the single-threaded server for up to ~15s but only
+        # happens once per version (result is cached for subsequent calls).
+        data = None
+        try:
+            if enrich_type == 'ontap-version':
+                data = fetch_ontap_version_info(item_id)
+            elif enrich_type == 'sg-version':
+                data = fetch_sg_version_info(item_id)
+            elif enrich_type == 'santricity-version':
+                data = fetch_santricity_version_info(item_id)
+        except Exception as _fe:
+            print(f"  [ENRICH] Sync fallback for {cache_key} failed: {_fe}", flush=True)
+
+        if data:
+            fetched_at = datetime.now(timezone.utc).isoformat()
+            try:
+                db.execute(
+                    'INSERT OR REPLACE INTO enrich_cache (cache_key, result_json, fetched_at, source) VALUES (?, ?, ?, ?)',
+                    (cache_key, json.dumps(data), fetched_at, 'docs.netapp.com')
+                )
+                db.commit()
+            except Exception:
+                pass
+            return {'status': 'ok', 'source': 'docs.netapp.com', 'cached': False, 'fetched_at': fetched_at, 'data': data}
+
+        # Fetch failed — fall back to 'pending' (background thread will retry)
+        return {
+            'status': 'pending',
+            'message': 'Version enrichment fetch attempted but returned no data. '
+                       'Background sync thread will retry.',
+            'cache_key': cache_key
+        }
+
+    # ── CVE / advisory: fetch live (fast, targeted JSON endpoints) ────────────
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    data = None
+    source = 'unknown'
+
+    if enrich_type == 'cve':
+        source = 'nvd'
+        data = fetch_cve_nvd(item_id, api_key=nvd_key)
+    elif enrich_type == 'ntap-advisory':
+        source = 'netapp-psirt'
+        data = fetch_netapp_psirt(item_id)
+    else:
+        return {'status': 'error', 'error': f'Unknown enrich type: {enrich_type}'}
+
+    if data is None:
+        return {'status': 'error', 'source': source, 'cached': False, 'error': 'Fetch failed or no data returned'}
+
+    # Store in cache
+    try:
+        db.execute(
+            'INSERT OR REPLACE INTO enrich_cache (cache_key, result_json, fetched_at, source) VALUES (?, ?, ?, ?)',
+            (cache_key, json.dumps(data), fetched_at, source)
+        )
+        db.commit()
+    except Exception:
+        pass
+
+    return {'status': 'ok', 'source': source, 'cached': False, 'fetched_at': fetched_at, 'data': data}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# HTTP Request Handler
+# ─────────────────────────────────────────────────────────────────────
+
+
+# ---- Local-only access control -------------------------------------------------------------------------------------
+# The dashboard server listens on 127.0.0.1, but a web page open in the user's browser can still send requests to it. These checks keep
+# other sites (cross-origin requests, DNS rebinding) away from the API and from files such as aiq_config.json (refresh tokens) and the cache.
+_LOCAL_HOSTS = ('127.0.0.1', 'localhost', '[::1]')
+_STATIC_FILES = ('/index.html', '/index_src.html', '/app.js', '/styles.css', '/chart.js', '/pptxgen.bundle.js', '/version.json', '/favicon.ico')
+
+_ALLOWED_HOSTS = {h.strip().lower() for h in (os.environ.get("ARIA_ALLOWED_HOSTS") or "").split(",") if h.strip()}
+
+def _host_name(host):
+    host = (host or '').strip().lower()
+    return host.split(']')[0] + ']' if host.startswith('[') else host.rsplit(':', 1)[0] if ':' in host else host
+
+def _host_allowed(host):
+    name = _host_name(host)
+    return name in _LOCAL_HOSTS or name in _ALLOWED_HOSTS or '*' in _ALLOWED_HOSTS
+
+def _request_is_local(headers):
+    """The request is for a host name ARIA serves (this machine, or the names in ARIA_ALLOWED_HOSTS) and, when it carries an
+    Origin, the page that sent it came from that same host. Keeps other web sites (cross-origin requests, DNS rebinding) out."""
+    host = (headers.get('Host') or '').strip().lower()
+    if not _host_allowed(host):
+        return False
+    origin = headers.get('Origin')
+    if origin is not None:
+        o = origin.split('://', 1)[-1].strip().lower()
+        if o != host and _host_name(o) not in _ALLOWED_HOSTS:
+            return False   # a request made by a page from another origin (including a null origin)
+    return True
+
+def _static_path_allowed(raw_path):
+    p = urllib.parse.unquote(raw_path.split('?', 1)[0].split('#', 1)[0])
+    if '..' in p or '\\' in p or '\x00' in p:
+        return False
+    if p in ('', '/') or p in _STATIC_FILES or p.startswith('/docs/images/'):
+        return True
+    # reference data files only: never the account configuration or the cache
+    return p.startswith('/data/') and (p.endswith('.json') or p == '/data/reference_library.js') and p.count('/') == 2 and 'config' not in p.lower()
+
+class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+    # Fixed content types. Python takes them from the Windows registry, where another program may have registered .js or .css as text/plain;
+    # with the X-Content-Type-Options: nosniff header the browser then refuses to run the script or apply the style and the page stays blank.
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(SCRIPT_DIR), **kwargs)
+
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
+                      '.json': 'application/json', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.map': 'application/json'}
+
+    def guess_type(self, path):
+        """Override to force UTF-8 charset on all text and JavaScript responses.
+
+        Python's SimpleHTTPRequestHandler serves static files without a charset
+        declaration by default.  Corporate-network browsers (and DLP/security
+        proxies) may then interpret the file as ISO-8859-1, which corrupts the
+        12,000+ non-ASCII Unicode characters (emoji, box-drawing dividers, etc.)
+        embedded in app.js.  The resulting decode error is a SyntaxError at the
+        very start of script execution — before any function definition is
+        hoisted — which is why the browser reports "switchTab is not defined"
+        with a blank Source field (no filename, because the script never parsed).
+
+        Adding '; charset=utf-8' here fixes the corporate-network instance
+        without touching any application logic.
+        """
+        ctype = super().guess_type(path)
+        if not ctype:
+            return ctype
+        # text/* types (text/html, text/css, text/plain …)
+        if ctype.startswith('text/') and 'charset' not in ctype:
+            return ctype + '; charset=utf-8'
+        # JavaScript — may be reported as application/javascript or text/javascript
+        if ctype in ('application/javascript', 'text/javascript'):
+            return ctype + '; charset=utf-8'
+        return ctype
+
+    def end_headers(self):
+        # Inject CORS headers for local origin access
+        pass  # same-origin only
+        pass
+        pass
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Expires', '0')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        # No cross-origin access is offered: a preflight gets an empty answer without any CORS allowance.
+        self.send_response(204)
+        self.end_headers()
+
+    # ---- sign-in and access control (see aria_auth.py) ---------------------------------------------------------------------
+    def _send_bytes(self, code, body, ctype='text/plain; charset=utf-8', extra=None):
+        self.send_response(code)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        for k, v in (extra or []):
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != 'HEAD':
+            self.wfile.write(body)
+
+    def _send_json(self, code, obj, extra=None):
+        self._send_bytes(code, json.dumps(obj).encode('utf-8'), 'application/json', extra)
+
+    def _is_https(self):
+        return (self.headers.get('X-Forwarded-Proto') or '').lower() == 'https' or isinstance(self.connection, ssl.SSLSocket)
+
+    def _read_form(self):
+        n = min(int(self.headers.get('Content-Length') or 0), 8192)
+        raw = self.rfile.read(n).decode('utf-8', errors='replace') if n else ''
+        if 'json' in (self.headers.get('Content-Type') or ''):
+            try:
+                d = json.loads(raw or '{}')
+                return d if isinstance(d, dict) else {}
+            except Exception:
+                return {}
+        return {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
+
+    def _handle_auth_mode(self, method, user):
+        """GET /api/auth/mode: whether sign-in is on, and whether the choice can be changed here. POST {"mode": "local"|"none"} stores the choice for
+        the next start (the program has to be restarted to apply it). It cannot be changed here when ARIA_AUTH is set in the environment."""
+        info = {'mode': AUTH.mode, 'source': AUTH.mode_source, 'stored': AUTH.saved_mode,
+                'restart_needed': AUTH.mode in ('none', 'local') and AUTH.saved_mode != AUTH.mode and AUTH.mode_source != 'environment',
+                'can_change': AUTH.mode_source != 'environment' and AUTH.mode != 'header'}
+        if method == 'GET':
+            self._send_json(200, info)
+            return
+        if method != 'POST':
+            self._send_json(405, {'error': 'Method not allowed'})
+            return
+        if AUTH.mode != 'none' and user['role'] != 'admin':
+            self._send_json(403, {'error': 'Administrator only'})
+            return
+        if not info['can_change']:
+            self._send_json(409, {'error': 'Sign-in is set by the ARIA_AUTH setting of the environment (or by your single sign-on proxy); change it there.'})
+            return
+        new = str(self._read_form().get('mode') or '')
+        if new not in ('local', 'none'):
+            self._send_json(400, {'error': 'mode must be local or none'})
+            return
+        if new == 'none' and BIND_ADDRESS not in ('127.0.0.1', 'localhost', '::1') and os.environ.get('ARIA_INSECURE_NO_AUTH') != '1':
+            self._send_json(409, {'error': 'Sign-in cannot be switched off while ARIA listens on a network address.'})
+            return
+        aria_auth.save_auth_setting(DATA_ROOT, new)
+        print(f"  [AUTH] sign-in {'switched on' if new == 'local' else 'switched off'} for the next start by {user['name']}", flush=True)
+        AUTH.saved_mode = new
+        info['stored'] = new
+        info['restart_needed'] = new != AUTH.mode
+        self._send_json(200, info)
+
+    def _serve_index(self):
+        """The page, with ?v=<modification time> on each of the program's own files, so a browser fetches a file again as soon as it changes."""
+        try:
+            html = (SCRIPT_DIR / 'index_src.html').read_text(encoding='utf-8')
+        except Exception:
+            self.send_error(404, 'Not Found')
+            return
+        def stamp(m):
+            f = SCRIPT_DIR / m.group(2)
+            try:
+                v = str(int(f.stat().st_mtime))
+            except OSError:
+                v = m.group(3)
+            return f'{m.group(1)}="{m.group(2)}?v={v}"'
+        html = re.sub(r'((?:src|href))="([^"?]+)\?v=([^"]*)"', stamp, html)
+        self._send_bytes(200, html.encode('utf-8'), 'text/html; charset=utf-8')
+
+    def _gate(self, method):
+        """Host check, health probe, sign-in and role check. Returns True when the request may go on to its handler."""
+        parsed = urllib.parse.urlsplit(self.path)
+        path = parsed.path
+        if path == '/healthz':
+            self._send_bytes(200, b'ok')
+            return False
+        if not _request_is_local(self.headers):
+            self.send_error(403, 'Host not allowed')
+            return False
+        self._user = {'name': 'local', 'role': 'admin'}
+        if AUTH.mode == 'none':
+            if path == '/api/auth/me':
+                self._send_json(200, {'user': 'local', 'role': 'admin', 'mode': 'none'})
+                return False
+            if path == '/api/auth/mode':
+                self._handle_auth_mode(method, self._user)
+                return False
+            return True
+        ip = self.client_address[0]
+        if AUTH.mode == 'local' and path == '/login':
+            if method == 'POST':
+                f = self._read_form()
+                user, err = AUTH.login(ip, str(f.get('username') or ''), str(f.get('password') or ''))
+                wants_json = 'json' in (self.headers.get('Content-Type') or '') or 'application/json' in (self.headers.get('Accept') or '')
+                if user:
+                    print(f"  [AUTH] sign-in: {user['name']} ({user['role']}) from {ip}", flush=True)
+                    cookie = AUTH.cookie_header(AUTH.make_cookie_value(user), self._is_https())
+                    if wants_json:
+                        self._send_json(200, {'user': user['name'], 'role': user['role'], 'must_change': bool(user.get('must_change'))}, [('Set-Cookie', cookie)])
+                    else:
+                        self._send_bytes(303, b'', extra=[('Set-Cookie', cookie), ('Location', '/change-password' if user.get('must_change') else aria_auth.safe_next(f.get('next')))])
+                else:
+                    print(f"  [AUTH] failed sign-in for '{str(f.get('username') or '')[:40]}' from {ip}", flush=True)
+                    if wants_json:
+                        self._send_json(401, {'error': err})
+                    else:
+                        self._send_bytes(401, aria_auth.login_page(aria_auth.safe_next(f.get('next')), err), 'text/html; charset=utf-8')
+                return False
+            q = urllib.parse.parse_qs(parsed.query)
+            self._send_bytes(200, aria_auth.login_page(aria_auth.safe_next((q.get('next') or ['/'])[0])), 'text/html; charset=utf-8')
+            return False
+        if AUTH.mode == 'local' and path == '/logout' and method == 'POST':
+            self._send_bytes(303, b'', extra=[('Set-Cookie', AUTH.clear_cookie_header()), ('Location', '/login')])
+            return False
+        user = AUTH.identify(self.headers, ip)
+        if not user:
+            html_nav = method == 'GET' and not path.startswith('/api/') and path not in ('/aria-api.js',) and 'text/html' in (self.headers.get('Accept') or '')
+            if html_nav and AUTH.mode == 'local':
+                self._send_bytes(303, b'', extra=[('Location', '/login?next=' + urllib.parse.quote(self.path, safe=''))])
+            elif html_nav:
+                self._send_bytes(403, b'Not signed in. Open ARIA through the single sign-on address.')
+            else:
+                self._send_json(401, {'error': 'Not signed in'})
+            return False
+        if user.get('must_change') and path not in ('/api/auth/me', '/api/auth/password', '/logout', '/change-password', '/healthz'):
+            if method == 'GET' and not path.startswith('/api/') and 'text/html' in (self.headers.get('Accept') or ''):
+                self._send_bytes(303, b'', extra=[('Location', '/change-password')])
+            else:
+                self._send_json(403, {'error': 'password_change_required', 'message': 'Choose a new password first'})
+            return False
+        self._user = user
+        if path == '/api/auth/me':
+            self._send_json(200, {'user': user['name'], 'role': user['role'], 'mode': AUTH.mode, 'must_change': bool(user.get('must_change'))})
+            return False
+        if path == '/api/auth/mode':
+            self._handle_auth_mode(method, user)
+            return False
+        if AUTH.mode == 'local' and path == '/change-password' and method == 'GET':
+            self._send_bytes(200, aria_auth.change_page(user['name']), 'text/html; charset=utf-8')
+            return False
+        if AUTH.mode == 'local' and path == '/api/auth/password' and method == 'POST':
+            f = self._read_form()
+            try:
+                rec = AUTH.change_password(user['name'], str(f.get('old') or ''), str(f.get('new') or ''))
+                print(f"  [AUTH] {user['name']} changed their password", flush=True)
+                cookie = AUTH.cookie_header(AUTH.make_cookie_value(rec), self._is_https())
+                self._send_json(200, {'ok': True}, [('Set-Cookie', cookie)])
+            except PermissionError as e:
+                print(f"  [AUTH] password change refused for {user['name']} (wrong current password) from {ip}", flush=True)
+                self._send_json(403, {'error': str(e)})
+            except ValueError as e:
+                self._send_json(400, {'error': str(e)})
+            return False
+        if path.startswith('/api/auth/users'):
+            if user['role'] != 'admin' or AUTH.mode != 'local':
+                self._send_json(403, {'error': 'Administrator only'})
+                return False
+            try:
+                if method == 'GET':
+                    self._send_json(200, {'users': AUTH.list_users()})
+                elif method == 'POST':
+                    f = self._read_form()
+                    nm = str(f.get('name') or '')
+                    pw = f.get('password') or None
+                    role = f.get('role') or None
+                    mc = f.get('must_change')
+                    mc = None if mc is None else (str(mc).lower() in ('1', 'true', 'yes'))
+                    if pw and AUTH.get_user(nm) is None and mc is None:
+                        mc = True        # a new account starts with a temporary password
+                    if pw and mc is None:
+                        mc = True        # an administrator-set password is temporary
+                    AUTH.set_user(nm, pw, role, mc)
+                    print(f"  [AUTH] {user['name']} {'set the password of' if pw else 'updated'} user {nm}{' (role ' + role + ')' if role else ''}", flush=True)
+                    self._send_json(200, {'ok': True})
+                elif method == 'DELETE':
+                    name = (urllib.parse.parse_qs(parsed.query).get('name') or [''])[0]
+                    ok = AUTH.remove_user(name)
+                    print(f"  [AUTH] {user['name']} removed user {name}", flush=True)
+                    self._send_json(200 if ok else 404, {'ok': ok})
+                else:
+                    self._send_json(405, {'error': 'Method not allowed'})
+            except ValueError as e:
+                self._send_json(400, {'error': str(e)})
+            return False
+        if not AUTH.allowed(user['role'], method, path, parsed.query):
+            print(f"  [AUTH] denied {method} {path} for {user['name']} ({user['role']})", flush=True)
+            self._send_json(403, {'error': 'Your role does not allow this'})
+            return False
+        if method != 'GET' and path.startswith('/api/') and user['role'] == 'admin':
+            print(f"  [AUDIT] {user['name']} {method} {path}", flush=True)
+        return True
+
+    def end_headers(self):
+        # Files of the program itself are re-checked on every load (a cheap 304 when unchanged), so a browser never keeps showing an old
+        # style sheet or script after ARIA has been updated.
+        if not self.path.startswith('/api/') and not any(b.lower().startswith(b'cache-control') for b in getattr(self, '_headers_buffer', [])):
+            self.send_header('Cache-Control', 'no-cache')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'SAMEORIGIN')
+        self.send_header('Referrer-Policy', 'same-origin')   # (no-referrer would make browsers send 'Origin: null' on form posts)
+        super().end_headers()
+
+    def do_HEAD(self):
+        if self._gate('HEAD'):
+            super().do_HEAD()
+
+    def do_GET(self):
+        if not self._gate('GET'):
+            return
+        # Serve the development HTML (external app.js) instead of the
+        # compiled single-file index.html, so code changes take effect
+        # without recompiling.
+        if self.path in ('/', '/index.html', '/index.html?'):
+            self._serve_index()
+            return
+        if self.path.split('?', 1)[0] == '/aria-api.js':
+            # the browser reads the same api_queries.json (mutations, endpoints, diagnostics) so nothing about the API is stored in app.js
+            try:
+                body = ('window.ARIA_API = ' + json.dumps(_api_cfg()) + ';').encode('utf-8')
+                self.send_response(200)
+            except Exception as e:
+                body = ('window.ARIA_API = null; console.error(' + json.dumps(str(e)) + ');').encode('utf-8')
+                self.send_response(500)
+            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith('/api/harvest'):
+            self.handle_harvest()
+        elif self.path.startswith('/api/sync-status'):
+            self.handle_sync_status()
+        elif self.path.startswith('/api/resolve-watchlist'):
+            self.handle_resolve_watchlist()
+        elif self.path.startswith('/api/config'):
+            self.handle_config_get()
+        elif self.path.startswith('/api/watchlists'):
+            self.handle_watchlists()
+        elif self.path == '/api/eoa-database':
+            self.handle_eoa_database_get()
+        elif self.path == '/api/imt-interop':
+            self.handle_imt_interop_get()
+        elif self.path == '/api/reference-library/status':
+            self.handle_reference_status_get()
+        elif self.path == '/api/knowledge-base':
+            self.handle_knowledge_base_get()
+        elif self.path == '/api/enrich/status':
+            self.handle_enrich_status()
+        elif self.path.startswith('/api/enrich'):
+            self.handle_enrich()
+        elif self.path == '/api/auto-harvest/status':
+            self.handle_auto_harvest_status()
+        elif self.path.startswith('/api/bulletins/scan'):
+            self.handle_bulletins_scan()
+        elif self.path.startswith('/api/bulletins'):
+            self.handle_bulletins_get()
+        elif self.path.startswith('/api/history/trend'):
+            self.handle_fleet_trend()
+        elif self.path.startswith('/api/history/'):
+            self.handle_system_history()
+        elif self.path.startswith('/api/asup/imports'):
+            self.handle_asup_list()
+        elif self.path == '/api/asup/import':
+            self.handle_asup_import()
+        elif self.path == '/api/asup/customers':
+            self.handle_asup_customers()
+        elif self.path.startswith('/api/firmware-probe'):
+            self.handle_firmware_probe()
+        elif self.path.startswith('/api/tracker'):
+            self.handle_tracker_list()
+        elif self.path.startswith('/api/plan-progress'):
+            self.handle_plan_progress_list()
+        elif self.path.startswith('/api/perf/'):
+            self.handle_perf('GET')
+        elif self.path.startswith('/api/'):
+            self.handle_proxy('GET')
+        elif self.path.split('?', 1)[0] == '/data/reference_library.js' and not (SCRIPT_DIR / 'data' / 'reference_library.js').exists():
+            # The reference library is built on this machine and is not part of the repository: without it the app starts with empty tables.
+            body = b'window.ARIA_REF = {};'
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif not _static_path_allowed(self.path):
+            self.send_error(404, 'Not Found')
+        else:
+            super().do_GET()
+
+    def handle_resolve_watchlist(self):
+        """GET /api/resolve-watchlist?watchlistId=xxx — resolve system serials for a watchlist via GQL."""
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        watchlist_id = params.get("watchlistId", [None])[0]
+
+        if not watchlist_id:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "watchlistId parameter required"}).encode("utf-8"))
+            return
+
+        try:
+            # Try every configured account's token, not just the legacy
+            # top-level one -- in a multi-account setup a watchlist ID
+            # typically belongs to exactly one account's Active IQ org, and
+            # using the wrong account's token either 400s ("watchlist does
+            # not exist") or, for accounts whose org happens to reuse the
+            # numeric ID for something else, silently returns the wrong
+            # systems. Confirmed live: resolving a real watchlist against the
+            # wrong account's token failed with a GraphQL error whose
+            # resulting `data.systems` is null, which the old single-token
+            # version then crashed on ('NoneType' object has no attribute
+            # 'get') instead of reporting the real error.
+            accounts = _get_accounts()
+            if not accounts:
+                raise Exception("No Active IQ accounts configured")
+
+            last_err = "No accounts could resolve this watchlist"
+            for acct in accounts:
+                refresh_token = acct.get("refreshToken")
+                if not refresh_token:
+                    continue
+                try:
+                    status, raw = _rest("access_token", refresh_token=refresh_token)
+                    if status != 200:
+                        last_err = f"[{acct.get('label')}] Token exchange failed: HTTP {status}"
+                        continue
+                    token_data = json.loads(raw.decode("utf-8", errors="replace"))
+                    token = token_data.get("access_token") if isinstance(token_data, dict) else None
+                    if not token:
+                        last_err = f"[{acct.get('label')}] No access token"
+                        continue
+
+                    serials = []
+                    cursor = None
+                    total = 0
+                    gql_err = None
+                    for page in range(50):  # Max 5000 systems per watchlist
+                        _, sys_resp = _gql(token, _Q("watchlist_system_serials_page", watchlist_id=watchlist_id, after=_A("after", cursor)))
+                        if not isinstance(sys_resp, dict) or sys_resp.get("errors"):
+                            gql_err = (sys_resp["errors"][0].get("message", "") if isinstance(sys_resp, dict) and sys_resp.get("errors") else "non-dict response")
+                            break
+                        sys_data = (sys_resp.get("data") or {}).get("systems") or {}
+                        systems_page = sys_data.get("systems") or [] if isinstance(sys_data, dict) else []
+                        for s in systems_page:
+                            sn = s.get("serialNumber") or ""
+                            if sn:
+                                serials.append(sn)
+                        new_cursor = sys_data.get("cursor") if isinstance(sys_data, dict) else None
+                        total = sys_data.get("totalCount", 0) if isinstance(sys_data, dict) else 0
+                        if not systems_page or not new_cursor or new_cursor == cursor:
+                            break
+                        cursor = new_cursor
+
+                    if gql_err:
+                        last_err = f"[{acct.get('label')}] {gql_err}"
+                        continue
+
+                    print(f"  [RESOLVE] Watchlist {watchlist_id}: {len(serials)} systems via account '{acct.get('label')}' (totalCount: {total})", flush=True)
+                    res_bytes = json.dumps({
+                        "watchlistId": watchlist_id, "systemSerials": serials, "totalCount": total,
+                        "accountId": acct.get("id"), "accountLabel": acct.get("label"),
+                    }).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(res_bytes)
+                    return
+                except Exception as _acct_err:
+                    last_err = f"[{acct.get('label')}] {_acct_err}"
+                    continue
+
+            raise Exception(last_err)
+        except Exception as e:
+            print(f"  [RESOLVE] Error: {e}", flush=True)
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e), "systemSerials": []}).encode("utf-8"))
+
+    def handle_sync_status(self):
+        """Return sync metadata as JSON — aggregated across all configured
+        accounts, plus a per-account breakdown for the Settings/Account UI."""
+        db = _init_db()
+        try:
+            meta = _get_sync_meta(db)
+            try:
+                all_cached = _load_all_accounts_meta(db)
+                configured_ids = {a["id"] for a in _get_accounts()} | {"default"}
+                all_cached = [(acct_id, m) for acct_id, m in all_cached if acct_id in configured_ids]
+                meta["accounts"] = [
+                    {
+                        "id": acct_id,
+                        "label": m.get("accountLabel"),
+                        "lastSync": m.get("harvested_at"),
+                        "systemCount": m.get("system_count", 0),
+                        "clusterCount": m.get("cluster_count", 0),
+                        "riskCount": m.get("risk_count", 0),
+                        "caseCount": m.get("case_count", 0),
+                    }
+                    for acct_id, m in all_cached
+                ]
+                if all_cached:
+                    meta["systemCount"] = sum(a["systemCount"] for a in meta["accounts"])
+                    meta["clusterCount"] = sum(a["clusterCount"] for a in meta["accounts"])
+                    meta["riskCount"] = sum(a["riskCount"] for a in meta["accounts"])
+                    meta["caseCount"] = sum(a["caseCount"] for a in meta["accounts"])
+                    meta["lastSync"] = max((a["lastSync"] or "" for a in meta["accounts"]), default=meta.get("lastSync")) or meta.get("lastSync")
+            except Exception as _acct_meta_err:
+                print(f"  [SYNC-STATUS] Per-account breakdown skipped: {_acct_meta_err}", flush=True)
+        finally:
+            db.close()
+        res_bytes = json.dumps(meta, default=str).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(res_bytes)
+
+    def handle_harvest(self):
+        """Server-side harvest with SQLite cache layer.
+        
+        Default: serve cached data instantly, trigger background re-sync.
+        With ?force=1: bypass cache, do full harvest synchronously.
+        """
+        # Parse query params
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        force = params.get("force", ["0"])[0] == "1"
+        # Optional ?account=<id> scopes the response to one configured account
+        # instead of the default merged cross-customer fleet view.
+        account_id_param = params.get("account", [None])[0]
+        # Support legacy single-ID query param or read all IDs from config
+        param_id = params.get("watchlistId", [None])[0]
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+            ids_str = cfg.get("watchlistIds") or cfg.get("watchlist_id") or ""
+            if not ids_str:
+                legacy = cfg.get("watchlistId") or ""
+                if legacy and legacy != "wl_prod" and not legacy.startswith("wl_"):
+                    ids_str = legacy
+            wl_ids = [w.strip() for w in ids_str.split(",") if w.strip()]
+
+        except Exception:
+            wl_ids = []
+        # Query param overrides config (for manual/test requests)
+        if param_id and param_id not in wl_ids:
+            wl_ids = [param_id]
+
+        try:
+            if force:
+                # Fire harvest in a background thread and return 202 immediately.
+                # NEVER run _do_full_harvest() synchronously in the request handler
+                # thread -- it takes ~2 min, clients time out, the resulting
+                # BrokenPipeError kills the handler and crashes the server.
+                scope_msg = f" ({len(wl_ids)} watchlist(s))" if wl_ids else " (all systems)"
+                print(f"  [HARVEST] Force sync requested{scope_msg} -- firing background thread", flush=True)
+                if not _is_syncing:
+                    t = threading.Thread(target=_background_sync, daemon=True)
+                    t.start()
+                    print("  [HARVEST] Background harvest thread started", flush=True)
+                else:
+                    print("  [HARVEST] Sync already in progress -- skipping new thread", flush=True)
+                # Return 202 immediately; client polls /api/sync-status for progress
+                self.send_response(202)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "started",
+                    "message": "Harvest running in background. Poll /api/sync-status for progress.",
+                    "isSyncing": True,
+                }).encode("utf-8"))
+                return
+
+            # Check cache first — merges every configured account by default;
+            # ?account=<id> scopes to just one.
+            db = _init_db()
+            try:
+                cached_result, metas = _get_merged_harvest(db, account_id_param)
+            finally:
+                db.close()
+
+            if cached_result:
+                # Serve cached data immediately
+                last_sync = max((m.get("harvested_at") or "" for m in metas), default="unknown") or "unknown"
+                sys_count = sum(m.get("system_count", 0) for m in metas)
+                print(f"  [CACHE] Serving cached data ({sys_count} systems across {len(metas)} account(s), synced: {last_sync})", flush=True)
+
+                # Inject cache metadata into response
+                cached_result["_cache"] = {
+                    "hit": True,
+                    "lastSync": last_sync,
+                    "durationMs": sum(m.get("duration_ms", 0) for m in metas),
+                    "accounts": [{"id": m.get("accountId"), "label": m.get("accountLabel"),
+                                  "lastSync": m.get("harvested_at"), "systemCount": m.get("system_count", 0)} for m in metas],
+                }
+
+                res_bytes = json.dumps(cached_result, default=str).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("X-Cache", "HIT")
+                self.send_header("X-Last-Sync", last_sync)
+                self.end_headers()
+                self.wfile.write(res_bytes)
+
+                # Trigger background re-sync (non-blocking)
+                if not _is_syncing:
+                    t = threading.Thread(target=_background_sync, daemon=True)
+                    t.start()
+                    print("  [CACHE] Background re-sync thread started", flush=True)
+                else:
+                    print("  [CACHE] Sync already in progress, skipping background sync", flush=True)
+
+                # Also trigger version enrichment for cached systems if needed.
+                # If enrichment cache is empty/stale, this populates it so version
+                # intel is available immediately rather than only after a full re-sync.
+                try:
+                    t2 = threading.Thread(
+                        target=_enrich_all_versions,
+                        args=(cached_result,),
+                        daemon=True
+                    )
+                    t2.start()
+                    print("  [CACHE] Version enrichment thread started for cached data", flush=True)
+                except Exception:
+                    pass
+                return
+
+            # No cache -- fire background harvest and return 202
+            scope_msg = f" ({len(wl_ids)} watchlist(s))" if wl_ids else " (all systems)"
+            print(f"  [CACHE] No cached data -- starting background harvest{scope_msg}", flush=True)
+            if not _is_syncing:
+                t = threading.Thread(target=_background_sync, daemon=True)
+                t.start()
+            self.send_response(202)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "started",
+                "message": "Initial harvest running in background. Poll /api/sync-status for progress.",
+                "isSyncing": True,
+                "systems": [],
+                "watchlists": [],
+            }).encode("utf-8"))
+
+        except Exception as e:
+            err_str = str(e)
+            is_setup_error = err_str.startswith("setup_required:")
+            if is_setup_error:
+                # Expected first-run condition — no traceback needed
+                print(f"  [HARVEST] Setup required: {err_str}", flush=True)
+            else:
+                import traceback
+                traceback.print_exc()
+                print(f"  [HARVEST] FAILED: {err_str}", flush=True)
+
+            # On failure, try to serve stale cache if available (skip for setup errors — no cache yet)
+            if not is_setup_error:
+                try:
+                    db = _init_db()
+                    try:
+                        cached_result, meta = _load_cached(db)
+                    finally:
+                        db.close()
+
+                    if cached_result:
+                        last_sync = meta.get("harvested_at", "unknown")
+                        print(f"  [CACHE] Serving stale cache after error (last sync: {last_sync})", flush=True)
+                        cached_result["_cache"] = {
+                            "hit": True,
+                            "stale": True,
+                            "lastSync": last_sync,
+                            "error": err_str,
+                        }
+                        res_bytes = json.dumps(cached_result, default=str).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("X-Cache", "STALE")
+                        self.send_header("X-Last-Sync", last_sync)
+                        self.end_headers()
+                        self.wfile.write(res_bytes)
+                        return
+                except Exception:
+                    pass
+
+            # Return structured error — needsSetup flag triggers the UI setup banner
+            human_msg = err_str.replace("setup_required: ", "") if is_setup_error else err_str
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "error",
+                "message": human_msg,
+                "needsSetup": is_setup_error,
+                "systems": [],
+                "watchlists": []
+            }).encode("utf-8"))
+
+    def do_POST(self):
+        if not self._gate('POST'):
+            return
+        if self.path == '/api/app/update':
+            self.handle_app_update()
+        elif self.path.startswith('/api/harvest'):
+            # POST /api/harvest and POST /api/harvest?force=1 both trigger harvest
+            self.handle_harvest()
+        elif self.path == '/api/config':
+            self.handle_config_post()
+        elif self.path.startswith('/api/bulletins'):
+            self.handle_bulletins_post()
+        elif self.path == '/api/enrich/scan':
+            self.handle_enrich_scan()
+        elif self.path == '/api/auto-harvest/run':
+            self.handle_auto_harvest_run()
+        elif self.path == '/api/asup/import':
+            self.handle_asup_import()
+        elif self.path == '/api/asup/associate':
+            self.handle_asup_associate()
+        elif self.path == '/api/history/trend':
+            self.handle_fleet_trend_post()
+        elif self.path == '/api/history/annotate':
+            self.handle_history_annotate()
+        elif self.path == '/api/webhook/test':
+            self.handle_webhook_test()
+        elif self.path == '/api/tracker/update':
+            self.handle_tracker_update()
+        elif self.path == '/api/tracker':
+            self.handle_tracker_upsert()
+        elif self.path == '/api/plan-progress':
+            self.handle_plan_progress_create()
+        elif self.path.startswith('/api/perf/'):
+            self.handle_perf('POST')
+        elif self.path.startswith('/api/') or self.path in ('/graphql', '/api/graphql'):
+            self.handle_proxy('POST')
+        else:
+            self.send_error(404, "Not Found")
+
+    def do_DELETE(self):
+        if not self._gate('DELETE'):
+            return
+        if self.path.startswith('/api/asup/imports'):
+            self.handle_asup_delete()
+        elif self.path.startswith('/api/tracker'):
+            self.handle_tracker_delete()
+        elif self.path.startswith('/api/plan-progress'):
+            self.handle_plan_progress_delete()
+        elif self.path.startswith('/api/perf/'):
+            self.handle_perf('DELETE')
+        else:
+            self.send_error(404, "Not Found")
+
+    def do_PUT(self):
+        if not self._gate('PUT'):
+            return
+        if self.path.startswith('/api/'):
+            self.handle_proxy('PUT')
+        else:
+            self.send_error(404, "Not Found")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # ASUP Offline Import Handlers
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _json_response(self, code, payload):
+        """Helper: send JSON response."""
+        body = json.dumps(payload, default=str).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        pass  # same-origin only
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_asup_import(self):
+        """POST /api/asup/import
+        Accepts the ASUP bundle as the raw POST body.
+        Headers: X-Filename, X-Customer-Name (optional)
+        Returns: { ok, system, coverage, warnings, error, matchInfo }
+          matchInfo: { type: 'api_synced'|'asup_import'|'new',
+                       existingSystem: {...}|null,
+                       existingCustomer: str, existingSite: str }
+        """
+        if not _ASUP_AVAILABLE:
+            self._json_response(503, {"ok": False, "error": "asup_parser.py not found on server"})
+            return
+
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length == 0:
+                self._json_response(400, {"ok": False, "error": "Empty request body"})
+                return
+            if content_length > 600 * 1024 * 1024:
+                self._json_response(413, {"ok": False, "error": "Bundle too large (600 MB limit)"})
+                return
+
+            data_bytes    = self.rfile.read(content_length)
+            filename      = self.headers.get("X-Filename", "bundle.7z")
+            customer_name = self.headers.get("X-Customer-Name", "").strip()
+
+            print(f"  [ASUP] Import request: {filename} ({len(data_bytes):,} bytes) customer='{customer_name}'", flush=True)
+
+            result = asup_parser.parse_bundle(filename, data_bytes, customer_name)
+
+            match_info = {"type": "new", "existingSystem": None,
+                          "existingCustomer": "", "existingSite": "", "existingNotes": ""}
+
+            if result["ok"] and result.get("system"):
+                system = result["system"]
+                serial = system.get("serialNumber", f"ASUP-{datetime.now(timezone.utc).isoformat()[:10]}")
+                now_str = datetime.now(timezone.utc).isoformat()
+
+                db = _init_db()
+                try:
+                    # ── 1. Check harvest_cache (AIQ-synced systems) ──────────────────
+                    cached_row = db.execute(
+                        "SELECT result_json FROM harvest_cache WHERE id = 1"
+                    ).fetchone()
+                    if cached_row:
+                        try:
+                            cached = json.loads(cached_row[0])
+                            for s in cached.get("systems", []):
+                                if s.get("serialNumber") == serial:
+                                    match_info["type"] = "api_synced"
+                                    match_info["existingSystem"] = {
+                                        "serialNumber":  s.get("serialNumber"),
+                                        "systemName":    s.get("systemName") or s.get("clusterName"),
+                                        "customerName":  s.get("customerName"),
+                                        "platform":      s.get("platform"),
+                                        "osVersion":     s.get("osVersion"),
+                                        "clusterRawCapacityTB": s.get("clusterRawCapacityTB"),
+                                    }
+                                    match_info["existingCustomer"] = s.get("customerName") or ""
+                                    print(f"  [ASUP] Matched serial {serial} -> AIQ system '{s.get('systemName')}'", flush=True)
+                                    break
+                        except Exception as me:
+                            print(f"  [ASUP] harvest_cache search error: {me}", flush=True)
+
+                    # ── 2. Check asup_imports (previous offline imports) ─────────────
+                    if match_info["type"] == "new":
+                        prev_row = db.execute(
+                            "SELECT customer_name, site_name, notes FROM asup_imports WHERE serial_number = ?",
+                            (serial,)
+                        ).fetchone()
+                        if prev_row:
+                            match_info["type"] = "asup_import"
+                            match_info["existingCustomer"] = prev_row[0] or ""
+                            match_info["existingSite"]     = prev_row[1] or ""
+                            match_info["existingNotes"]    = prev_row[2] or ""
+                            print(f"  [ASUP] Matched serial {serial} -> previous ASUP import", flush=True)
+
+                    # ── 3. Persist / update asup_imports ────────────────────────────
+                    # Preserve existing customer/site/notes if not overriding
+                    existing_assoc = db.execute(
+                        "SELECT customer_name, site_name, notes FROM asup_imports WHERE serial_number = ?",
+                        (serial,)
+                    ).fetchone()
+                    resolved_customer = (customer_name or
+                                         (existing_assoc[0] if existing_assoc else None) or
+                                         match_info["existingCustomer"] or
+                                         system.get("customerName") or "")
+
+                    db.execute("""
+                        INSERT INTO asup_imports
+                          (serial_number, system_json, coverage_json, customer_name,
+                           site_name, notes, filename, imported_at, matched_serial, match_type)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(serial_number) DO UPDATE SET
+                          system_json   = excluded.system_json,
+                          coverage_json = excluded.coverage_json,
+                          filename      = excluded.filename,
+                          imported_at   = excluded.imported_at,
+                          matched_serial = excluded.matched_serial,
+                          match_type    = excluded.match_type
+                    """, (
+                        serial,
+                        json.dumps(system, default=str),
+                        json.dumps(result.get("coverage", {}), default=str),
+                        resolved_customer,
+                        existing_assoc[1] if existing_assoc else "",
+                        existing_assoc[2] if existing_assoc else "",
+                        filename,
+                        now_str,
+                        serial if match_info["type"] == "api_synced" else "",
+                        match_info["type"],
+                    ))
+                    db.commit()
+                    system["customerName"] = resolved_customer
+                    print(f"  [ASUP] Persisted: serial={serial}, match={match_info['type']}, customer={resolved_customer}", flush=True)
+
+                finally:
+                    db.close()
+
+            result["matchInfo"] = match_info
+            self._json_response(200 if result["ok"] else 422, result)
+
+        except Exception as e:
+            print(f"  [ASUP] Import error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e), "system": None,
+                                      "coverage": {}, "warnings": [], "matchInfo": {}})
+
+    def handle_system_history(self):
+        """GET /api/history/<serialNumber>[?days=400] — dated trend snapshots
+        for one system (week/month/quarter/year-over-year comparison)."""
+        try:
+            from urllib.parse import urlparse, parse_qs, unquote
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            serial = unquote(parsed.path[len('/api/history/'):].strip('/'))
+            days = int((params.get('days') or ['400'])[0])
+            if not serial:
+                self._json_response(400, {"ok": False, "error": "serial number required"})
+                return
+            db = _init_db()
+            try:
+                history = _get_system_history(db, serial, days=days)
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True, "serialNumber": serial, "history": history, "count": len(history)})
+        except Exception as e:
+            print(f"  [HISTORY] Error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e), "history": []})
+
+    def handle_fleet_trend_post(self):
+        """POST /api/history/trend {days, serials:[...]} -- trend for an arbitrary
+        set of systems (a watchlist or custom group), which have no snapshot column."""
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+            body = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
+            days = int(body.get('days') or 90)
+            serials = body.get('serials') or []
+            db = _init_db()
+            try:
+                trend = _get_fleet_trend(db, days=days, serials=serials)
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True, "trend": trend, "count": len(trend)})
+        except Exception as e:
+            print(f"  [HISTORY] Trend (scoped) error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e), "trend": []})
+
+    def handle_fleet_trend(self):
+        """GET /api/history/trend?days=90[&customer=Name] — fleet-wide or
+        one-customer daily trend (total critical/high risks, open critical
+        cases, systems captured) built from the same system_snapshots data
+        already captured on every harvest."""
+        try:
+            from urllib.parse import urlparse, parse_qs
+            params = parse_qs(urlparse(self.path).query)
+            days = int((params.get('days') or ['90'])[0])
+            customer = (params.get('customer') or [None])[0]
+            db = _init_db()
+            try:
+                trend = _get_fleet_trend(db, days=days, customer_name=customer)
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True, "trend": trend, "count": len(trend)})
+        except Exception as e:
+            print(f"  [HISTORY] Trend error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e), "trend": []})
+
+    def handle_history_annotate(self):
+        """POST /api/history/annotate
+        Body: { entries: [{ serialNumber, adoptionScorePct }, ...] }
+
+        Adoption score is a derived value computed by a checklist formula
+        that lives client-side (computeFeatureAdoptionScore() in app.js) --
+        deliberately NOT duplicated in Python, since this codebase already
+        had a real bug once (three different health-grade formulas giving
+        the same account different letter grades depending on which
+        deliverable was opened). Rather than re-derive the score here from
+        raw fields and risk a second divergent formula, the client computes
+        it once and annotates it onto TODAY's already-captured snapshot row.
+        Only updates a row that already exists (created by the day's
+        harvest) -- never creates a new snapshot from this endpoint, so a
+        client bug here can't fabricate history that didn't happen.
+        """
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            entries = body.get("entries") or []
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            db = _init_db()
+            updated = 0
+            try:
+                for e in entries:
+                    serial = (e.get("serialNumber") or "").strip()
+                    pct = e.get("adoptionScorePct")
+                    if not serial or pct is None:
+                        continue
+                    row = db.execute(
+                        "SELECT snapshot_json FROM system_snapshots WHERE serial_number = ? AND snapshot_date = ?",
+                        (serial, today)
+                    ).fetchone()
+                    if not row:
+                        continue
+                    try:
+                        snap = json.loads(row[0])
+                    except Exception:
+                        continue
+                    snap["adoptionScorePct"] = pct
+                    db.execute(
+                        "UPDATE system_snapshots SET snapshot_json = ? WHERE serial_number = ? AND snapshot_date = ?",
+                        (json.dumps(snap), serial, today)
+                    )
+                    updated += 1
+                db.commit()
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True, "updated": updated})
+        except Exception as e:
+            print(f"  [HISTORY] Annotate error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_asup_list(self):
+        """GET /api/asup/imports — return list of all imported ASUP systems."""
+        try:
+            db = _init_db()
+            try:
+                rows = db.execute(
+                    "SELECT serial_number, system_json, coverage_json, customer_name, site_name, notes, filename, imported_at, matched_serial, match_type FROM asup_imports ORDER BY imported_at DESC"
+                ).fetchall()
+            finally:
+                db.close()
+
+            imports = []
+            for row in rows:
+                try:
+                    system   = json.loads(row[1])
+                    coverage = json.loads(row[2])
+                    imports.append({
+                        "serialNumber":  row[0],
+                        "customerName":  row[3],
+                        "siteName":      row[4] or "",
+                        "notes":         row[5] or "",
+                        "filename":      row[6],
+                        "importedAt":    row[7],
+                        "matchedSerial": row[8] or "",
+                        "matchType":     row[9] or "new",
+                        "system":        system,
+                        "coverage":      coverage,
+                    })
+                except Exception:
+                    pass
+
+            self._json_response(200, {"ok": True, "imports": imports, "count": len(imports)})
+
+        except Exception as e:
+            print(f"  [ASUP] List error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e), "imports": []})
+
+    def handle_asup_associate(self):
+        """POST /api/asup/associate
+        Body: { serial, customerName, siteName, notes }
+        Updates asup_imports with the association details.
+        If the serial matches an AIQ-synced system (match_type='api_synced'),
+        also patches the harvest_cache result_json to update that system's
+        customerName, siteName, and notes fields.
+        Returns: { ok, serial, matchType, merged }
+        """
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            serial        = (body.get("serial") or "").strip()
+            customer_name = (body.get("customerName") or "").strip()
+            site_name     = (body.get("siteName") or "").strip()
+            notes         = (body.get("notes") or "").strip()
+
+            if not serial:
+                self._json_response(400, {"ok": False, "error": "serial required"})
+                return
+
+            db = _init_db()
+            merged_into_harvest = False
+            try:
+                # Update asup_imports association
+                db.execute("""
+                    UPDATE asup_imports
+                    SET customer_name = ?, site_name = ?, notes = ?
+                    WHERE serial_number = ?
+                """, (customer_name, site_name, notes, serial))
+
+                # Also update the system_json inside asup_imports to reflect the new customer
+                row = db.execute(
+                    "SELECT system_json, match_type FROM asup_imports WHERE serial_number = ?", (serial,)
+                ).fetchone()
+                if row:
+                    try:
+                        sys_dict = json.loads(row[0])
+                        sys_dict["customerName"] = customer_name
+                        sys_dict["_siteName"]    = site_name
+                        sys_dict["_notes"]       = notes
+                        db.execute(
+                            "UPDATE asup_imports SET system_json = ? WHERE serial_number = ?",
+                            (json.dumps(sys_dict, default=str), serial)
+                        )
+                    except Exception:
+                        pass
+                    match_type = row[1] or "new"
+
+                    # If this serial is matched to an AIQ-synced system, patch harvest_cache too
+                    if match_type == "api_synced":
+                        cached_row = db.execute(
+                            "SELECT result_json FROM harvest_cache WHERE id = 1"
+                        ).fetchone()
+                        if cached_row:
+                            try:
+                                cached = json.loads(cached_row[0])
+                                changed = False
+                                for s in cached.get("systems", []):
+                                    if s.get("serialNumber") == serial:
+                                        # Patch with ASUP-provided data — fill nulls only for critical fields
+                                        asup_sys = sys_dict
+                                        for field in ["osVersion", "platform", "nodeCount",
+                                                       "clusterRawCapacityTB", "clusterUsableCapacityTB",
+                                                       "clusterPhysicalUsedTB", "isHAConfigured",
+                                                       "snapMirrorCount", "asupStatus", "asupTransport"]:
+                                            if (s.get(field) is None or s.get(field) == "") and asup_sys.get(field) is not None:
+                                                s[field] = asup_sys[field]
+                                        # Always update customer/site from association
+                                        if customer_name:
+                                            s["customerName"] = customer_name
+                                        s["_asupImported"]  = True
+                                        s["_asupFilename"]  = asup_sys.get("_asupFilename", "")
+                                        s["_asupImportedAt"]= asup_sys.get("_importedAt", "")
+                                        s["_siteName"]      = site_name
+                                        s["_notes"]         = notes
+                                        changed = True
+                                        break
+                                if changed:
+                                    db.execute(
+                                        "UPDATE harvest_cache SET result_json = ? WHERE id = 1",
+                                        (json.dumps(cached, default=str),)
+                                    )
+                                    merged_into_harvest = True
+                                    print(f"  [ASUP] Merged serial {serial} into harvest_cache", flush=True)
+                            except Exception as me:
+                                print(f"  [ASUP] harvest_cache merge error: {me}", flush=True)
+
+                db.commit()
+                print(f"  [ASUP] Association saved: serial={serial}, customer={customer_name}, site={site_name}", flush=True)
+
+            finally:
+                db.close()
+
+            self._json_response(200, {
+                "ok": True, "serial": serial,
+                "customerName": customer_name, "siteName": site_name,
+                "merged": merged_into_harvest,
+            })
+
+        except Exception as e:
+            print(f"  [ASUP] Associate error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_asup_customers(self):
+        """GET /api/asup/customers — return unique customer names and sites for dropdowns."""
+        try:
+            customers = set()
+            sites     = set()
+            db = _init_db()
+            try:
+                # From harvest_cache
+                cached_row = db.execute("SELECT result_json FROM harvest_cache WHERE id = 1").fetchone()
+                if cached_row:
+                    try:
+                        for s in json.loads(cached_row[0]).get("systems", []):
+                            c = s.get("customerName") or ""
+                            if c: customers.add(c)
+                    except Exception:
+                        pass
+                # From asup_imports
+                for row in db.execute("SELECT customer_name, site_name FROM asup_imports").fetchall():
+                    if row[0]: customers.add(row[0])
+                    if row[1]: sites.add(row[1])
+            finally:
+                db.close()
+
+            self._json_response(200, {
+                "ok": True,
+                "customers": sorted(customers),
+                "sites":     sorted(sites),
+            })
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e), "customers": [], "sites": []})
+
+    def handle_knowledge_base_get(self):
+        """GET /api/knowledge-base — Return the full knowledge base for enrichment mapping."""
+        global _enrichment_scheduler
+        kb = {'version': 1, 'articles': [], 'lastUpdated': None, 'articleCount': 0}
+        if KNOWLEDGE_PATH.exists():
+            try:
+                kb = json.loads(KNOWLEDGE_PATH.read_text(encoding='utf-8'))
+            except Exception:
+                pass
+        # Also include CISA KEV data if available
+        kev_cve_set = set()
+        if KEV_PATH.exists():
+            try:
+                kev_data = json.loads(KEV_PATH.read_text(encoding='utf-8'))
+                for v in kev_data.get('vulnerabilities', []):
+                    cve_id = (v.get('cveID') or '').upper()
+                    if cve_id:
+                        kev_cve_set.add(cve_id)
+            except Exception:
+                pass
+        # Include bulletin summary counts by category
+        bulletin_summary = {}
+        psirt_cve_set = set()
+        if BULLETINS_PATH.exists():
+            try:
+                bdata = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
+                for b in bdata.get('bulletins', []):
+                    cat = b.get('severity', 'unknown').lower()
+                    bulletin_summary[cat] = bulletin_summary.get(cat, 0) + 1
+                    # Collect all CVE IDs from PSIRT bulletins
+                    for cve_id in b.get('cve', []):
+                        psirt_cve_set.add(cve_id.upper())
+            except Exception:
+                pass
+        # kevCount = only PSIRT CVEs that appear in the CISA KEV catalog
+        # (i.e. NetApp advisories for actively exploited vulnerabilities)
+        kev_overlap = psirt_cve_set & kev_cve_set
+        response = {
+            'articles': kb.get('articles', []),
+            'articleCount': kb.get('articleCount', len(kb.get('articles', []))),
+            'lastUpdated': kb.get('lastUpdated'),
+            'kevCount': len(kev_overlap),
+            'kevCatalogSize': len(kev_cve_set),
+            'bulletinSummary': bulletin_summary,
+        }
+        body = json.dumps(response, ensure_ascii=False).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_eoa_database_get(self):
+        """GET /api/eoa-database — Return the EOA platform database."""
+        eoa_path = os.path.join(os.path.dirname(__file__), 'data', 'eoa_database.json')
+        try:
+            with open(eoa_path, 'r', encoding='utf-8') as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            pass  # same-origin only
+            self.end_headers()
+            self.wfile.write(data.encode('utf-8'))
+        except FileNotFoundError:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            pass  # same-origin only
+            self.end_headers()
+            self.wfile.write(b'{"platforms":[],"dates":{},"switches":[]}')
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            pass  # same-origin only
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+
+    def handle_imt_interop_get(self):
+        """GET /api/imt-interop — Return the IMT interoperability matrix."""
+        imt_path = os.path.join(os.path.dirname(__file__), 'data', 'imt_interop.json')
+        try:
+            with open(imt_path, 'r', encoding='utf-8') as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            pass  # same-origin only
+            self.end_headers()
+            self.wfile.write(data.encode('utf-8'))
+        except FileNotFoundError:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            pass  # same-origin only
+            self.end_headers()
+            self.wfile.write(b'{}')
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            pass  # same-origin only
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+
+    def handle_reference_status_get(self):
+        """GET /api/reference-library/status — Return freshness of all reference data files."""
+        data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        status = {}
+        for fname in ['firmware_baselines.json', 'security_bulletins.json', 'knowledge_base.json',
+                      'eoa_database.json', 'imt_interop.json', 'cisa_kev.json']:
+            fpath = os.path.join(data_dir, fname)
+            try:
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    fdata = json.load(f)
+                last_updated = fdata.get('_lastUpdated') or fdata.get('lastUpdated') or 'unknown'
+                status[fname] = {'lastUpdated': last_updated, 'exists': True}
+            except FileNotFoundError:
+                status[fname] = {'lastUpdated': None, 'exists': False}
+            except Exception:
+                status[fname] = {'lastUpdated': 'error', 'exists': True}
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        pass  # same-origin only
+        self.end_headers()
+        self.wfile.write(json.dumps(status, indent=2).encode('utf-8'))
+
+    def handle_enrich_status(self):
+        """GET /api/enrich/status — Return enrichment scanner status."""
+        global _enrichment_scheduler
+        if _enrichment_scheduler:
+            status = _enrichment_scheduler.status()
+        else:
+            status = {'enabled': False, 'lastScan': None, 'isRunning': False}
+        res = json.dumps(status).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(res)
+
+    def handle_enrich_scan(self):
+        """POST /api/enrich/scan — Manually trigger an enrichment scan."""
+        global _enrichment_scheduler
+        if not _enrichment_scheduler:
+            self.send_response(503)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': 'Enrichment scheduler not running'}).encode('utf-8'))
+            return
+        result = _enrichment_scheduler.run_now()
+        self.send_response(202)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(result).encode('utf-8'))
+
+    def handle_auto_harvest_status(self):
+        """GET /api/auto-harvest/status — Return the harvest scheduler's status."""
+        global _harvest_scheduler
+        if _harvest_scheduler:
+            status = _harvest_scheduler.status()
+        else:
+            status = {'enabled': False, 'lastSync': None, 'isRunning': False}
+        res = json.dumps(status).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(res)
+
+    def handle_auto_harvest_run(self):
+        """POST /api/auto-harvest/run — Manually trigger a scheduled-style auto-refresh."""
+        global _harvest_scheduler
+        if not _harvest_scheduler:
+            self.send_response(503)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': 'Harvest scheduler not running'}).encode('utf-8'))
+            return
+        result = _harvest_scheduler.run_now()
+        self.send_response(202)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(result).encode('utf-8'))
+
+    def handle_asup_delete(self):
+        """DELETE /api/asup/imports?serial=XXX — remove an ASUP import."""
+        try:
+            from urllib.parse import urlparse, parse_qs
+            params = parse_qs(urlparse(self.path).query)
+            serial = params.get("serial", [None])[0]
+            if not serial:
+                self._json_response(400, {"ok": False, "error": "serial parameter required"})
+                return
+            db = _init_db()
+            try:
+                db.execute("DELETE FROM asup_imports WHERE serial_number = ?", (serial,))
+                db.commit()
+            finally:
+                db.close()
+            print(f"  [ASUP] Deleted import: serial={serial}", flush=True)
+            self._json_response(200, {"ok": True, "deleted": serial})
+        except Exception as e:
+            print(f"  [ASUP] Delete error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Remediation Tracker Handlers
+    # ─────────────────────────────────────────────────────────────────────
+
+    def handle_webhook_test(self):
+        """POST /api/webhook/test
+        Body: { webhookUrl? } -- tests the given URL if provided (so a TAM
+        can verify connectivity before saving), otherwise the currently
+        saved one. Sends a clearly-labeled test payload, not a real alert.
+        """
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length).decode("utf-8")) if content_length else {}
+            url = (body.get("webhookUrl") or "").strip()
+            if not url:
+                cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+                url = (cfg.get("webhookUrl") or "").strip()
+            if not url:
+                self._json_response(400, {"ok": False, "error": "No webhook URL configured or provided"})
+                return
+            payload = {
+                "text": "ARIA test notification -- if you're seeing this, your webhook is configured correctly.",
+                "test": True,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            req = urllib.request.Request(
+                url, data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            resp = urllib.request.urlopen(req, timeout=10)
+            self._json_response(200, {"ok": True, "statusCode": resp.status})
+        except urllib.error.HTTPError as e:
+            self._json_response(200, {"ok": False, "error": f"Webhook endpoint returned HTTP {e.code}"})
+        except Exception as e:
+            self._json_response(200, {"ok": False, "error": str(e)})
+
+    def handle_tracker_list(self):
+        """GET /api/tracker — return every tracked remediation item."""
+        try:
+            db = _init_db()
+            try:
+                rows = db.execute("""
+                    SELECT id, item_key, account_id, customer_name, system_serial, system_name,
+                           source_type, severity, title, detail, advisory_url, status, owner, due_date, notes,
+                           created_at, updated_at, last_seen_at
+                    FROM tracked_items ORDER BY updated_at DESC
+                """).fetchall()
+            finally:
+                db.close()
+            cols = ["id", "itemKey", "accountId", "customerName", "systemSerial", "systemName",
+                    "sourceType", "severity", "title", "detail", "advisoryUrl", "status", "owner", "dueDate", "notes",
+                    "createdAt", "updatedAt", "lastSeenAt"]
+            items = [dict(zip(cols, r)) for r in rows]
+            self._json_response(200, {"ok": True, "items": items})
+        except Exception as e:
+            print(f"  [TRACKER] List error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_tracker_upsert(self):
+        """POST /api/tracker
+        Body: { items: [{ itemKey, accountId, customerName, systemSerial,
+                           systemName, sourceType, severity, title, detail }, ...] }
+
+        Upserts by item_key (a stable hash computed client-side from the
+        finding's identity, e.g. source_type + serial + risk description).
+        A finding that already exists gets its title/detail/last_seen_at
+        refreshed (so stale text doesn't linger if the underlying finding's
+        wording changes upstream) but its status/owner/due_date/notes are
+        left untouched -- re-harvesting the same real finding must never
+        silently reset a TAM's tracked progress on it back to "open".
+        New findings are inserted with status='open'.
+        """
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            items = body.get("items") or []
+            now = datetime.now(timezone.utc).isoformat()
+            db = _init_db()
+            inserted, refreshed = 0, 0
+            try:
+                for it in items:
+                    key = (it.get("itemKey") or "").strip()
+                    title = (it.get("title") or "").strip()
+                    if not key or not title:
+                        continue
+                    existing = db.execute("SELECT id FROM tracked_items WHERE item_key = ?", (key,)).fetchone()
+                    if existing:
+                        db.execute("""
+                            UPDATE tracked_items SET title = ?, detail = ?, advisory_url = ?, severity = ?, last_seen_at = ?
+                            WHERE item_key = ?
+                        """, (title, it.get("detail", ""), it.get("advisoryUrl", ""), it.get("severity", ""), now, key))
+                        refreshed += 1
+                    else:
+                        db.execute("""
+                            INSERT INTO tracked_items
+                                (item_key, account_id, customer_name, system_serial, system_name,
+                                 source_type, severity, title, detail, advisory_url, status, owner, due_date, notes,
+                                 created_at, updated_at, last_seen_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', '', '', '', ?, ?, ?)
+                        """, (key, it.get("accountId", ""), it.get("customerName", ""),
+                              it.get("systemSerial", ""), it.get("systemName", ""),
+                              it.get("sourceType", ""), it.get("severity", ""), title,
+                              it.get("detail", ""), it.get("advisoryUrl", ""), now, now, now))
+                        inserted += 1
+                db.commit()
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True, "inserted": inserted, "refreshed": refreshed})
+        except Exception as e:
+            print(f"  [TRACKER] Upsert error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_tracker_update(self):
+        """POST /api/tracker/update
+        Body: { id, status?, owner?, dueDate?, notes? } — updates only the
+        fields present in the body, leaving the rest of the row untouched.
+        """
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            item_id = body.get("id")
+            if not item_id:
+                self._json_response(400, {"ok": False, "error": "id is required"})
+                return
+            valid_statuses = {"open", "in_progress", "resolved", "deferred", "accepted"}
+            fields, params = [], []
+            if "status" in body:
+                if body["status"] not in valid_statuses:
+                    self._json_response(400, {"ok": False, "error": f"invalid status, must be one of {sorted(valid_statuses)}"})
+                    return
+                fields.append("status = ?"); params.append(body["status"])
+            if "owner" in body:
+                fields.append("owner = ?"); params.append(body["owner"] or "")
+            if "dueDate" in body:
+                fields.append("due_date = ?"); params.append(body["dueDate"] or "")
+            if "notes" in body:
+                fields.append("notes = ?"); params.append(body["notes"] or "")
+            if not fields:
+                self._json_response(400, {"ok": False, "error": "no updatable fields provided"})
+                return
+            fields.append("updated_at = ?"); params.append(datetime.now(timezone.utc).isoformat())
+            params.append(item_id)
+            db = _init_db()
+            try:
+                db.execute(f"UPDATE tracked_items SET {', '.join(fields)} WHERE id = ?", params)
+                db.commit()
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True})
+        except Exception as e:
+            print(f"  [TRACKER] Update error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_tracker_delete(self):
+        """DELETE /api/tracker?id=NNN — permanently remove a tracked item."""
+        try:
+            from urllib.parse import urlparse, parse_qs
+            params = parse_qs(urlparse(self.path).query)
+            item_id = params.get("id", [None])[0]
+            if not item_id:
+                self._json_response(400, {"ok": False, "error": "id parameter required"})
+                return
+            db = _init_db()
+            try:
+                db.execute("DELETE FROM tracked_items WHERE id = ?", (item_id,))
+                db.commit()
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True, "deleted": item_id})
+        except Exception as e:
+            print(f"  [TRACKER] Delete error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_plan_progress_list(self):
+        """GET /api/plan-progress — local baselines for adopted Success Plan
+        suggestions (see success_plan_progress table comment). Purely local
+        bookkeeping about a real Active IQ plan id; never touches Active IQ."""
+        try:
+            db = _init_db()
+            try:
+                rows = db.execute("""
+                    SELECT plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at
+                    FROM success_plan_progress
+                """).fetchall()
+            finally:
+                db.close()
+            cols = ["planId", "nagpId", "templateKey", "metricLabel", "baselineValue", "targetDirection", "createdAt"]
+            self._json_response(200, {"ok": True, "items": [dict(zip(cols, r)) for r in rows]})
+        except Exception as e:
+            print(f"  [PLAN-PROGRESS] List error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_plan_progress_create(self):
+        """POST /api/plan-progress
+        Body: { planId, nagpId, templateKey, metricLabel, baselineValue, targetDirection }
+        Records the real trigger metric's value at the moment a suggested
+        Success Plan was adopted, so progress can be shown as a delta against
+        the same metric recomputed from the live harvest later."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            plan_id = (body.get("planId") or "").strip()
+            if not plan_id:
+                self._json_response(400, {"ok": False, "error": "planId required"})
+                return
+            now = datetime.now(timezone.utc).isoformat()
+            db = _init_db()
+            try:
+                db.execute("""
+                    INSERT OR REPLACE INTO success_plan_progress
+                        (plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (plan_id, body.get("nagpId", ""), body.get("templateKey", ""),
+                      body.get("metricLabel", ""), body.get("baselineValue"),
+                      body.get("targetDirection", "down"), now))
+                db.commit()
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True})
+        except Exception as e:
+            print(f"  [PLAN-PROGRESS] Create error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_plan_progress_delete(self):
+        """DELETE /api/plan-progress?planId=NNN — remove a local baseline
+        (e.g. when its Success Plan is closed)."""
+        try:
+            from urllib.parse import urlparse, parse_qs
+            params = parse_qs(urlparse(self.path).query)
+            plan_id = params.get("planId", [None])[0]
+            if not plan_id:
+                self._json_response(400, {"ok": False, "error": "planId parameter required"})
+                return
+            db = _init_db()
+            try:
+                db.execute("DELETE FROM success_plan_progress WHERE plan_id = ?", (plan_id,))
+                db.commit()
+            finally:
+                db.close()
+            self._json_response(200, {"ok": True, "deleted": plan_id})
+        except Exception as e:
+            print(f"  [PLAN-PROGRESS] Delete error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_perf(self, method):
+        """StoragePerf (Plumb) integration -- sources, pull, file import, snapshots.
+        GET    /api/perf/sources | /api/perf/latest | /api/perf/snapshots[?customer=]
+        POST   /api/perf/sources | /api/perf/test | /api/perf/pull | /api/perf/import
+        DELETE /api/perf/sources?id= | /api/perf/snapshots?id=
+        Read-only towards StoragePerf and Active IQ; only ARIA's own SQLite tables are written."""
+        from urllib.parse import urlparse, parse_qs
+        try:
+            parsed = urlparse(self.path)
+            route = parsed.path[len('/api/perf/'):].strip('/')
+            params = parse_qs(parsed.query)
+            body = {}
+            if method == 'POST':
+                length = int(self.headers.get("Content-Length", 0))
+                if length > perf_integration.MAX_PAYLOAD_BYTES + 65536:
+                    self._json_response(413, {"ok": False, "error": "That file is too large to import."})
+                    return
+                body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+            db = _init_db()
+            try:
+                if method == 'GET' and route == 'sources':
+                    self._json_response(200, {"ok": True, "sources": perf_integration.list_sources(db)})
+                elif method == 'GET' and route == 'latest':
+                    self._json_response(200, {"ok": True, "snapshots": perf_integration.latest_snapshots(db)})
+                elif method == 'GET' and route == 'snapshots':
+                    self._json_response(200, {"ok": True, "snapshots": perf_integration.list_snapshots(
+                        db, (params.get("customer") or [None])[0])})
+                elif method == 'POST' and route == 'sources':
+                    sid = perf_integration.upsert_source(db, body)
+                    self._json_response(200, {"ok": True, "id": sid})
+                elif method == 'POST' and route == 'test':
+                    src = perf_integration.get_source(db, body["id"]) if body.get("id") else None
+                    token = body.get("token") or (src or {}).get("token", "")
+                    verify = body.get("verifyTls", (src or {}).get("verifyTls", True))
+                    self._json_response(200, perf_integration.test_source(body.get("baseUrl") or (src or {}).get("baseUrl", ""), token, verify))
+                elif method == 'POST' and route == 'pull':
+                    src = perf_integration.get_source(db, body.get("id"))
+                    if not src:
+                        self._json_response(404, {"ok": False, "error": "Unknown source."})
+                    else:
+                        try:
+                            snap_id = perf_integration.pull_source(db, src)
+                            self._json_response(200, {"ok": True, "snapshotId": snap_id})
+                        except ValueError as exc:
+                            self._json_response(200, {"ok": False, "error": str(exc)})
+                elif method == 'POST' and route == 'import':
+                    try:
+                        snap_id = perf_integration.store_snapshot(
+                            db, body.get("payload"), body.get("customerName"), "import", filename=(body.get("filename") or "")[:200])
+                        self._json_response(200, {"ok": True, "snapshotId": snap_id})
+                    except ValueError as exc:
+                        self._json_response(200, {"ok": False, "error": str(exc)})
+                elif method == 'DELETE' and route == 'sources':
+                    perf_integration.delete_source(db, int((params.get("id") or ["0"])[0]))
+                    self._json_response(200, {"ok": True})
+                elif method == 'DELETE' and route == 'snapshots':
+                    perf_integration.delete_snapshot(db, int((params.get("id") or ["0"])[0]))
+                    self._json_response(200, {"ok": True})
+                else:
+                    self._json_response(404, {"ok": False, "error": "Unknown perf endpoint"})
+            finally:
+                db.close()
+        except ValueError as e:
+            self._json_response(200, {"ok": False, "error": str(e)})
+        except Exception as e:
+            print(f"  [PERF] Handler error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_config_get(self):
+        """GET /api/config — return current config (without sensitive tokens)."""
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+            # Return only non-sensitive fields
+            safe_cfg = {
+                "watchlistId": cfg.get("watchlistId") or cfg.get("watchlist_id") or "",
+                "watchlistIds": cfg.get("watchlistIds") or cfg.get("watchlistId") or cfg.get("watchlist_id") or "",
+                "watchlistName": cfg.get("watchlistName", ""),
+                "hasToken": bool(cfg.get("refreshToken") or cfg.get("refresh_token")),
+                "enrichEnabled": cfg.get("enrichEnabled", True),
+                "enrichIntervalHours": cfg.get("enrichIntervalHours", 12),
+                "autoHarvestEnabled": cfg.get("autoHarvestEnabled", True),
+                "autoHarvestIntervalHours": cfg.get("autoHarvestIntervalHours", 4),
+                "kb_interval_hours": cfg.get("kb_interval_hours", 168),
+                "hasNvdKey": bool(cfg.get("nvdApiKey", "")),
+                "hasGithubToken": bool(cfg.get("githubToken", "")),
+                # Remediation SLA policy: days-to-remediate by severity, used by
+                # the Remediation Tracker to compute an SLA due date for items
+                # with no manually-set due date. Defaults match common
+                # practice (critical=7d, high=30d, medium=90d, low=180d) but
+                # are editable in Settings since every org's policy differs.
+                "slaDays": cfg.get("slaDays") or {"critical": 7, "high": 30, "medium": 90, "low": 180},
+                # Notification webhook: POSTs a summary after a harvest finds new
+                # critical risks or contracts newly expiring within 30 days. The
+                # URL itself may embed a token (Slack/Teams incoming webhooks
+                # commonly do), so treat it like refreshToken -- never return the
+                # raw value, only whether one is set.
+                "webhookEnabled": bool(cfg.get("webhookEnabled", False)),
+                "hasWebhookUrl": bool(cfg.get("webhookUrl", "")),
+                # Multi-account (multi-customer) support — never return raw tokens,
+                # only enough for the Settings UI to list/edit accounts safely.
+                "accounts": [
+                    {
+                        "id": a.get("id", ""),
+                        "label": a.get("label", ""),
+                        "watchlistId": a.get("watchlistId", ""),
+                        "enabled": a.get("enabled", True),
+                        "hasToken": bool(a.get("refreshToken") or a.get("refresh_token")),
+                    }
+                    for a in (cfg.get("accounts") or [])
+                ],
+            }
+            res_bytes = json.dumps(safe_cfg).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(res_bytes)
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+    def handle_config_post(self):
+        """POST /api/config — update config fields (merges with existing)."""
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            # Read existing config
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+            # Merge allowed fields
+            # Support both new watchlistIds (comma-sep) and legacy watchlistId (single)
+            if "watchlistIds" in body:
+                cfg["watchlistIds"] = body["watchlistIds"] or ""
+                # Also backfill legacy key with first ID for older code paths
+                first_id = (body["watchlistIds"] or "").split(",")[0].strip()
+                if first_id:
+                    cfg["watchlistId"] = first_id
+            elif "watchlistId" in body:
+                cfg["watchlistId"] = body["watchlistId"] or ""
+                if not cfg.get("watchlistIds"):
+                    cfg["watchlistIds"] = cfg["watchlistId"]
+            if "watchlistName" in body:
+                cfg["watchlistName"] = body["watchlistName"] or ""
+            if "refreshToken" in body and body["refreshToken"].strip():
+                cfg["refreshToken"] = body["refreshToken"].strip()
+                print(f"  [CONFIG] Refresh token updated ({len(cfg['refreshToken'])} chars)", flush=True)
+            if "tamName" in body:
+                cfg["tamName"] = body["tamName"] or ""
+            if "tamEmail" in body:
+                cfg["tamEmail"] = body["tamEmail"] or ""
+            if "enrichEnabled" in body:
+                cfg["enrichEnabled"] = bool(body["enrichEnabled"])
+            if "enrichIntervalHours" in body:
+                cfg["enrichIntervalHours"] = int(body["enrichIntervalHours"])
+            if "kb_interval_hours" in body:
+                cfg["kb_interval_hours"] = max(1, int(body["kb_interval_hours"]))
+            if "autoHarvestEnabled" in body:
+                cfg["autoHarvestEnabled"] = bool(body["autoHarvestEnabled"])
+            if "autoHarvestIntervalHours" in body:
+                cfg["autoHarvestIntervalHours"] = max(1, int(body["autoHarvestIntervalHours"]))
+            if "webhookEnabled" in body:
+                cfg["webhookEnabled"] = bool(body["webhookEnabled"])
+            if "webhookUrl" in body and body["webhookUrl"].strip():
+                cfg["webhookUrl"] = body["webhookUrl"].strip()
+            if "slaDays" in body and isinstance(body["slaDays"], dict):
+                sla = {}
+                for sev in ("critical", "high", "medium", "low"):
+                    try:
+                        sla[sev] = max(1, int(body["slaDays"].get(sev, cfg.get("slaDays", {}).get(sev, 30))))
+                    except (TypeError, ValueError):
+                        sla[sev] = cfg.get("slaDays", {}).get(sev, 30)
+                cfg["slaDays"] = sla
+            if "nvdApiKey" in body and body["nvdApiKey"].strip():
+                cfg["nvdApiKey"] = body["nvdApiKey"].strip()
+            if "githubToken" in body and body["githubToken"].strip():
+                val = body["githubToken"].strip()
+                cfg["githubToken"] = val
+                print(f"  [CONFIG] GitHub token updated ({len(val)} chars)", flush=True)
+            # an explicit request to forget a stored secret (a blank field alone never clears one)
+            for _k in (body.get("clear") or []):
+                if _k in ("nvdApiKey", "githubToken", "webhookUrl") and _k in cfg:
+                    cfg.pop(_k, None)
+                    print(f"  [CONFIG] {_k} removed", flush=True)
+            # Multi-account (multi-customer) management — the client resends the
+            # full desired accounts list each time (add/edit/remove/reorder all
+            # look the same: "here is the list now"). GET /api/config never
+            # returns raw tokens, so an account entry with no refreshToken in
+            # the POST body means "keep whatever token is already stored for
+            # this id" rather than "clear the token" — only an explicit empty
+            # string with the id ALSO absent from cfg would ever drop a token,
+            # which can't happen via this merge path.
+            if "accounts" in body and isinstance(body["accounts"], list):
+                existing_by_id = {a.get("id"): a for a in (cfg.get("accounts") or []) if a.get("id")}
+                new_accounts = []
+                for i, acct in enumerate(body["accounts"]):
+                    acct_id = (acct.get("id") or "").strip() or f"account{i}_{int(time.time())}"
+                    prior = existing_by_id.get(acct_id, {})
+                    token = (acct.get("refreshToken") or "").strip() or prior.get("refreshToken", "")
+                    new_accounts.append({
+                        "id": acct_id,
+                        "label": (acct.get("label") or "").strip() or acct_id,
+                        "refreshToken": token,
+                        "watchlistId": (acct.get("watchlistId") or "").strip(),
+                        "enabled": acct.get("enabled", True),
+                    })
+                cfg["accounts"] = new_accounts
+                print(f"  [CONFIG] Accounts updated: {len(new_accounts)} account(s) ({sum(1 for a in new_accounts if a['enabled'])} enabled)", flush=True)
+            # Update enrichment scheduler if running
+            global _enrichment_scheduler
+            if _enrichment_scheduler:
+                _enrichment_scheduler.update_config(
+                    interval_hours=cfg.get('enrichIntervalHours', 12),
+                    nvd_api_key=cfg.get('nvdApiKey') or None,
+                    kb_interval_hours=cfg.get('kb_interval_hours', 168)
+                )
+            # Update (or start/stop) the harvest scheduler if its config changed
+            global _harvest_scheduler
+            _auto_harvest_enabled = cfg.get('autoHarvestEnabled', True)
+            if _auto_harvest_enabled and not _harvest_scheduler:
+                _harvest_scheduler = HarvestScheduler(interval_hours=cfg.get('autoHarvestIntervalHours', 4))
+                _harvest_scheduler.start()
+                print('  [AUTO-HARVEST] Scheduler enabled via Settings', flush=True)
+            elif not _auto_harvest_enabled and _harvest_scheduler:
+                _harvest_scheduler.stop()
+                _harvest_scheduler = None
+                print('  [AUTO-HARVEST] Scheduler disabled via Settings', flush=True)
+            elif _harvest_scheduler:
+                _harvest_scheduler.update_config(interval_hours=cfg.get('autoHarvestIntervalHours', 4))
+            # Write back
+            CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+            has_token = bool(cfg.get("refreshToken") or cfg.get("refresh_token"))
+            wl_ids_saved = cfg.get("watchlistIds") or cfg.get("watchlistId", "")
+            print(f"  [CONFIG] Saved: watchlistIds={wl_ids_saved}, hasToken={has_token}", flush=True)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "hasToken": has_token}).encode("utf-8"))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+    def handle_bulletins_get(self):
+        """GET /api/bulletins — Return the full security advisory database.
+
+        Reads data/security_bulletins.json — the single authoritative store for all
+        advisory data. On first run (file absent), returns an empty bulletin list.
+        The app populates NETAPP_SECURITY_BULLETIN_DB entirely from this response;
+        there is no hardcoded fallback in app.js.
+        """
+        try:
+            if BULLETINS_PATH.exists():
+                data = json.loads(BULLETINS_PATH.read_text(encoding="utf-8"))
+            else:
+                # First run — no dynamic bulletins yet; app.js hardcoded DB is the full set
+                data = {
+                    "version": 1,
+                    "lastUpdated": None,
+                    "source": "dynamic",
+                    "bulletinCount": 0,
+                    "bulletins": []
+                }
+            res = json.dumps(data, default=str).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(res)
+        except Exception as e:
+            print(f"  [BULLETINS] GET error: {e}", flush=True)
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e), "bulletins": []}).encode("utf-8"))
+
+    def handle_bulletins_scan(self):
+        """GET /api/bulletins/scan — Trigger a live pull from NetApp PSIRT + NVD.
+
+        Scrapes security.netapp.com for all NTAP advisory IDs, compares against
+        the current data/security_bulletins.json, fetches detail+CVSS for any new ones,
+        and persists them atomically. Returns a JSON summary of the results.
+        This is a synchronous call — the client should expect a response in ~30-60s
+        depending on how many new advisories are found.
+        """
+        try:
+            print("  [BULLETINS] Scan triggered via UI button", flush=True)
+            result = scan_and_persist_advisories()
+            res = json.dumps(result).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(res)
+        except Exception as e:
+            print(f"  [BULLETINS] Scan error: {e}", flush=True)
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e), "added": 0, "total": 0}).encode("utf-8"))
+
+    def handle_bulletins_post(self):
+
+        """POST /api/bulletins — Upsert bulletin entries into the persistent database.
+
+        Body: { "bulletins": [{id, cve, cvss, severity, title, description,
+                               affectedProducts, affectedVersions, fixedVersions,
+                               mitigation, published, link}, ...] }
+
+        Persistence guarantees:
+        - All EXISTING entries in data/security_bulletins.json are preserved.
+        - Incoming entries are merged by 'id' (update if exists, append if new).
+        - Write is ATOMIC: written to a .tmp file then renamed, so a crash or
+          disk error cannot leave the database in a corrupted state.
+        - The previous file is kept as security_bulletins.bak for recovery.
+        - Each entry receives a _addedAt date stamp (YYYY-MM-DD) when upserted.
+        """
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            new_entries = body.get("bulletins", [])
+            if not isinstance(new_entries, list):
+                raise ValueError("'bulletins' must be a list")
+
+            # Load ALL existing bulletins — every one is preserved
+            if BULLETINS_PATH.exists():
+                existing_data = json.loads(BULLETINS_PATH.read_text(encoding="utf-8"))
+                bulletins = existing_data.get("bulletins", [])
+            else:
+                bulletins = []
+
+            # Upsert by ID: existing entries survive; new ones are appended
+            id_to_idx = {b["id"]: i for i, b in enumerate(bulletins) if b.get("id")}
+            added = updated = 0
+            today = datetime.now(timezone.utc).isoformat()[:10]
+            for entry in new_entries:
+                entry_id = entry.get("id")
+                if not entry_id:
+                    continue
+                entry["_addedAt"] = today
+                if entry_id in id_to_idx:
+                    bulletins[id_to_idx[entry_id]] = entry
+                    updated += 1
+                else:
+                    id_to_idx[entry_id] = len(bulletins)
+                    bulletins.append(entry)
+                    added += 1
+
+            # Build output document
+            out = {
+                "version": 1,
+                "lastUpdated": today,
+                "source": "dynamic — authoritative store, updated by daily advisory scan",
+                "bulletinCount": len(bulletins),
+                "bulletins": bulletins
+            }
+            payload = json.dumps(out, indent=2, ensure_ascii=False)
+
+            # Atomic write: .tmp → .bak rotation → rename
+            tmp_path = BULLETINS_PATH.with_suffix(".tmp")
+            bak_path = BULLETINS_PATH.with_suffix(".bak")
+            tmp_path.write_text(payload, encoding="utf-8")
+            if BULLETINS_PATH.exists():
+                import shutil
+                shutil.copy2(str(BULLETINS_PATH), str(bak_path))  # snapshot previous state
+            tmp_path.replace(BULLETINS_PATH)                       # atomic rename
+
+            print(f"  [BULLETINS] POST: +{added} new, {updated} updated, {len(bulletins)} total", flush=True)
+
+            res = json.dumps({"added": added, "updated": updated, "total": len(bulletins)}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(res)
+        except Exception as e:
+            print(f"  [BULLETINS] POST error: {e}", flush=True)
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+    def handle_enrich(self):
+
+        """GET /api/enrich?type=TYPE&id=ID  — per-item enrichment.
+        GET /api/enrich/dump               — return all cached enrichment as one JSON blob.
+        """
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        path_clean = parsed.path.rstrip('/')
+
+        if path_clean == '/api/enrich/versions':
+            db = _init_db()
+            try:
+                row = db.execute("SELECT result_json FROM enrich_cache WHERE cache_key = '_catalog:versions'").fetchone()
+                if row:
+                    catalog = json.loads(row[0])
+                else:
+                    catalog = fetch_latest_version_catalog()
+                    if catalog:
+                        db.execute(
+                            'INSERT OR REPLACE INTO enrich_cache (cache_key, fetched_at, result_json, source) VALUES (?, ?, ?, ?)',
+                            ('_catalog:versions', datetime.now(timezone.utc).isoformat(), json.dumps(catalog), 'docs.netapp.com')
+                        )
+                        db.commit()
+            except Exception as e:
+                catalog = {'error': str(e)}
+            finally:
+                db.close()
+            body = json.dumps({'status': 'ok', 'catalog': catalog}).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path_clean == '/api/enrich/dump':
+            # Return every cached enrichment entry as a map: {cache_key: data}
+            db = _init_db()
+            try:
+                rows = db.execute(
+                    'SELECT cache_key, result_json, fetched_at, source FROM enrich_cache ORDER BY fetched_at DESC'
+                ).fetchall()
+            finally:
+                db.close()
+            dump = {}
+            for row in rows:
+                try:
+                    dump[row[0]] = {
+                        'data': json.loads(row[1]),
+                        'fetched_at': row[2],
+                        'source': row[3]
+                    }
+                except Exception:
+                    pass
+            body = json.dumps({'status': 'ok', 'count': len(dump), 'entries': dump}).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # Default: single-item enrichment
+        params = parse_qs(parsed.query)
+        db = _init_db()
+        try:
+            result = handle_enrich_request(params, db)
+        finally:
+            db.close()
+        body = json.dumps(result).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_watchlists(self):
+        """GET /api/watchlists — fetch available watchlists from AIQ REST API."""
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+            refresh_token = cfg.get("refreshToken") or cfg.get("refresh_token")
+            if not refresh_token:
+                raise Exception("No refresh token configured")
+
+            # Get access token
+            status, raw = _rest("access_token", refresh_token=refresh_token)
+            if status != 200:
+                raise Exception(f"Token exchange failed: HTTP {status}")
+            token_data = json.loads(raw.decode("utf-8", errors="replace"))
+            token = token_data.get("access_token")
+            if not token:
+                raw_s = raw.decode("utf-8", errors="replace").strip().strip('"')
+                token = raw_s if len(raw_s) > 30 else None
+            if not token:
+                raise Exception("No access token")
+
+            # Fetch watchlists -- GET /v2/watchlist/list, header `authorizationToken`
+            # (raw token, no "Bearer " prefix). See the harvest-side comment for how
+            # this was found.
+            watchlists = []
+            wl_status, wl_raw = _rest("watchlist_list", token=token)
+            if wl_status == 200:
+                wl_data = json.loads(wl_raw.decode("utf-8", errors="replace"))
+                wl_list = ((wl_data.get("results") or {}).get("watchlist")) or []
+                for wl in wl_list:
+                    if isinstance(wl, dict):
+                        wid = wl.get("watchlist_id") or ""
+                        if wid:
+                            watchlists.append({
+                                "id": wid,
+                                "name": wl.get("watchlist_name") or "Watchlist",
+                                "level": wl.get("wl_level", ""),
+                                "category": wl.get("wl_category", ""),
+                                "createdDate": wl.get("created_date", ""),
+                            })
+
+            res_bytes = json.dumps({"watchlists": watchlists}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(res_bytes)
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e), "watchlists": []}).encode("utf-8"))
+
+    def handle_app_update(self):
+        import subprocess
+        try:
+            res = subprocess.run(["git", "pull"], capture_output=True, text=True, timeout=15)
+            if res.returncode == 0:
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                pass  # same-origin only
+                self.end_headers()
+                res_json = {"status": "success", "message": "Application code updated from Git repository successfully!"}
+                self.wfile.write(json.dumps(res_json).encode('utf-8'))
+            else:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                pass  # same-origin only
+                self.end_headers()
+                err_msg = res.stderr or res.stdout or "Git pull command failed."
+                res_json = {"status": "error", "message": f"Git update failed: {err_msg.strip()}"}
+                self.wfile.write(json.dumps(res_json).encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            pass  # same-origin only
+            self.end_headers()
+            res_json = {"status": "error", "message": f"Server error: {str(e)}"}
+            self.wfile.write(json.dumps(res_json).encode('utf-8'))
+
+    def handle_firmware_probe(self):
+        """Live probe: query per-system firmware + top-level firmware endpoints and return raw results."""
+        global _current_token
+        token = _current_token
+        if not token:
+            # Try to get a fresh token from config
+            try:
+                cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
+                refresh_token = cfg.get("refreshToken") or cfg.get("refresh_token")
+                if refresh_token:
+                    status, raw = _rest("access_token", refresh_token=refresh_token)
+                    if status == 200:
+                        token_data = json.loads(raw.decode("utf-8", errors="replace"))
+                        token = token_data.get("access_token")
+                        if token:
+                            _current_token = token
+            except Exception:
+                pass
+        if not token:
+            self.send_response(401)
+            self.send_header('Content-Type', 'application/json')
+            pass  # same-origin only
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "No token. Harvest first."}).encode())
+            return
+
+        results = {}
+
+        # 1. Per-system firmware (first 2 systems)
+        _, sys_resp = _gql(token, _Q("probe_per_system_firmware"))
+        results["per_system"] = sys_resp
+
+        # 2. Top-level systemFirmwares
+        _, sf_resp = _gql(token, _Q("probe_system_firmwares"))
+        results["systemFirmwares"] = sf_resp
+
+        # 3. Top-level driveFirmwares
+        _, df_resp = _gql(token, _Q("probe_drive_firmwares"))
+        results["driveFirmwares"] = df_resp
+
+        # 4. Top-level shelfFirmwares
+        _, shf_resp = _gql(token, _Q("probe_shelf_firmwares"))
+        results["shelfFirmwares"] = shf_resp
+
+        # 5. Top-level diskQualificationPackages
+        _, dqp_resp = _gql(token, _Q("probe_disk_qualification_packages"))
+        results["diskQualificationPackages"] = dqp_resp
+
+        # 6. Also check what we have in cached harvest data
+        _probe_db = _init_db()
+        try:
+            cached_data, _ = _load_cached(_probe_db)
+        finally:
+            _probe_db.close()
+        cached_sys = (cached_data or {}).get("systems") or []
+        cached_fw_samples = []
+        for s in cached_sys[:3]:
+            cached_fw_samples.append({
+                "serialNumber": s.get("serialNumber"),
+                "systemName": s.get("systemName"),
+                "systemFirmware": s.get("systemFirmware"),
+                "motherboardFirmware": s.get("motherboardFirmware"),
+                "diskQualificationPackage": s.get("diskQualificationPackage"),
+                "shelves_count": len(s.get("shelves") or []),
+                "first_shelf": (s.get("shelves") or [{}])[0] if s.get("shelves") else None,
+            })
+        results["cached_harvest_samples"] = cached_fw_samples
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        pass  # same-origin only
+        self.end_headers()
+        self.wfile.write(json.dumps(results, indent=2, default=str).encode())
+
+    def handle_proxy(self, method):
+        _proxy_cfg = _api_cfg()["proxy"]
+        if self.path in _proxy_cfg["graphql_paths"]:
+            # GQL lives on a different host from the REST API
+            target_url = _gql_url()
+        else:
+            # Strip /api prefix, leaving e.g. /watchlist/all or /v2/watchlist/action
+            endpoint = self.path[4:]  # removes leading /api
+
+            # If the endpoint already carries an explicit version (/v2/...), use it
+            # as-is on the base domain. Otherwise, default to /v1.
+            if re.match(r'^/v\d+/', endpoint):
+                target_url = f"{_rest_base()}{endpoint}"
+            else:
+                target_url = f"{_rest_base()}{_proxy_cfg['default_rest_version']}{endpoint}"
+
+        # Read request body data for POST
+        content_length = int(self.headers.get('Content-Length', 0))
+        req_data = self.rfile.read(content_length) if content_length > 0 else None
+
+        # Clone headers (skipping host and connection to prevent conflicts)
+        headers = {}
+        for key, val in self.headers.items():
+            if key.lower() not in ['host', 'connection', 'content-length', 'accept-encoding']:
+                headers[key] = val
+
+        if method == 'POST' and 'Content-Type' not in headers:
+            headers['Content-Type'] = 'application/json'
+
+        def _do_proxy_request(ctx):
+            """Inner helper: make the proxied request with the given SSL context."""
+            req = urllib.request.Request(target_url, data=req_data, headers=headers, method=method)
+            with urllib.request.urlopen(req, context=ctx) as response:
+                res_data = response.read()
+                print(f"  \u2190 {response.status} ({len(res_data)} bytes)", flush=True)
+                self.send_response(response.status)
+                for key, val in response.getheaders():
+                    if key.lower() not in ['transfer-encoding', 'content-encoding', 'access-control-allow-origin']:
+                        self.send_header(key, val)
+                self.end_headers()
+                self.wfile.write(res_data)
+
+        # Query NetApp API using the shared (enterprise-CA-aware) SSL context
+        print(f"  >> PROXY {method} {target_url}", flush=True)
+        try:
+            _do_proxy_request(_ssl_ctx())
+        except urllib.error.HTTPError as e:
+            res_data = e.read()
+            body_preview = res_data[:200].decode('utf-8', errors='replace')
+            print(f"  << HTTP {e.code} ERROR: {body_preview}", flush=True)
+            # Detect if Zscaler/proxy is blocking at app layer (TLS succeeded but request rejected)
+            if e.code in (404, 403, 407) and 'Unsupported endpoint' in body_preview:
+                print(f"  [TLS] WARN Corporate proxy blocking this endpoint at application layer.", flush=True)
+                print(f"  [TLS]   TLS handshake succeeded but the proxy is filtering the request content.", flush=True)
+                print(f"  [TLS]   Ask IT to add '{_rest_host()}' to the SSL inspection bypass list.", flush=True)
+            self.send_response(e.code)
+            for key, val in e.headers.items():
+                if key.lower() not in ['transfer-encoding', 'content-encoding', 'access-control-allow-origin']:
+                    self.send_header(key, val)
+            self.end_headers()
+            self.wfile.write(res_data)
+        except ssl.SSLError as e:
+            # TLS handshake failed — refresh cert store and retry once
+            print(f"  [TLS] SSL error in proxy: {e} — refreshing cert store and retrying...", flush=True)
+            _refresh_ssl_ctx()
+            try:
+                _do_proxy_request(_ssl_ctx())
+            except Exception as e2:
+                print(f"  << PROXY RETRY FAILED: {e2}", flush=True)
+                self.send_response(502)
+                self.end_headers()
+                self.wfile.write(f"TLS error after cert refresh: {e2}".encode('utf-8'))
+        except Exception as e:
+            err_str = str(e)
+            # Check for TLS-related errors wrapped in urllib exceptions
+            if any(k in err_str for k in ('SSL', 'CERTIFICATE', 'certificate verify failed',
+                                           'UNABLE_TO_VERIFY', 'DEPTH_ZERO', 'CERT_UNTRUSTED')):
+                print(f"  [TLS] TLS-related proxy error: {e} — refreshing cert store and retrying...", flush=True)
+                _refresh_ssl_ctx()
+                try:
+                    _do_proxy_request(_ssl_ctx())
+                    return
+                except Exception as e2:
+                    err_str = str(e2)
+            print(f"  << PROXY EXCEPTION: {err_str}", flush=True)
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(err_str.encode('utf-8'))
+
+
+def _user_command(argv):
+    """python server.py --add-user NAME [--role admin|viewer] | --set-password NAME | --remove-user NAME | --list-users
+    The password is read from ARIA_NEW_PASSWORD or prompted for."""
+    import argparse, getpass
+    ap = argparse.ArgumentParser(prog="server.py")
+    ap.add_argument("--add-user"); ap.add_argument("--set-password"); ap.add_argument("--remove-user")
+    ap.add_argument("--list-users", action="store_true"); ap.add_argument("--role", default=None, choices=aria_auth.ROLES)
+    a, _ = ap.parse_known_args(argv)
+    if not (a.add_user or a.set_password or a.remove_user or a.list_users):
+        return False
+    if AUTH.mode != "local":
+        raise SystemExit("User accounts are used when ARIA_AUTH=local.")
+    if a.list_users:
+        for u in AUTH.list_users():
+            print(f"{u['name']:30s} {u['role']:8s} {u.get('created') or ''}")
+        return True
+    if a.remove_user:
+        print("removed" if AUTH.remove_user(a.remove_user) else "no such user")
+        return True
+    name = a.add_user or a.set_password
+    pw = os.environ.get("ARIA_NEW_PASSWORD") or getpass.getpass(f"Password for {name}: ")
+    existing = {u["name"].lower(): u for u in AUTH.list_users()}
+    role = a.role or (existing.get(name.lower()) or {}).get("role") or "viewer"
+    AUTH.set_user(name, pw, role)
+    print(f"{'updated' if name.lower() in existing else 'created'} {name} ({role})")
+    return True
+
+
+def main(block=True, port=None):
+    """Start ARIA. block=False (used by the desktop program) starts serving in a thread and returns the server."""
+    global PORT
+    if port:
+        PORT = int(port)
+    if _user_command(sys.argv[1:]):
+        sys.exit(0)
+    if BIND_ADDRESS not in ("127.0.0.1", "localhost", "::1") and AUTH.mode == "none" and os.environ.get("ARIA_INSECURE_NO_AUTH") != "1":
+        raise SystemExit("Refusing to listen on " + BIND_ADDRESS + " without sign-in. Set ARIA_AUTH=local (or header), or ARIA_INSECURE_NO_AUTH=1 on a trusted private network.")
+    # Initialize the cache DB on startup
+    db = _init_db()
+    cached, meta = _load_cached(db)
+    db.close()
+
+    # TLS probe: detect corporate SSL inspection proxies and auto-import CAs
+    # This runs in a background thread so it doesn't block server startup
+    threading.Thread(
+        target=_tls_probe_and_refresh,
+        args=(_rest_host(), 443),
+        daemon=True,
+        name="tls-probe"
+    ).start()
+
+    # Advisory scan: run in background if bulletins DB is absent or stale (>12 h old).
+    # This ensures the security bulletin database is always fresh without blocking startup.
+    def _startup_advisory_scan():
+        import time as _time
+        _time.sleep(45)  # wait for TLS probe + cert-store rebuild to complete first
+        try:
+            should_scan = not BULLETINS_PATH.exists()
+            if not should_scan:
+                try:
+                    _bdata = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
+                    _last = _bdata.get('lastUpdated') or _bdata.get('lastScanned', '')
+                    if _last:
+                        _last_dt = datetime.fromisoformat(_last.replace('Z', '+00:00'))
+                        _age_h = (datetime.now(timezone.utc) - _last_dt).total_seconds() / 3600
+                        should_scan = _age_h > 12
+                    else:
+                        should_scan = True
+                except Exception:
+                    should_scan = True
+            if should_scan:
+                print("  [STARTUP] Bulletins DB absent or stale — running background advisory scan...", flush=True)
+                scan_and_persist_advisories()
+                print("  [STARTUP] Background advisory scan complete.", flush=True)
+            else:
+                print("  [STARTUP] Bulletins DB is fresh — skipping advisory scan.", flush=True)
+        except Exception as _scan_err:
+            print(f"  [STARTUP] Advisory scan failed: {_scan_err}", flush=True)
+
+    threading.Thread(target=_startup_advisory_scan, daemon=True, name="startup-advisory-scan").start()
+
+    # StoragePerf (Plumb) integration: pull whichever customer sources are due
+    perf_integration.PerfPuller(_init_db).start()
+
+    # Start enrichment scheduler
+    try:
+        _cfg = json.loads(CONFIG_PATH.read_text(encoding='utf-8')) if CONFIG_PATH.exists() else {}
+        if _cfg.get('enrichEnabled', True):
+            _enrich_interval = int(_cfg.get('enrichIntervalHours', 6))
+            _nvd_key = _cfg.get('nvdApiKey') or None
+            _kb_interval = int(_cfg.get('kb_interval_hours', 168))
+            _enrichment_scheduler = EnrichmentScheduler(interval_hours=_enrich_interval, nvd_api_key=_nvd_key, kb_interval_hours=_kb_interval)
+            _enrichment_scheduler.start()
+    except Exception as _sched_err:
+        print(f'  [STARTUP] Enrichment scheduler failed to start: {_sched_err}', flush=True)
+
+    # Start harvest scheduler -- keeps live Active IQ fleet data (systems,
+    # risks, cases, config) fresh on its own timer, independent of whether
+    # anyone has the app open. Defaults on: this is the gap the reference-
+    # data schedulers above don't cover.
+    try:
+        _cfg2 = json.loads(CONFIG_PATH.read_text(encoding='utf-8')) if CONFIG_PATH.exists() else {}
+        if _cfg2.get('autoHarvestEnabled', True):
+            _auto_harvest_interval = int(_cfg2.get('autoHarvestIntervalHours', 4))
+            _harvest_scheduler = HarvestScheduler(interval_hours=_auto_harvest_interval)
+            _harvest_scheduler.start()
+    except Exception as _hsched_err:
+        print(f'  [STARTUP] Harvest scheduler failed to start: {_hsched_err}', flush=True)
+
+    # Start firmware baselines harvester (runs every 48h in background as fallback)
+    def _firmware_harvest_loop():
+        """Periodic firmware baseline harvester — checks NetApp docs for newer versions."""
+        import time as _fh_time
+        _fh_interval = 48 * 3600  # 48 hours
+        _fh_data_dir = os.path.join(os.path.dirname(__file__), "data")
+        # Wait 5 minutes after startup before first harvest
+        _fh_time.sleep(300)
+        while True:
+            try:
+                import sys as _fh_sys
+                _tools_dir = os.path.join(os.path.dirname(__file__), "tools")
+                if _tools_dir not in _fh_sys.path:
+                    _fh_sys.path.insert(0, _tools_dir)
+                from firmware_harvester import scheduled_harvest
+                print("  [FW-HARVEST] Starting scheduled firmware baseline harvest...", flush=True)
+                changes = scheduled_harvest(_fh_data_dir)
+                if changes:
+                    print(f"  [FW-HARVEST] Baselines updated: {len(changes)} changes", flush=True)
+                    for k, v in changes.items():
+                        print(f"    {k}: {v.get('old','')} → {v.get('new','')}", flush=True)
+                else:
+                    print("  [FW-HARVEST] No newer versions found.", flush=True)
+            except Exception as _fh_err:
+                print(f"  [FW-HARVEST] Harvest failed: {_fh_err}", flush=True)
+            _fh_time.sleep(_fh_interval)
+
+    try:
+        threading.Thread(target=_firmware_harvest_loop, daemon=True, name="fw-baseline-harvester").start()
+        print("  [STARTUP] Firmware baseline harvester scheduled (48h interval, first run in 5min)", flush=True)
+    except Exception as _fh_start_err:
+        print(f"  [STARTUP] Firmware harvester failed to start: {_fh_start_err}", flush=True)
+
+    # ── Print reference data freshness banner ──
+    _data_dir = os.path.join(os.path.dirname(__file__), 'data')
+    print('  [STARTUP] Reference Data Status:', flush=True)
+    for _ref_file in ['firmware_baselines.json', 'security_bulletins.json', 'knowledge_base.json',
+                       'eoa_database.json', 'imt_interop.json']:
+        _ref_path = os.path.join(_data_dir, _ref_file)
+        try:
+            with open(_ref_path, 'r', encoding='utf-8') as _rf:
+                _rdata = json.load(_rf)
+            _last = _rdata.get('_lastUpdated') or _rdata.get('lastUpdated') or '?'
+            _age = ''
+            try:
+                from datetime import date as _date_cls
+                _d = _date_cls.fromisoformat(_last)
+                _days = (_date_cls.today() - _d).days
+                _age = f' ({_days}d old)'
+            except: pass
+            print(f'    {_ref_file:35s}: {_last}{_age}', flush=True)
+        except FileNotFoundError:
+            print(f'    {_ref_file:35s}: [NOT FOUND]', flush=True)
+        except Exception as _ref_err:
+            print(f'    {_ref_file:35s}: [ERROR: {_ref_err}]', flush=True)
+
+    print(f"Starting CORS Proxy Web Server on port {PORT}...")
+    if cached:
+        print(f"  [CACHE] Found cached data: {meta['system_count']} systems (last sync: {meta['harvested_at']})")
+    else:
+        print(f"  [CACHE] No cached data — first harvest will be from API")
+    print(f"Access the dashboard at http://localhost:{PORT}  (listening on {BIND_ADDRESS}:{PORT}, sign-in: {AUTH.mode})")
+
+    # ThreadingHTTPServer instead of plain HTTPServer: the single-threaded
+    # server could only handle one request at a time, so a slow request
+    # (an external enrichment fetch, a large deliverable render, a
+    # long-running report query) blocked every other client -- including
+    # /api/sync-status polls -- until it finished. Request handlers already
+    # open/close their own short-lived SQLite connection per call (see
+    # _init_db()) rather than sharing one across requests, and the module's
+    # few pieces of shared mutable state (_is_syncing, the enrichment
+    # scheduler's _running/_kb_running flags) are already guarded by
+    # threading.Lock, so this is a safe drop-in swap, not a rewrite.
+    # daemon_threads=True so in-flight request threads don't block process
+    # shutdown on Ctrl+C.
+    server = http.server.ThreadingHTTPServer((BIND_ADDRESS, PORT), ProxyHTTPRequestHandler)
+    server.daemon_threads = True
+    if not block:
+        threading.Thread(target=server.serve_forever, daemon=True, name="aria-http").start()
+        return server
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping server.")
+        server.server_close()
+
+
+if __name__ == '__main__':
+    main()

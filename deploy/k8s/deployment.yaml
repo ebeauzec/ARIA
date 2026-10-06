@@ -1,0 +1,56 @@
+# ARIA is a single-instance application (SQLite cache, one sync at a time): keep replicas at 1 and use the Recreate strategy.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aria
+  namespace: aria
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: aria}
+  template:
+    metadata:
+      labels: {app: aria}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: aria
+          image: registry.example.com/aria:5.6.266      # build and push the image from the Dockerfile, then set your registry here
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: ARIA_AUTH, value: local}           # local = ARIA's own accounts; header = single sign-on through a proxy (see docs/DEPLOY.md)
+            - {name: ARIA_ALLOWED_HOSTS, value: aria.example.com}   # the name people use to reach ARIA
+            - {name: ARIA_COOKIE_SECURE, value: "1"}               # the ingress terminates TLS
+            # - {name: ARIA_CA_BUNDLE, value: /certs/ca.pem}       # extra trusted CA, mounted from a ConfigMap or Secret
+          envFrom:
+            - secretRef: {name: aria-secrets, optional: true}   # optional: first-administrator password (see secret.example.yaml)
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {memory: 2Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/aria}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: aria-data}
+        - name: tmp
+          emptyDir: {}

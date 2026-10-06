@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>
+    var _errFired = false;
+    window.addEventListener('error', function(e) {
+      // A failed resource (script, stylesheet, image) arrives here as an Event with no message. Say which file it was, and ignore other web sites
+      // (for example the font service being unreachable) because the page works without them.
+      if (!e.message && e.target && e.target !== window) {
+        var u = e.target.src || e.target.href || '';
+        if (!u || u.indexOf(location.origin) !== 0) { try { console.warn('Resource did not load:', u || e.target); } catch (x) {} return; }
+        if (/favicon/.test(u)) return;
+        if (window._errFired) return;
+        window._errFired = true;
+        alert('\u274C A file did not load:\n\n' + u + '\n\nIf you just signed in, the session may have ended: reload the page. Otherwise check that the server is running and that this file exists (browser console, F12 > Network).');
+        return;
+      }
+      if (_errFired) return; // Show only first error to avoid alert spam
+      _errFired = true;
+      var src = e.filename || '(no source)';
+      var stack = (e.error && e.error.stack) ? '\n\nStack:\n' + e.error.stack : '';
+      alert("❌ JAVASCRIPT ERROR DETECTED:\n\n" +
+            "Message: " + e.message + "\n" +
+            "Source: " + src + "\n" +
+            "Line: " + e.lineno + " | Col: " + e.colno +
+            stack + "\n\n" +
+            "Please copy or screenshot this message to help debug the issue.");
+    }, true);
+    window.addEventListener('unhandledrejection', function(e) {
+      if (_errFired) return;
+      _errFired = true;
+      var reason = e.reason ? (e.reason.stack || String(e.reason)) : 'Unknown promise rejection';
+      alert("❌ UNHANDLED PROMISE REJECTION:\n\n" + reason + "\n\nPlease copy or screenshot this message.");
+    });
+  </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARIA — Active IQ Risk Intelligence Advisor</title>
+  <!-- Load Inter Font from Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="styles.css?v=5.6.267-2">
+  
+  <!-- Load Chart.js locally -->
+  <script src="chart.js?v=5.6.267-2"></script>
+  <script src="pptxgen.bundle.js?v=5.6.267-2"></script>
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- Sidebar Navigation -->
+    <div class="sidebar">
+      <div class="logo-container" onclick="resetFilterAndGoToOverview()" style="cursor: pointer;" data-tooltip="Reset all active filters and return to the main environment overview.">
+        <div class="logo-icon">AIQ</div>
+        <div class="logo-text">Active IQ Advisor</div>
+      </div>
+      
+      <div class="nav-menu">
+        <div class="nav-item active" data-tab="overview" onclick="resetFilterAndGoToOverview()" data-tooltip="Return to the environment overview dashboard and reset all active customer, subgroup, watchlist, and KPI filters.">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+          Overview Dashboard
+        </div>
+        <div class="nav-item" data-tab="tam" onclick="switchTab('tam')" data-tooltip="Per-system technical detail: risks, OS/firmware upgrade paths, security bulletins, switch health, and physical cabling layout.">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
+          Technical Audit
+        </div>
+        <div class="nav-item" data-tab="sam" onclick="switchTab('sam')" data-tooltip="Support case tracking, capacity forecasting/growth projections, and performance (IOPS/latency) trends.">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+          Support & Ops
+        </div>
+        <div class="nav-item" data-tab="csm" onclick="switchTab('csm')" data-tooltip="Adoption scorecard, efficiency savings, SnapMirror protection status, and historical trend vs. last week/month/quarter.">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+          Value & ROI
+        </div>
+        <div class="nav-item" data-tab="plan" onclick="switchTab('plan')" data-tooltip="Generate customer-ready deliverables (QBR pack, security brief, risk & remediation brief, sustainability report, and more) plus fleet-wide contract/recommendation/lifecycle views.">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          Action Planner
+        </div>
+        <div class="nav-item" data-tab="tracker" onclick="switchTab('tracker')" data-tooltip="Persistent, cross-sync tracking of open risks, recommendations, and action items with status, owner, and due date -- survives re-harvests instead of resetting to a fresh snapshot every time.">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+          Remediation Tracker
+        </div>
+        <div class="nav-item" data-tab="success" onclick="switchTab('success')" data-tooltip="TAM-authored success plans per customer -- owner, lifecycle stage, status, and risk assessment. Mirrors NetApp Digital Advisor's Success Plans list; this is a workflow object you create, not something Active IQ's telemetry generates.">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+          Success Plans
+        </div>
+        <div class="nav-item" data-tab="settings" onclick="switchTab('settings')" data-tooltip="API credentials, watchlist scope, refresh and enrichment sources, SLA policy, notifications and access.">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          Settings & Config
+        </div>
+      </div>
+
+      <!-- Collapsible Sidebar Filters tree -->
+      <div class="sidebar-groups-section" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0 4px;">
+          <span style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 700;">Account Filters</span>
+          <button class="action-btn secondary" style="font-size: 0.65rem; padding: 2px 6px; border-radius: 4px;" onclick="resetFilter()" data-tooltip="Clear filters/search/KPI drill-down without leaving the current tab. (The logo and Overview Dashboard also reset filters, but additionally navigate you back to Overview.)">Clear Filters</button>
+        </div>
+        <div id="sidebarGroupsList" class="tree-menu">
+          <!-- JS dynamic groups list -->
+        </div>
+      </div>
+
+      
+      <div class="nav-footer">
+        <span id="navFooterToolName" style="font-weight:600;letter-spacing:0.02em;">ARIA</span><br>
+        <span id="navFooterVersion" style="font-size:0.7rem;opacity:0.65;">v4.0.0</span>
+      </div>
+    </div>
+    
+    <!-- Main Content Panel -->
+    <div class="main-content">
+      
+      <!-- Top Header Bar -->
+      <div class="top-header">
+        <div class="search-box">
+          <div style="position: relative; flex: 1; display: flex; align-items: center;">
+            <svg class="search-icon" style="position: absolute; left: 14px; top: 12px; color: var(--text-muted);" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="searchInput" class="search-input" style="padding-left: 40px; width: 100%;" placeholder="Search by Name, S/N, Cluster, Customer, CVE ID, case ID, or risk description..." data-tooltip="Matches system identity fields plus risk descriptions, CVE IDs, and support case IDs/symptoms — comma-separate multiple terms.">
+            <div id="searchSuggestionsContainer" class="custom-autocomplete-dropdown" style="display: none;"></div>
+          </div>
+          <button id="starSearchBtn" class="action-btn" style="padding: 10px 14px; display: flex; align-items: center; gap: 6px; font-size: 0.85rem; flex-shrink: 0;" onclick="starCurrentSearch()" data-tooltip="Save the current search query as a starred shortcut in the sidebar for easy access.">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+            Star Filter
+          </button>
+        </div>
+        
+        <div class="header-status" style="margin-left: auto;">
+
+          <!-- Manual Refresh Button -->
+          <button
+            id="manualRefreshBtn"
+            onclick="manualRefresh()"
+            class="action-btn"
+            style="padding: 7px 13px; display: flex; align-items: center; gap: 6px; font-size: 0.8rem; border-color: rgba(0,115,230,0.45); color: #60a5fa; background: rgba(0,115,230,0.08); transition: background 0.2s, border-color 0.2s, transform 0.1s;"
+            onmouseover="this.style.background='rgba(0,115,230,0.18)'; this.style.borderColor='rgba(0,115,230,0.7)';"
+            onmouseout="this.style.background='rgba(0,115,230,0.08)'; this.style.borderColor='rgba(0,115,230,0.45)';"
+            onmousedown="this.style.transform='scale(0.96)'" onmouseup="this.style.transform=''"
+            data-tooltip="Force a full refresh: pulls live data from Active IQ API, re-syncs enrichment (CVEs, version info), and redraws the current view in-place without changing your context.">
+            <svg id="refreshBtnIcon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            <span id="refreshBtnText">Refresh</span>
+          </button>
+
+          <!-- Import/Export menu — consolidates what used to be 4 separate
+               buttons split across two different header zones (Import ASUP
+               up here; Import Config/Export Config/Export CSV down in the
+               Overview table header), which made it unclear where to look
+               for any given import/export action. -->
+          <div style="position: relative;" id="importExportMenuWrapper">
+            <button
+              id="importExportMenuBtn"
+              onclick="toggleImportExportMenu(event)"
+              class="action-btn"
+              style="padding: 7px 13px; display: flex; align-items: center; gap: 6px; font-size: 0.8rem; border-color: rgba(168,85,247,0.45); color: #c084fc; background: rgba(168,85,247,0.08); transition: background 0.2s, border-color 0.2s, transform 0.1s;"
+              onmouseover="this.style.background='rgba(168,85,247,0.18)'; this.style.borderColor='rgba(168,85,247,0.7)';"
+              onmouseout="this.style.background='rgba(168,85,247,0.08)'; this.style.borderColor='rgba(168,85,247,0.45)';"
+              onmousedown="this.style.transform='scale(0.96)'" onmouseup="this.style.transform=''"
+              data-tooltip="Import an ASUP bundle or app config, or export your config/account report. All import and export actions live here.">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span>Import / Export</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <div id="importExportMenu" style="display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 1000; min-width: 260px; background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.6); padding: 6px; backdrop-filter: blur(10px);">
+              <button class="import-export-menu-item" onclick="closeImportExportMenu(); openAsupImportModal();" data-tooltip="Import an offline AutoSupport (.7z / .tgz / .zip / .xml) bundle when Active IQ is unreachable. Parsed data is persisted to the local database and added to the dashboard.">
+                <span>📦 Import ASUP Bundle</span>
+              </button>
+              <button class="import-export-menu-item" onclick="closeImportExportMenu(); triggerImportFileInput();" data-tooltip="Import local database, systems metadata, custom subgroups, and star filters from a JSON file.">
+                <span>⬆ Import Config (JSON)</span>
+              </button>
+              <div style="height: 1px; background: var(--border-color); margin: 4px 6px;"></div>
+              <button class="import-export-menu-item" onclick="closeImportExportMenu(); exportConfigJSON();" data-tooltip="Export all systems metadata, custom subgroups, and star filters to a JSON file to share or back up.">
+                <span>⬇ Export Config (JSON)</span>
+              </button>
+              <button class="import-export-menu-item" onclick="closeImportExportMenu(); exportCSV();" data-tooltip="Export the current filtered systems list, risk counts, and support statuses to a spreadsheet-compatible CSV file.">
+                <span>⬇ Export Account Report (CSV)</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="status-badge-header">
+            <span class="indicator disconnected"></span>
+            <span id="connectionStatusText" style="font-weight: 500;">Offline</span>
+          </div>
+          <!-- Enrichment status badge -->
+          <div id="enrichBadge" onclick="showEnrichLog()" title="Click to view enrichment log" style="display:none; align-items:center; gap:5px; cursor:pointer; padding:4px 12px; border-radius:20px; background:rgba(45,212,191,0.12); border:1px solid rgba(45,212,191,0.3); font-size:0.72rem; font-weight:600; color:#2dd4bf; transition:background 0.2s; flex-wrap:wrap;" onmouseover="this.style.background='rgba(45,212,191,0.22)'" onmouseout="this.style.background='rgba(45,212,191,0.12)'">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <span id="enrichBadgeText">0 enriched</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- VIEW: OVERVIEW DASHBOARD -->
+      <div id="overviewTab" class="tab-content active">
+        <!-- KPI Cards Row -->
+        <div class="kpi-row">
+          <div class="card kpi-card" id="kpiCardAll" onclick="setKpiFilter('ALL')" style="cursor: pointer;" data-tooltip="Total number of NetApp ONTAP storage systems monitored in Active IQ. Click to show all systems in the table below.">
+            <div class="card-title">Total Systems</div>
+            <div class="card-value" id="kpiTotalSystems">0</div>
+            <div class="card-subtitle">Active monitored assets</div>
+            <svg class="card-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+          </div>
+          <div class="card kpi-card" id="kpiCardCritical" onclick="setKpiFilter('CRITICAL')" style="cursor: pointer;" data-tooltip="Systems with at least one critical-severity risk flagged by Active IQ predictive analytics. Critical risks indicate potential data loss, outage, or security vulnerability. Click to filter.">
+            <div class="card-title">Critical Risks</div>
+            <div class="card-value" id="kpiCriticalRisks">0</div>
+            <div class="card-subtitle">Action required immediately</div>
+            <svg class="card-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          </div>
+          <div class="card kpi-card" id="kpiCardWarning" onclick="setKpiFilter('WARNING')" style="cursor: pointer;" data-tooltip="Systems with high-severity risks that require preventative review. These are not yet critical but could escalate without action. Click to filter.">
+            <div class="card-title">Active Warnings</div>
+            <div class="card-value" id="kpiWarningRisks">0</div>
+            <div class="card-subtitle">Preventative review recommended</div>
+            <svg class="card-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+          </div>
+          <div class="card kpi-card" id="kpiCardContract" onclick="setKpiFilter('CONTRACT')" style="cursor: pointer;" data-tooltip="Systems whose support contract (real isContractActive/overallContractEndDate from Active IQ) expires within 90 days. Proactive renewal avoids service gaps and ensures continued access to software updates, AutoSupport, and break/fix support. Click to filter.">
+            <div class="card-title">Expiring Contracts</div>
+            <div class="card-value" id="kpiContracts">0</div>
+            <div class="card-subtitle">Expires within 90 days</div>
+            <svg class="card-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          </div>
+          <div class="card kpi-card" id="kpiCardHealthScore" style="cursor: default;" data-tooltip="Active IQ's own official health score for this scope (0-100), computed by NetApp from AutoSupport freshness, firmware currency, security hardening, uptime, EOS exposure, sustainability, tech refresh status, and add-on adoption. Distinct from this tool's own risk-based scoring below -- shown here as the authoritative, vendor-issued number.">
+            <div class="card-title">Official AIQ Health Score</div>
+            <div class="card-value" id="kpiHealthScore">--</div>
+            <div class="card-subtitle" id="kpiHealthScoreSubtitle">Not yet reported</div>
+            <svg class="card-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+          </div>
+        </div>
+
+        <!-- Charts Grid Row -->
+        <div class="charts-grid">
+          <div class="card chart-card">
+            <div class="card-title" style="margin-bottom: 20px;">Total Account Storage Savings (Efficiency)</div>
+            <div class="chart-wrapper">
+              <canvas id="efficiencyChart"></canvas>
+            </div>
+          </div>
+          <div class="card chart-card">
+            <div class="card-title" style="margin-bottom: 20px;">Storage Capacity by System</div>
+            <div class="chart-wrapper">
+              <canvas id="capacityChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Risk Trend — day-over-day fleet/customer risk trend from
+             system_snapshots (captured on every harvest). Only shown once
+             enough days of history exist to draw a real trend, not a single
+             flat point. -->
+        <div class="card chart-card" id="overviewTrendCard" style="margin-bottom: 20px; display: none;">
+          <div class="card-title" style="margin-bottom: 20px;">Risk Trend — Critical &amp; High Findings Over Time</div>
+          <div class="chart-wrapper" style="height: 220px;">
+            <canvas id="riskTrendChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Needs Attention — a concrete "start here" for a returning TAM, instead
+             of just KPI counts with no ranking of what to actually look at first -->
+        <div class="card" id="overviewNeedsAttentionCard" style="margin-bottom: 20px; display: none;"></div>
+
+        <!-- Systems Table Card -->
+        <div class="card table-card">
+          <div class="table-header-row">
+            <div class="section-title">Monitored Systems &amp; Clusters</div>
+            <div style="display: flex; gap: 8px;">
+              <span style="font-size: 0.72rem; color: var(--text-muted); align-self: center;" data-tooltip="Import/export actions moved here from the top-right menu to reduce duplicate controls scattered across the page.">Import/export: see ⬆ top-right menu</span>
+            </div>
+          </div>
+          <div class="data-table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th onclick="sortTable('customerName')" style="cursor: pointer; user-select: none;">Customer Account <span id="sort-customerName" class="sort-icon"></span></th>
+                  <th onclick="sortTable('systemName')" style="cursor: pointer; user-select: none;">System Name <span id="sort-systemName" class="sort-icon"></span></th>
+                  <th onclick="sortTable('serialNumber')" style="cursor: pointer; user-select: none;">Serial Number <span id="sort-serialNumber" class="sort-icon"></span></th>
+                  <th onclick="sortTable('clusterName')" style="cursor: pointer; user-select: none;">Cluster <span id="sort-clusterName" class="sort-icon"></span></th>
+                  <th onclick="sortTable('platform')" style="cursor: pointer; user-select: none;">Platform <span id="sort-platform" class="sort-icon"></span></th>
+                  <th onclick="sortTable('status')" style="cursor: pointer; user-select: none;">Health Status <span id="sort-status" class="sort-icon"></span></th>
+                  <th onclick="sortTable('contracts.endDate')" style="cursor: pointer; user-select: none;">Contract End Date <span id="sort-contracts-endDate" class="sort-icon"></span></th>
+                </tr>
+              </thead>
+              <tbody id="overviewTableBody">
+                <!-- Javascript will inject table rows here -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Customer Portfolio — cross-account rollup for MSPs/partners managing
+             multiple customers. Everything else on this tab is scoped to whatever
+             one customer/selection is currently active; this is the one view that
+             answers "which of MY accounts needs attention right now" without
+             opening each one individually. Placed last since it's fleet-wide,
+             not scoped like everything above it. Only shown when >1 customer is
+             loaded. -->
+        <div class="card table-card" id="overviewPortfolioCard" style="margin-bottom: 20px; display: none;">
+          <div class="table-header-row">
+            <div class="section-title">Customer Portfolio</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 0.72rem; color: var(--text-muted);">Sorted by risk — click a row to focus that customer</span>
+              <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadPortfolioCSV()">Export CSV</button>
+            </div>
+          </div>
+          <div class="data-table-container">
+            <table class="data-table" id="overviewPortfolioTable">
+              <thead>
+                <tr>
+                  <th style="padding: 10px;">Customer</th>
+                  <th style="padding: 10px; text-align: center;">Systems</th>
+                  <th style="padding: 10px; text-align: center;">Critical Risks</th>
+                  <th style="padding: 10px; text-align: center;">High Risks</th>
+                  <th style="padding: 10px; text-align: center;">Contracts &lt;90d</th>
+                  <th style="padding: 10px; text-align: center;" data-tooltip="Systems already past hardware End of Support, plus systems reaching EOS within 6 months.">EOS Systems</th>
+                  <th style="padding: 10px; text-align: center;" data-tooltip="Percentage of this customer's Remediation Tracker items still within their due date or SLA policy default (Settings). This is the tracker's own SLA policy, not a NetApp support-contract SLA.">Tracker SLA %</th>
+                  <th style="padding: 10px; text-align: center;" data-tooltip="This tool's own computed risk-based health score (ASUP freshness, ARP, firmware, contract, risk, efficiency, case health) -- distinct from Active IQ's official vendor-issued Health Score shown on the Overview KPI row.">Risk Health Score</th>
+                </tr>
+              </thead>
+              <tbody id="overviewPortfolioBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: TECHNICAL AUDIT -->
+      <div id="tamTab" class="tab-content">
+        <div class="table-header-row" style="margin-bottom: 24px;">
+          <h2 style="font-weight: 700; font-size: 1.5rem;">Technical Health & Risk Mitigation<span id="tamScopeLabel" style="font-weight: 500; font-size: 0.9rem; color: var(--accent-cyan);"></span></h2>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div id="tamSystemSelectContainer" style="position: relative; width: 280px; z-index: 100;">
+              <!-- Custom Multi-Select Dropdown Button -->
+              <div id="tamMultiSelectBtn" style="padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; width: 100%; background-color: var(--bg-card); border: 1px solid var(--border-color); cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem;" onclick="toggleTAMMultiSelect(event)" data-tooltip="Select one or multiple systems to compile aggregated risks and technical bulletins.">
+                <span id="tamMultiSelectLabel">Select Systems...</span>
+                <span style="font-size: 0.6rem; color: var(--text-muted);">▼</span>
+              </div>
+              <!-- Dropdown List of Checkboxes -->
+              <div id="tamMultiSelectDropdown" style="display: none; position: absolute; top: 100%; left: 0; width: 100%; max-height: 250px; overflow-y: auto; background-color: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); margin-top: 4px; box-shadow: var(--shadow); padding: 8px 0; z-index: 101;">
+                <!-- Dynamic checkboxes injected here -->
+              </div>
+            </div>
+            <div id="tamActiveSystem" class="status-badge-header" style="background-color: rgba(0, 229, 255, 0.05); border-color: rgba(0, 229, 255, 0.15);">
+              <!-- Active Selected System info -->
+            </div>
+          </div>
+        </div>
+        
+        <!-- Node Physical Layout & Port Mapping Graphic -->
+        <div id="tamNodeVisualCard" class="card" style="margin-bottom: 24px; padding: 24px; display: none;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--accent-cyan); display: flex; align-items: center; justify-content: space-between;">
+            <span>Controller Node Port Assignments & Link Topology</span>
+            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">Real-time Cabling & Physical Layer (L1) Audit</span>
+          </div>
+          <div id="tamNodeVisualContainer">
+            <!-- Injected dynamically by JS -->
+          </div>
+        </div>
+
+        <!-- MetroCluster Status & Health Card -->
+        <div id="tamMetroClusterCard" class="card" style="margin-bottom: 24px; padding: 24px; display: none;">
+          <div class="section-title" style="margin-bottom: 16px; color: #ff9800; display: flex; align-items: center; justify-content: space-between;">
+            <span>⬡ MetroCluster Configuration &amp; DR Health</span>
+            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">Synchronous Replication &amp; Switchover Readiness</span>
+          </div>
+          <div id="tamMetroClusterContainer">
+            <!-- Injected dynamically by JS -->
+          </div>
+        </div>
+
+        <!-- StorageGRID Topology, Tenants & ILM Card -->
+        <div id="tamStorageGridCard" class="card" style="margin-bottom: 24px; padding: 24px; display: none;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--accent-cyan); display: flex; align-items: center; justify-content: space-between;">
+            <span>&#9638; StorageGRID Topology, Tenants &amp; ILM</span>
+            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">Grid sites, node roles, buckets &amp; data-protection policy</span>
+          </div>
+          <div id="tamStorageGridContainer">
+            <!-- Injected dynamically by JS -->
+          </div>
+        </div>
+
+        <!-- SANtricity E-Series Hardware Audit Card -->
+        <div id="tamEseriesVisualCard" class="card" style="margin-bottom: 24px; padding: 24px; display: none;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--accent-cyan); display: flex; align-items: center; justify-content: space-between;">
+            <span>SANtricity Hardware & Storage Component Health Audit</span>
+            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">E-Series Controller, Shelf, Disk, & Pool Status</span>
+          </div>
+          <div id="tamEseriesVisualContainer">
+            <!-- Injected dynamically by JS -->
+          </div>
+        </div>
+
+        <!-- SVM & Protocol Security Audit Card -->
+        <div id="tamSvmCard" class="card" style="margin-bottom: 24px; padding: 24px; display: none;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--accent-cyan); display: flex; align-items: center; justify-content: space-between;">
+            <span>Storage Virtual Machine (SVM) & Protocol Security Audit</span>
+            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">Logical Containment, Access Control, & Protocol Compliance</span>
+          </div>
+          <div id="tamSvmContainer">
+            <!-- Injected dynamically by JS -->
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <!-- Main Risks Table -->
+          <div class="card table-card" style="margin-bottom: 0;">
+            <div class="section-title" style="margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+              Active Predictive Risk Signatures
+            </div>
+            <div class="data-table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th onclick="sortTable('tamRisks', 'severity')" style="cursor: pointer; user-select: none;">Severity <span id="sort-tamRisks-severity" class="sort-icon"> ↕</span></th>
+                    <th onclick="sortTable('tamRisks', 'category')" style="cursor: pointer; user-select: none;">Category <span id="sort-tamRisks-category" class="sort-icon"> ↕</span></th>
+                    <th onclick="sortTable('tamRisks', 'description')" style="cursor: pointer; user-select: none;">Risk Description & Recommended Remediation <span id="sort-tamRisks-description" class="sort-icon"> ↕</span></th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="tamRisksTableBody">
+                  <!-- JS injected risks -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+          
+          <!-- Upgrade advisor sidebar -->
+          <div class="card" id="tamUpgradeContainer">
+            <!-- OS Upgrade Planner UI -->
+          </div>
+        </div>
+
+        <!-- Network Switch & Fabric Validation Card -->
+        <div class="card table-card" style="margin-top: 24px;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--accent-cyan); display: flex; align-items: center; justify-content: space-between;">
+            <span>Network Switch & Fabric Firmware Validation</span>
+            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">Active IQ IMT Verification</span>
+          </div>
+          <div class="data-table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th onclick="sortTable('tamSwitches', 'systemName')" style="width: 140px; cursor: pointer; user-select: none;">System <span id="sort-tamSwitches-systemName" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('tamSwitches', 'model')" style="width: 220px; cursor: pointer; user-select: none;">Switch Model & S/N <span id="sort-tamSwitches-model" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('tamSwitches', 'type')" style="width: 160px; cursor: pointer; user-select: none;">Role / Type <span id="sort-tamSwitches-type" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('tamSwitches', 'firmware')" style="width: 180px; cursor: pointer; user-select: none;">Firmware <span id="sort-tamSwitches-firmware" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('tamSwitches', 'status')" style="width: 140px; cursor: pointer; user-select: none;">Validation Status <span id="sort-tamSwitches-status" class="sort-icon"> ↕</span></th>
+                  <th>Remediation Action</th>
+                </tr>
+              </thead>
+              <tbody id="tamSwitchesTableBody">
+                <!-- JS dynamic switches list -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Security & Technical Bulletins Card -->
+        <div class="card table-card" style="margin-top: 24px;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--accent-cyan);">Active Security & Technical Bulletins</div>
+          <div class="data-table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th onclick="sortTable('tamSecurity', 'id')" style="width: 150px; cursor: pointer; user-select: none;">Bulletin ID <span id="sort-tamSecurity-id" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('tamSecurity', 'title')" style="cursor: pointer; user-select: none;">Description / Mitigations & Workarounds <span id="sort-tamSecurity-title" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('tamSecurity', 'severity')" style="width: 120px; cursor: pointer; user-select: none;">Severity <span id="sort-tamSecurity-severity" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('tamSecurity', 'status')" style="width: 120px; cursor: pointer; user-select: none;">Status <span id="sort-tamSecurity-status" class="sort-icon"> ↕</span></th>
+                </tr>
+              </thead>
+              <tbody id="tamSecurityBulletinsBody">
+                <!-- JS dynamic bulletins -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- VIEW: SUPPORT & OPERATIONS -->
+      <div id="samTab" class="tab-content">
+        <div class="table-header-row" style="margin-bottom: 24px;">
+          <h2 style="font-weight: 700; font-size: 1.5rem;">Support Contracts & Lifecycles</h2>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <select id="samSystemSelect" class="form-input" style="padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; width: 280px; background-color: var(--bg-card); cursor: pointer;">
+              <!-- JS injected options -->
+            </select>
+            <div id="samActiveSystem" class="status-badge-header" style="background-color: rgba(0, 229, 255, 0.05); border-color: rgba(0, 229, 255, 0.15);">
+              <!-- Active Selected System info -->
+            </div>
+          </div>
+        </div>
+        
+        <!-- Contract, Lifecycle, Hypervisor, and AutoSupport Row -->
+        <div class="kpi-row" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 24px;">
+          <div class="card" id="samContractCard">
+            <!-- Contract details card -->
+          </div>
+          <div class="card" id="samLifecycleCard">
+            <!-- Platform EOS/EOA lifecycle status card -->
+          </div>
+          <div class="card" id="samHypervisorCard">
+            <!-- 3rd-Party Virtualization integration status card -->
+          </div>
+          <div class="card" id="samAutoSupportCard">
+            <!-- AutoSupport Status Card -->
+          </div>
+        </div>
+
+        <!-- Logistics, Site Access & Sales Health Row -->
+        <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; margin-bottom: 24px;">
+          <div class="card" id="samLogisticsCard" style="display: flex; flex-direction: column;">
+            <!-- Logistics details card -->
+          </div>
+          <div class="card" id="samSalesHealthCard" style="display: flex; flex-direction: column;">
+            <!-- Customer sales health scorecard -->
+          </div>
+        </div>
+
+        <!-- Storage Protocol & Data Protection Profile -->
+        <div class="card" style="margin-bottom: 24px;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--accent-cyan); display: flex; align-items: center; justify-content: space-between;">
+            <span>Storage Protocol & Data Protection Profile</span>
+            <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">Real Active IQ SVM/LIF Data</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px;">
+            <div class="sub-card-details" id="samWorkloadVirtualization" style="background: rgba(255, 255, 255, 0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+              <!-- JS injected Virtualization details -->
+            </div>
+            <div class="sub-card-details" id="samWorkloadDatabase" style="background: rgba(255, 255, 255, 0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+              <!-- JS injected Database details -->
+            </div>
+            <div class="sub-card-details" id="samWorkloadBackup" style="background: rgba(255, 255, 255, 0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+              <!-- JS injected Backup details -->
+            </div>
+          </div>
+          <div style="background: rgba(0, 229, 255, 0.03); border: 1px dashed var(--accent-cyan); border-radius: var(--radius-md); padding: 16px;">
+            <h4 style="font-size: 0.85rem; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+              Active Workload Recommendations
+            </h4>
+            <ul id="samWorkloadRecommendations" style="font-size: 0.82rem; line-height: 1.6; color: var(--text-secondary); margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px;">
+              <!-- JS injected Best Practice Recommendations -->
+            </ul>
+          </div>
+        </div>
+
+        <!-- Active Technical Support Cases Table Card -->
+        <div class="card table-card" style="margin-bottom: 24px;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--accent-cyan);">Active Technical Support Cases</div>
+          <div class="data-table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th onclick="sortTable('samCases', 'id')" style="width: 140px; cursor: pointer; user-select: none;">Case ID <span id="sort-samCases-id" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('samCases', 'title')" style="cursor: pointer; user-select: none;">Subject & Action Updates <span id="sort-samCases-title" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('samCases', 'severity')" style="width: 120px; cursor: pointer; user-select: none;">Severity <span id="sort-samCases-severity" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('samCases', 'status')" style="width: 120px; cursor: pointer; user-select: none;">Status <span id="sort-samCases-status" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('samCases', 'createdDate')" style="width: 180px; cursor: pointer; user-select: none;">Timestamps <span id="sort-samCases-createdDate" class="sort-icon"> ↕</span></th>
+                </tr>
+              </thead>
+              <tbody id="samSupportCasesBody">
+                <!-- JS dynamic cases -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- Field Actions Table -->
+        <div class="card table-card">
+          <div class="section-title" style="margin-bottom: 16px;">Outstanding Field Actions (FA) Bulletins</div>
+          <div class="data-table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th onclick="sortTable('samFieldActions', 'id')" style="width: 150px; cursor: pointer; user-select: none;">FA Reference ID <span id="sort-samFieldActions-id" class="sort-icon"> ↕</span></th>
+                  <th onclick="sortTable('samFieldActions', 'title')" style="cursor: pointer; user-select: none;">Action Required & Impact Scope <span id="sort-samFieldActions-title" class="sort-icon"> ↕</span></th>
+                </tr>
+              </thead>
+              <tbody id="samFieldActionsBody">
+                <!-- JS injected field actions -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- VIEW: CSM VALUE & ROI -->
+      <div id="csmTab" class="tab-content">
+        <div class="table-header-row" style="margin-bottom: 24px;">
+          <h2 style="font-weight: 700; font-size: 1.5rem;">Adoption Scorecard & Business Value</h2>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <select id="csmSystemSelect" class="form-input" style="padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; width: 280px; background-color: var(--bg-card); cursor: pointer;">
+              <!-- JS injected options -->
+            </select>
+            <div id="csmActiveSystem" class="status-badge-header" style="background-color: rgba(0, 229, 255, 0.05); border-color: rgba(0, 229, 255, 0.15);">
+              <!-- Active Selected System info -->
+            </div>
+          </div>
+        </div>
+
+        <div id="csmHealthScoreCard" style="margin-bottom: 24px;"></div>
+
+        <div class="card" id="csmHistoryCard" style="margin-bottom: 24px; display:none;">
+          <!-- Historical Trend Panel -- JS injected -->
+        </div>
+
+        <div class="kpi-row" style="grid-template-columns: repeat(2, 1fr); margin-bottom: 32px;">
+          <div class="card" id="csmSavingsCard">
+            <!-- Efficiency Savings Card -->
+          </div>
+          <div class="card" id="csmSnapmirrorCard">
+            <!-- SnapMirror Replication Card -->
+          </div>
+        </div>
+
+        <!-- Storage Uptime & Downtime -- rolls up downtimeEvents (real, per-
+             system Active IQ data) to fleet/customer scope. Monthly uptime %
+             is NOT available -- Active IQ's GraphQL API is never actually
+             queried for it in this build (confirmed by inspecting the query
+             field lists), so this card reports real downtime EVENTS/duration
+             only and says so explicitly rather than showing a fabricated
+             percentage. -->
+        <div class="card" id="csmUptimeCard" style="margin-bottom: 32px;">
+          <!-- Fleet Uptime & Downtime Rollup -->
+        </div>
+
+        <div class="card" id="csmPerfCard" style="margin-bottom: 32px; display: none;">
+          <!-- StoragePerf (Plumb) measured performance -->
+        </div>
+
+        <!-- Capacity and Performance Projections / Trends line graph -->
+        <div class="card" style="margin-bottom: 32px; display: flex; flex-direction: column;">
+          <div class="table-header-row" style="margin-bottom: 16px;">
+            <div class="section-title" style="color: var(--accent-cyan); font-weight: 700;">Storage Capacity &amp; Performance Forecasting Projections</div>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;" id="csmGrowthRateText">Average Growth: -</div>
+              <div style="display:flex; gap:4px; background:rgba(255,255,255,0.04); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:3px;" id="capViewToggle">
+                <button id="capViewAggrBtn" onclick="setCapacityView('aggregate')" style="font-size:0.75rem;font-weight:600;padding:4px 12px;border-radius:4px;border:none;cursor:pointer;background:var(--accent-cyan);color:#000;">Aggregate</button>
+                <button id="capViewNodeBtn" onclick="setCapacityView('node')" style="font-size:0.75rem;font-weight:600;padding:4px 12px;border-radius:4px;border:none;cursor:pointer;background:transparent;color:var(--text-secondary);">Per Node</button>
+              </div>
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+            <div class="chart-wrapper" style="height: 260px;">
+              <canvas id="csmProjectionsChart"></canvas>
+            </div>
+            <div style="background-color: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 20px; border-radius: var(--radius-sm); display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Runway Projection</span>
+                <div style="font-size: 1.6rem; font-weight: 800; margin-top: 6px;" id="csmDaysToLimitText">-</div>
+                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;" id="csmLimitDateText">-</div>
+              </div>
+              <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 12px;">
+                <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Peak IOPS Performance</span>
+                <div style="font-size: 1.3rem; font-weight: 800; margin-top: 6px; color: var(--status-info);" id="csmPeakIopsText">-</div>
+                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;" id="csmAvgLatencyText">-</div>
+              </div>
+            </div>
+          </div>
+          <!-- Per-Node Breakdown Table (hidden by default, shown in Per Node view) -->
+          <div id="csmNodeBreakdown" style="margin-top:20px; display:none;">
+            <div style="font-size:0.75rem;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:10px;letter-spacing:0.05em;">Capacity Breakdown by Node</div>
+            <div style="overflow-x:auto;">
+              <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                <thead>
+                  <tr style="border-bottom:2px solid var(--border-color);color:var(--text-muted);text-align:left;">
+                    <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Node / System <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Customer <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Model <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Raw TB <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Used TB <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;min-width:160px;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Utilization <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Growth/day <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Runway <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Source <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                  </tr>
+                </thead>
+                <tbody id="csmNodeBreakdownBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Adoption Checklist — 2-column categorised layout -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;">
+          <div class="card table-card">
+            <div class="section-title" style="margin-bottom: 12px; display:flex; justify-content:space-between; align-items:center;">
+              <span>Operations &amp; Security</span>
+              <span id="csmCheckLeftScore" style="font-size:0.78rem; font-weight:700; color:var(--accent-cyan);"></span>
+            </div>
+            <div id="csmAdoptionChecklist">
+              <!-- Left column checks -->
+            </div>
+          </div>
+          <div class="card table-card">
+            <div class="section-title" style="margin-bottom: 12px; display:flex; justify-content:space-between; align-items:center;">
+              <span>Data Protection &amp; Lifecycle</span>
+              <span id="csmCheckRightScore" style="font-size:0.78rem; font-weight:700; color:var(--accent-purple);"></span>
+            </div>
+            <div id="csmAdoptionChecklistRight">
+              <!-- Right column checks -->
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- VIEW: ACTION PLAN GENERATOR -->
+      <div id="planTab" class="tab-content">
+        <div class="table-header-row" style="margin-bottom: 24px;">
+          <h2 style="font-weight: 700; font-size: 1.5rem;">Account Action Planner</h2>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <select id="planTargetSelect" class="form-input" style="padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; width: 300px; background-color: var(--bg-card); cursor: pointer;">
+              <!-- Generated customers and systems -->
+            </select>
+            <button class="action-btn" onclick="generateActionPlan()" data-tooltip="Analyze all active systems and compile a consolidated operational health action plan.">Generate Operational Action Plan</button>
+          </div>
+        </div>
+
+        <div id="planControlsPanel" class="card" style="display: none; padding: 14px 24px; margin-bottom: 20px; flex-direction: row; justify-content: space-between; align-items: center;">
+          <div style="font-size: 0.85rem; color: var(--text-secondary);">Action Plan loaded. Use the tabs below to navigate sections.</div>
+          <button class="action-btn" onclick="downloadFullActionPlan()" data-tooltip="Download the entire generated action plan -- choose Text, Markdown or Word (.docx), same as every other deliverable.">⬇ Download Action Plan</button>
+        </div>
+
+        <!-- Plan Sub-Tabs Navigation (Hidden until generated) -->
+        <div id="planTabsHeader" class="action-plan-tabs-nav" style="display: none;">
+          <!-- Injected dynamically by JS -->
+        </div>
+
+        <div class="card" style="padding: 32px; background-color: var(--bg-card);">
+          <div id="generatedPlanBody" class="plan-document-body">
+            <!-- Action plan compiles here -->
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: REMEDIATION TRACKER -->
+      <div id="trackerTab" class="tab-content">
+        <div class="table-header-row" style="margin-bottom: 24px;">
+          <h2 style="font-weight: 700; font-size: 1.5rem;">Remediation Tracker</h2>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <select id="trackerStatusFilter" class="form-input" style="padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; width: 180px; background-color: var(--bg-card); cursor: pointer;" onchange="renderTrackerTab()">
+              <option value="">All Statuses</option>
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+              <option value="deferred">Deferred</option>
+              <option value="accepted">Risk Accepted</option>
+            </select>
+            <select id="trackerCustomerFilter" class="form-input" style="padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; width: 220px; background-color: var(--bg-card); cursor: pointer;" onchange="renderTrackerTab()">
+              <option value="">All Customers</option>
+            </select>
+            <button class="action-btn secondary" onclick="importTrackerItemsFromScope()" data-tooltip="Scans EVERY loaded customer (not just the selected one) for critical/high risks, near-term warranty expirations, EOS systems, and DR-configured clusters/systems needing a failover test verification, and adds any not already tracked. Use the Customer filter below to view one account at a time.">Import Findings Into Tracker (All Customers)</button>
+          </div>
+        </div>
+
+        <div id="trackerActivityCard" class="card" style="margin-bottom: 20px; display: none;"></div>
+
+        <div id="trackerKpiRow" class="kpi-row" style="grid-template-columns: repeat(6, 1fr); margin-bottom: 20px;">
+          <!-- Injected dynamically by JS -->
+        </div>
+
+        <div class="card" style="padding: 0; overflow-x: auto;">
+          <table class="data-table" style="width: 100%;">
+            <thead>
+              <tr>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="status" onclick="sortTrackerBy('status')">Status<span class="sort-indicator"></span></th>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="severity" onclick="sortTrackerBy('severity')">Severity<span class="sort-indicator"></span></th>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="sla" onclick="sortTrackerBy('sla')">SLA<span class="sort-indicator"></span></th>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="customer" onclick="sortTrackerBy('customer')">Customer<span class="sort-indicator"></span></th>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="system" onclick="sortTrackerBy('system')">System<span class="sort-indicator"></span></th>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="title" onclick="sortTrackerBy('title')">Title<span class="sort-indicator"></span></th>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="owner" onclick="sortTrackerBy('owner')">Owner<span class="sort-indicator"></span></th>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="dueDate" onclick="sortTrackerBy('dueDate')">Due Date<span class="sort-indicator"></span></th>
+                <th style="padding: 10px; cursor: pointer; user-select: none;" data-tracker-sort="lastSeen" onclick="sortTrackerBy('lastSeen')">Last Seen<span class="sort-indicator"></span></th>
+                <th style="padding: 10px;">Notes</th>
+                <th style="padding: 10px;"></th>
+              </tr>
+            </thead>
+            <tbody id="trackerTableBody">
+              <!-- Rendered dynamically by JS -->
+            </tbody>
+          </table>
+          <div id="trackerEmptyState" style="display: none; text-align: center; color: var(--text-muted); padding: 32px;">
+            No tracked items yet. Click "Import Findings Into Tracker (All Customers)" to pull every loaded customer's risks and recommendations in, or track individual findings from the Technical Audit and Action Planner tabs.
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: SUCCESS PLANS -->
+      <div id="successTab" class="tab-content">
+        <div class="table-header-row" style="margin-bottom: 24px;">
+          <h2 style="font-weight: 700; font-size: 1.5rem;">Success Plans</h2>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <button class="action-btn" onclick="openSuccessPlanModal()" data-tooltip="Create a new Success Plan -- a TAM-authored workflow object, not something Active IQ's telemetry generates. Mirrors NetApp Digital Advisor's own Success Plans list.">+ New Success Plan</button>
+          </div>
+        </div>
+
+        <div id="successKpiRow" class="kpi-row" style="grid-template-columns: repeat(5, 1fr); margin-bottom: 20px;">
+          <!-- Injected dynamically by JS -->
+        </div>
+
+        <!-- Suggested Success Plans -- auto-generated from each customer's real
+             harvested data (risks, contracts, EOS, ARP, health score), not
+             fabricated. Hidden entirely when no suggestions apply. -->
+        <div id="suggestedPlansCard" class="card" style="margin-bottom: 20px; display: none;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div style="font-weight: 700; font-size: 1rem;">Suggested Success Plans</div>
+              <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">Generated from each customer's real risk, contract, EOS, and health data. Review and adopt any number -- adopted plans write back to Active IQ like any manually created plan.</div>
+            </div>
+            <button class="action-btn" id="adoptSuggestedPlansBtn" onclick="adoptSelectedSuggestedPlans()" disabled>Adopt Selected (<span id="suggestedPlansSelectedCount">0</span>)</button>
+          </div>
+          <div id="suggestedPlansList"></div>
+        </div>
+
+        <div class="card" style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <span style="font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 700;">Filters:</span>
+          <select id="successOwnerFilter" class="form-input" style="padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; width: 200px; background-color: var(--bg-card); cursor: pointer;" onchange="renderSuccessPlansTab()">
+            <option value="">TAM owner: All</option>
+          </select>
+          <select id="successStageFilter" class="form-input" style="padding: 8px 16px; border-radius: var(--radius-sm); font-weight: 600; width: 220px; background-color: var(--bg-card); cursor: pointer;" onchange="renderSuccessPlansTab()">
+            <option value="">Lifecycle Stage to: All</option>
+            <option value="ONBOARD_AND_IMPLEMENT">Onboard &amp; Implement</option>
+            <option value="OPERATE_AND_OPTIMIZE">Operate &amp; Optimize</option>
+            <option value="PREVENT_AND_SOLVE">Prevent &amp; Solve</option>
+            <option value="EXPAND_AND_EVOLVE">Expand &amp; Evolve</option>
+          </select>
+          <button class="action-btn secondary" style="font-size: 0.72rem; padding: 6px 14px;" onclick="document.getElementById('successOwnerFilter').value='';document.getElementById('successStageFilter').value='';renderSuccessPlansTab()">Clear Filters</button>
+        </div>
+
+        <div class="card" style="padding: 0; overflow-x: auto;">
+          <div style="padding: 14px 16px; font-weight: 700; font-size: 0.95rem; border-bottom: 1px solid var(--border-color);" id="successPlansCountHeader">Success plans (0)</div>
+          <table class="data-table" style="width: 100%;">
+            <thead>
+              <tr>
+                <th style="padding: 10px;">CSP name</th>
+                <th style="padding: 10px;">TAM owner</th>
+                <th style="padding: 10px;">Linked to (scope)</th>
+                <th style="padding: 10px;">Status</th>
+                <th style="padding: 10px;">Health</th>
+                <th style="padding: 10px;">Progress</th>
+              </tr>
+            </thead>
+            <tbody id="successTableBody">
+              <!-- Rendered dynamically by JS -->
+            </tbody>
+          </table>
+          <div id="successEmptyState" style="display: none; text-align: center; color: var(--text-muted); padding: 32px;">
+            No Data &mdash; click "+ New Success Plan" to create one. This mirrors NetApp Digital Advisor's own Success Plans feature: real, queryable and writable Active IQ data (confirmed via live schema introspection) &mdash; a plan you create here becomes a real Success Plan visible to your whole team in Digital Advisor, not a local-only record.
+          </div>
+        </div>
+      </div>
+
+      <!-- Success Plan create/edit modal -->
+      <div id="successPlanModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center;">
+        <div class="card" style="width: 480px; max-width: 92vw;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h3 id="successPlanModalTitle" style="margin:0; font-size:1.1rem;">New Success Plan</h3>
+            <button class="action-btn secondary" style="padding:4px 10px;" onclick="closeSuccessPlanModal()">✕</button>
+          </div>
+          <div style="font-size:0.72rem; color:var(--text-muted); background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.3); border-radius:var(--radius-sm); padding:8px 10px; margin-bottom:14px;">⚠ Saving writes back to the customer's live Active IQ account -- this becomes a real Success Plan in NetApp Digital Advisor, visible to your whole team.</div>
+          <input type="hidden" id="successPlanId">
+          <div class="form-group">
+            <label class="form-label" for="successPlanName">CSP name</label>
+            <input type="text" id="successPlanName" class="form-input" placeholder="e.g. FY27 Renewal & Expansion Plan">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanOwner">TAM owner (email)</label>
+            <input type="text" id="successPlanOwner" class="form-input" placeholder="Assigned by Active IQ on create">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanScope">Linked to (customer)</label>
+            <select id="successPlanScope" class="form-input"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanStage">Lifecycle stage</label>
+            <select id="successPlanStage" class="form-input">
+              <option value="ONBOARD_AND_IMPLEMENT">Onboard &amp; Implement</option>
+              <option value="OPERATE_AND_OPTIMIZE">Operate &amp; Optimize</option>
+              <option value="PREVENT_AND_SOLVE">Prevent &amp; Solve</option>
+              <option value="EXPAND_AND_EVOLVE">Expand &amp; Evolve</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanStatus">Status</label>
+            <select id="successPlanStatus" class="form-input">
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+              <option value="CLOSED">Closed</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanRisk">Health</label>
+            <select id="successPlanRisk" class="form-input">
+              <option value="GREEN">On Track</option>
+              <option value="YELLOW">At Risk</option>
+              <option value="RED">Critical</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanNotes">Notes</label>
+            <textarea id="successPlanNotes" class="form-input" style="min-height:70px;"></textarea>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px;">
+            <button class="action-btn secondary" id="successPlanDeleteBtn" style="display:none; border-color:rgba(239,68,68,0.4); color:#ef4444;" onclick="closeSuccessPlanFromModal()">Close Plan</button>
+            <div style="display:flex; gap:10px; margin-left:auto;">
+              <button class="action-btn secondary" onclick="closeSuccessPlanModal()">Cancel</button>
+              <button class="action-btn" onclick="saveSuccessPlanFromModal()">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: SETTINGS & CONFIG -->
+      <div id="settingsTab" class="tab-content">
+
+        <!-- ── Page Header ──────────────────────────────────── -->
+        <div class="settings-header">
+          <div>
+            <h2 class="settings-title">Settings &amp; Configuration</h2>
+            <p class="settings-subtitle">Connect your Active IQ API, configure watchlists, and set how ARIA refreshes and reports.</p>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;">
+            <button class="action-btn" onclick="manualRefresh()" style="padding: 10px 16px; font-size: 0.86rem; font-weight: 700; white-space: nowrap; display: flex; align-items: center; gap: 7px; border-color: rgba(56,189,248,0.45); color: #60a5fa; background: rgba(56,189,248,0.10);">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <polyline points="1 20 1 14 7 14"></polyline>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              Refresh
+            </button>
+            <button class="action-btn settings-save-btn" onclick="saveSettings()">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save Configuration
+            </button>
+          </div>
+        </div>
+
+        <div class="settings-tabbar" id="settingsTabbar" role="tablist">
+          <button class="settings-tab active" data-pane="connection" role="tab" title="Active IQ token, watchlists and customer accounts" onclick="settingsShowPane('connection')">🔑 Connection</button>
+          <button class="settings-tab" data-pane="sync" role="tab" title="Automatic refresh, reference-data scanner and Sync Now" onclick="settingsShowPane('sync')">🔄 Data &amp; Sync</button>
+          <button class="settings-tab" data-pane="policy" role="tab" title="Remediation SLAs, value reporting and notifications" onclick="settingsShowPane('policy')">📏 Policies &amp; Reports</button>
+          <button class="settings-tab" data-pane="fleet" role="tab" title="Serial numbers and custom subgroups" onclick="settingsShowPane('fleet')">🗂️ Fleet</button>
+          <button class="settings-tab" data-pane="perf" role="tab" title="Measured performance from StoragePerf" onclick="settingsShowPane('perf')">⚡ StoragePerf</button>
+          <button class="settings-tab" data-pane="access" role="tab" title="Sign-in, users and roles" onclick="settingsShowPane('access')">👥 Access</button>
+          <button class="settings-tab" data-pane="advanced" role="tab" title="System metadata and logistics editor" onclick="settingsShowPane('advanced')">⚙️ Advanced</button>
+        </div>
+
+        <div class="settings-pane active" id="settingsPane-connection">
+        <div class="settings-cols">
+        <!-- Primary 2-col: API Auth | Watchlist -->
+        <div class="settings-contents">
+
+          <!-- CARD: API Authentication -->
+          <div class="card settings-card" style="border-top: 2px solid var(--accent-cyan);">
+            <div class="settings-card-header">
+              <div class="settings-card-icon" style="background: rgba(56,189,248,0.12);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2.5"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+              </div>
+              <div>
+                <div class="settings-card-title" style="color: var(--accent-cyan);">API Authentication</div>
+                <div class="settings-card-desc">Active IQ refresh token — required for all data sync</div>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label class="form-label" for="settingsRefreshToken" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>Refresh Token</span>
+                <span class="settings-toggle-link" onclick="const t=document.getElementById('settingsRefreshToken'); t.type=t.type==='password'?'text':'password'">👁 Toggle</span>
+              </label>
+              <textarea id="settingsRefreshToken" class="form-input" rows="3" placeholder="Paste your Active IQ Refresh Token here..." style="font-family: var(--font-mono); font-size: 0.79rem; resize: vertical; border-color: rgba(56,189,248,0.25);"></textarea>
+              <div class="form-helper">Stored locally. Never sent to any third party. Auto-rotated on expiry.</div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label class="form-label" for="settingsApiBaseUrl">API Base URL</label>
+              <input type="text" id="settingsApiBaseUrl" class="form-input" placeholder="https://api.activeiq.netapp.com/v1">
+              <div class="form-helper">Leave as default unless using a regional endpoint.</div>
+            </div>
+
+            <div class="settings-toggle-row">
+              <label class="switch"><input type="checkbox" id="settingsMockModeToggle"><span class="slider"></span></label>
+              <div>
+                <span class="settings-toggle-label">Offline Demo Mode</span>
+                <span class="settings-toggle-desc">Use mock data — no API token required.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- CARD: Watchlist Scope -->
+          <div class="card settings-card" style="border-top: 2px solid #a78bfa;">
+            <div class="settings-card-header">
+              <div class="settings-card-icon" style="background: rgba(167,139,250,0.12);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2.5"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2"/></svg>
+              </div>
+              <div>
+                <div class="settings-card-title" style="background: linear-gradient(135deg, #a78bfa, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Watchlist Scope</div>
+                <div class="settings-card-desc">Filter fleet by Active IQ watchlist membership</div>
+              </div>
+            </div>
+
+            <div class="settings-toggle-row" style="margin-bottom: 12px; border-color: rgba(167,139,250,0.2); background: rgba(167,139,250,0.05);">
+              <label class="switch"><input type="checkbox" id="settingsWatchlistOnlyToggle"><span class="slider"></span></label>
+              <div>
+                <span class="settings-toggle-label">Watchlist-Only Mode</span>
+                <span class="settings-toggle-desc">Only show systems that belong to your watchlists.</span>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 10px;">
+              <label class="form-label">Watchlist IDs</label>
+              <textarea id="settingsWatchlistIds" class="form-input" rows="5" placeholder="One per line — Name = UUID or just UUID:&#10;&#10;My TAM Accounts = abc123-def456&#10;Priority Fleet = xyz987-uvw654&#10;&#10;IDs auto-discovered on next sync." style="resize: vertical; font-family: var(--font-mono); font-size: 0.76rem; border-color: rgba(167,139,250,0.25);"></textarea>
+            </div>
+
+            <div id="watchlistScopeStatus" class="settings-status-banner" style="border-left-color: rgba(167,139,250,0.5); margin-bottom: 10px;">No watchlists imported. Showing all systems.</div>
+
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <button class="action-btn" style="font-size: 0.76rem; padding: 7px 12px; flex: 1; background: linear-gradient(135deg, rgba(167,139,250,0.2), rgba(129,140,248,0.15)); border-color: rgba(167,139,250,0.4);" onclick="resolveAndImportWatchlists()">📋 Resolve &amp; Sync</button>
+              <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 12px;" onclick="clearImportedWatchlists()">✕ Clear</button>
+            </div>
+            <div class="form-helper">Find IDs at <a href="https://activeiq.netapp.com" target="_blank" style="color: #a78bfa;">activeiq.netapp.com</a> → Watchlists → copy UUID from URL.</div>
+          </div>
+        </div>
+
+          <div class="settings-span">
+        <!-- CARD: Multiple Customer Accounts (multi-tenant support) -->
+        <div class="card settings-card" style="border-top: 2px solid #34d399; margin-bottom: 16px;">
+          <div class="settings-card-header" style="justify-content: space-between;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div class="settings-card-icon" style="background: rgba(52,211,153,0.12);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </div>
+              <div>
+                <div class="settings-card-title" style="color: #34d399;">Multiple Customer Accounts</div>
+                <div class="settings-card-desc">Sync several separate Active IQ credentials — merged into one unified fleet view, tagged by account.</div>
+              </div>
+            </div>
+            <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 12px;" onclick="addAccountRow()">+ Add Account</button>
+          </div>
+
+          <div id="accountsListContainer" style="display:flex; flex-direction:column; gap:10px; margin: 12px 0;">
+            <!-- Populated by loadAccountsUI() -->
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button class="action-btn" style="font-size: 0.78rem; padding: 8px 14px;" onclick="saveAccountsUI()">💾 Save Accounts</button>
+            <span id="accountsSaveStatus" style="font-size: 0.72rem; color: var(--text-secondary);"></span>
+          </div>
+          <div class="form-helper" style="margin-top:8px;">The single Refresh Token field above still works for one account. Accounts added here are additional, separate customers — each syncs with its own credential.</div>
+        </div>
+
+          </div>
+        </div>
+        </div>
+        <div class="settings-pane" id="settingsPane-sync">
+        <div class="settings-cols">
+        <!-- CARD: Auto-Refresh Fleet Data -->
+        <div class="card settings-card" style="border-top: 2px solid #2dd4bf; margin-bottom: 16px;">
+          <div class="settings-card-header">
+            <div class="settings-card-icon" style="background: rgba(45,212,191,0.12);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </div>
+            <div>
+              <div class="settings-card-title" style="background: linear-gradient(135deg, #2dd4bf, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Auto-Refresh Fleet Data</div>
+              <div class="settings-card-desc">Re-syncs systems, risks, cases &amp; configuration status from Active IQ on a timer -- keeps the tool current even with no browser tab open</div>
+            </div>
+          </div>
+
+          <div class="settings-toggle-row" style="margin-bottom: 12px; border-color: rgba(45,212,191,0.2); background: rgba(45,212,191,0.05);">
+            <label class="switch"><input type="checkbox" id="settingsAutoHarvestEnabled" checked><span class="slider"></span></label>
+            <div>
+              <span class="settings-toggle-label">Enable Auto-Refresh</span>
+              <span class="settings-toggle-desc">Runs a full harvest from Active IQ on this server's own timer, independent of anyone having the app open</span>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label" for="settingsAutoHarvestInterval">Refresh Interval</label>
+            <select id="settingsAutoHarvestInterval" class="form-input settings-sync-select" style="border-color: rgba(45,212,191,0.25);">
+              <option value="1">Every Hour</option>
+              <option value="2">Every 2 Hours</option>
+              <option value="4" selected>Every 4 Hours</option>
+              <option value="8">Every 8 Hours</option>
+              <option value="12">Every 12 Hours</option>
+              <option value="24">Every 24 Hours</option>
+            </select>
+          </div>
+
+          <div id="autoHarvestStatusPanel" style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(45,212,191,0.06); border: 1px solid rgba(45,212,191,0.15); margin-bottom: 12px; font-size: 0.78rem;">
+            <div id="autoHarvestStatusLed" style="width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0;"></div>
+            <div id="autoHarvestStatusText" style="flex: 1; color: var(--text-secondary);">Scheduler not started</div>
+            <div id="autoHarvestStatusTime" style="color: var(--text-muted); font-size: 0.72rem; font-family: var(--font-mono);"></div>
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button class="action-btn" style="font-size: 0.76rem; padding: 7px 14px; flex: 1; background: linear-gradient(135deg, rgba(45,212,191,0.2), rgba(6,182,212,0.15)); border-color: rgba(45,212,191,0.4);" onclick="triggerAutoHarvestNow()">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align: -1px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Refresh Now
+            </button>
+            <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 14px;" onclick="refreshAutoHarvestStatus()">↻ Status</button>
+          </div>
+        </div>
+
+        <!-- CARD: Enrichment Scanner -->
+        <div class="card settings-card" style="border-top: 2px solid #34d399; margin-bottom: 16px;">
+          <div class="settings-card-header">
+            <div class="settings-card-icon" style="background: rgba(52,211,153,0.12);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            </div>
+            <div>
+              <div class="settings-card-title" style="background: linear-gradient(135deg, #34d399, #10b981); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Enrichment Scanner</div>
+              <div class="settings-card-desc">Auto-scan external sources for CVEs, advisories, KB articles &amp; best practices</div>
+            </div>
+          </div>
+
+          <div class="settings-toggle-row" style="margin-bottom: 12px; border-color: rgba(52,211,153,0.2); background: rgba(52,211,153,0.05);">
+            <label class="switch"><input type="checkbox" id="settingsEnrichEnabled" checked><span class="slider"></span></label>
+            <div>
+              <span class="settings-toggle-label">Enable Auto-Enrichment</span>
+              <span class="settings-toggle-desc">Scan CISA KEV, NVD, NetApp PSIRT, EPSS, KB articles on schedule</span>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+            <div class="form-group" style="margin: 0;">
+              <label class="form-label" for="settingsEnrichInterval">Security Scan Interval</label>
+              <select id="settingsEnrichInterval" class="form-input settings-sync-select" style="border-color: rgba(52,211,153,0.25);">
+                <option value="6">Every 6 Hours</option>
+                <option value="12" selected>Every 12 Hours</option>
+                <option value="24">Every 24 Hours</option>
+                <option value="48">Every 48 Hours</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin: 0;">
+              <label class="form-label" for="settingsKbInterval">KB Crawl Interval</label>
+              <select id="settingsKbInterval" class="form-input settings-sync-select" style="border-color: rgba(52,211,153,0.25);">
+                <option value="24">Every 24 Hours</option>
+                <option value="48">Every 48 Hours</option>
+                <option value="72">Every 72 Hours</option>
+                <option value="168" selected>Every 7 Days</option>
+                <option value="240">Every 10 Days</option>
+                <option value="336">Every 14 Days</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-helper" style="margin-bottom: 12px;">Security: fast, frequently updated CVE/PSIRT/EPSS sources. KB Crawl: slow, network-intensive KB article indexing (runs independently).</div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+            <div class="form-group" style="margin: 0;">
+              <label class="form-label" for="settingsNvdApiKey" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>NVD API Key <span style="font-weight:400;color:var(--text-muted);font-size:0.7rem;">(optional)</span></span>
+                <span class="settings-toggle-link" onclick="const t=document.getElementById('settingsNvdApiKey'); t.type=t.type==='password'?'text':'password'">👁</span>
+              </label>
+              <input type="password" id="settingsNvdApiKey" class="form-input" placeholder="Free key → faster scans" style="font-family: var(--font-mono); font-size: 0.76rem; border-color: rgba(52,211,153,0.25);">
+            </div>
+            <div class="form-group" style="margin: 0;">
+              <label class="form-label" for="settingsGithubToken" style="display:flex; justify-content:space-between; align-items:center;">
+                <span>GitHub Token <span style="font-weight:400;color:var(--text-muted);font-size:0.7rem;">(optional)</span></span>
+                <span class="settings-toggle-link" onclick="const t=document.getElementById('settingsGithubToken'); t.type=t.type==='password'?'text':'password'">👁</span>
+              </label>
+              <input type="password" id="settingsGithubToken" class="form-input" placeholder="ghp_… → 5,000 req/hr GitHub API" style="font-family: var(--font-mono); font-size: 0.76rem; border-color: rgba(129,140,248,0.25);">
+          </div>
+          <div class="form-helper" style="margin-bottom: 12px;">Free NVD API key: <a href="https://nvd.nist.gov/developers/request-an-api-key" target="_blank" style="color: #34d399;">nvd.nist.gov/developers</a> — increases rate limit from 5 to 50 req/30s. GitHub PAT: <a href="https://github.com/settings/tokens?type=beta" target="_blank" style="color: #818cf8;">github.com/settings/tokens</a> — raises API rate limit from 60 to 5,000 req/hr.</div>
+
+          <div id="enrichStatusPanel" style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(52,211,153,0.06); border: 1px solid rgba(52,211,153,0.15); margin-bottom: 12px; font-size: 0.78rem;">
+            <div id="enrichStatusLed" style="width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0;"></div>
+            <div id="enrichStatusText" style="flex: 1; color: var(--text-secondary);">Scanner not started</div>
+            <div id="enrichStatusTime" style="color: var(--text-muted); font-size: 0.72rem; font-family: var(--font-mono);"></div>
+          </div>
+
+          <div style="display: flex; gap: 8px;">
+            <button class="action-btn" style="font-size: 0.76rem; padding: 7px 14px; flex: 1; background: linear-gradient(135deg, rgba(52,211,153,0.2), rgba(16,185,129,0.15)); border-color: rgba(52,211,153,0.4);" onclick="triggerEnrichmentScan()">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align: -1px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              Scan Now
+            </button>
+            <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 14px;" onclick="refreshEnrichmentStatus()">↻ Status</button>
+          </div>
+        </div>
+
+          </div>
+          <div class="settings-span">
+        <!-- Sync Controls Bar -->
+
+        <div class="settings-sync-bar">
+          <div class="settings-sync-times">
+            <div class="settings-sync-stat">
+              <div class="settings-sync-label">Last Sync</div>
+              <div id="syncLastTime" class="settings-sync-value">Never</div>
+            </div>
+            <div class="settings-sync-stat">
+              <div class="settings-sync-label">Next Scheduled</div>
+              <div id="syncNextTime" class="settings-sync-value">Not set</div>
+            </div>
+            <div class="settings-sync-stat">
+              <div class="settings-sync-label">Auto-Sync Interval</div>
+              <select id="settingsSyncInterval" class="form-input settings-sync-select" onchange="updateScheduledSyncInfo()">
+                <option value="0">Manual Only</option>
+                <option value="6">Every 6 Hours</option>
+                <option value="12">Every 12 Hours</option>
+                <option value="24">Every 24 Hours</option>
+                <option value="168">Every 7 Days</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-sync-actions">
+            <button class="action-btn secondary" style="font-size: 0.78rem; padding: 7px 14px;" onclick="runAPIDiagnostics()">🔬 Diagnostics</button>
+            <button class="action-btn" style="font-size: 0.85rem; padding: 9px 20px; font-weight: 700; display: flex; align-items: center; gap: 7px;" onclick="triggerManualSync()">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" id="syncSpinnerIcon"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              Sync Now
+            </button>
+          </div>
+        </div>
+
+          </div>
+        </div>
+        </div>
+        <div class="settings-pane" id="settingsPane-policy">
+        <div class="settings-cols">
+          <div class="settings-span">
+        <!-- CARD: Remediation SLA Policy -->
+        <div class="card settings-card" style="border-top: 2px solid #f59e0b; margin-bottom: 16px;">
+          <div class="settings-card-header">
+            <div class="settings-card-icon" style="background: rgba(245,158,11,0.12);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div>
+              <div class="settings-card-title" style="background: linear-gradient(135deg, #f59e0b, #f97316); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Remediation SLA Policy</div>
+              <div class="settings-card-desc">Days-to-remediate by severity, used by the Remediation Tracker when an item has no manually-set due date</div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px;">
+            <div class="form-group" style="margin: 0;">
+              <label class="form-label" for="settingsSlaCritical" style="color:#ef4444;">Critical</label>
+              <input type="number" id="settingsSlaCritical" class="form-input" min="1" value="7" style="border-color: rgba(239,68,68,0.25);">
+            </div>
+            <div class="form-group" style="margin: 0;">
+              <label class="form-label" for="settingsSlaHigh" style="color:#f59e0b;">High</label>
+              <input type="number" id="settingsSlaHigh" class="form-input" min="1" value="30" style="border-color: rgba(245,158,11,0.25);">
+            </div>
+            <div class="form-group" style="margin: 0;">
+              <label class="form-label" for="settingsSlaMedium" style="color:#eab308;">Medium</label>
+              <input type="number" id="settingsSlaMedium" class="form-input" min="1" value="90" style="border-color: rgba(234,179,8,0.25);">
+            </div>
+            <div class="form-group" style="margin: 0;">
+              <label class="form-label" for="settingsSlaLow" style="color:#94a3b8;">Low</label>
+              <input type="number" id="settingsSlaLow" class="form-input" min="1" value="180" style="border-color: rgba(148,163,184,0.25);">
+            </div>
+          </div>
+          <div class="form-helper" style="margin-bottom: 12px;">Values are days. A tracked item with a manually-set due date always uses that instead of the policy default.</div>
+          <button class="action-btn" style="font-size: 0.76rem; padding: 7px 14px;" onclick="saveSlaSettingsFromUI()">Save SLA Policy</button>
+        </div>
+
+          </div>
+        <!-- CARD: Notifications -->
+        <div class="card settings-card" style="border-top: 2px solid #818cf8; margin-bottom: 16px;">
+          <div class="settings-card-header">
+            <div class="settings-card-icon" style="background: rgba(129,140,248,0.12);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            </div>
+            <div>
+              <div class="settings-card-title" style="background: linear-gradient(135deg, #818cf8, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Notifications</div>
+              <div class="settings-card-desc">POST a summary to a webhook (Slack/Teams-compatible) after a harvest finds a genuine increase in critical risk count -- contracts expiring within 30 days are included as extra context in that alert, but never trigger one on their own</div>
+            </div>
+          </div>
+
+          <div class="settings-toggle-row" style="margin-bottom: 12px; border-color: rgba(129,140,248,0.2); background: rgba(129,140,248,0.05);">
+            <label class="switch"><input type="checkbox" id="settingsWebhookEnabled"><span class="slider"></span></label>
+            <div>
+              <span class="settings-toggle-label">Enable Webhook Notifications</span>
+              <span class="settings-toggle-desc">Only fires on a genuine increase in critical risk count since the last harvest -- never on a decrease or unchanged count</span>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label class="form-label" for="settingsWebhookUrl">Webhook URL</label>
+            <input type="password" id="settingsWebhookUrl" class="form-input" placeholder="https://hooks.slack.com/services/... (leave blank to keep current)" style="font-family: var(--font-mono); font-size: 0.76rem; border-color: rgba(129,140,248,0.25);">
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="action-btn" style="font-size: 0.76rem; padding: 7px 14px;" onclick="saveWebhookSettingsFromUI()">Save</button>
+            <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 14px;" onclick="testWebhookFromUI()">Send Test Notification</button>
+          </div>
+          <div id="webhookStatusText" style="margin-top: 10px; font-size: 0.78rem; color: var(--text-muted);"></div>
+        </div>
+
+        </div>
+        </div>
+        <div class="settings-pane" id="settingsPane-fleet">
+        <div class="settings-cols">
+        <!-- ── Section: Fleet Configuration ─────────────────── -->
+
+        <div class="settings-contents">
+
+          <!-- CARD: Serial Numbers -->
+          <div class="card settings-card">
+            <div class="settings-card-header">
+              <div class="settings-card-icon">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              </div>
+              <div>
+                <div class="settings-card-title">System Serial Numbers</div>
+                <div class="settings-card-desc">Fallback when watchlists are not configured</div>
+              </div>
+            </div>
+            <textarea id="settingsSerialNumbers" class="form-input" rows="8" placeholder="Enter serial numbers (one per line):&#10;&#10;100000000000&#10;100000000000" style="resize: vertical; font-family: var(--font-mono); font-size: 0.78rem;"></textarea>
+            <div class="form-helper" style="margin-top: 6px;">NetApp system serials to monitor directly.</div>
+          </div>
+
+          <!-- CARD: Custom Subgroups -->
+          <div class="card settings-card">
+            <div class="settings-card-header">
+              <div class="settings-card-icon" style="background: rgba(251,191,36,0.1);">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--status-warning)" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <div>
+                <div class="settings-card-title">Custom Subgroups</div>
+                <div class="settings-card-desc">Named sets of systems for filtered views: name one below and tick its systems</div>
+              </div>
+            </div>
+            <div id="settingsGroupsManagerList" style="display: flex; flex-direction: column; gap: 6px; min-height: 60px;"></div>
+            <div class="form-helper" style="margin: 12px 0 8px;">A subgroup is a named set of systems. Once created it appears in the sidebar filters and in the filter lists of the reports.</div>
+            <div class="settings-meta-panel">
+                <div class="section-title" id="subgroupFormTitle" style="margin-bottom: 14px; font-size: 0.85rem;">Create Custom Subgroup</div>
+                <div class="form-group">
+                  <label class="form-label" for="newGroupNameInput">Subgroup Name</label>
+                  <input type="text" id="newGroupNameInput" class="form-input" placeholder="e.g. US Production, SG nodes...">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Select Systems</label>
+                  <div id="groupManagerSystemsList" style="max-height: 160px; overflow-y: auto; background: rgba(0,0,0,0.15); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); display: flex; flex-direction: column;"></div>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                  <button id="saveSubgroupBtn" class="action-btn" style="flex: 1; font-size: 0.8rem;" onclick="handleCreateGroup()">Create Subgroup</button>
+                  <button id="cancelSubgroupEditBtn" class="action-btn secondary" style="display: none; font-size: 0.8rem;" onclick="cancelSubgroupEdit()">Cancel</button>
+                </div>
+              </div>
+          </div>
+        </div>
+
+        </div>
+        </div>
+        <div class="settings-pane" id="settingsPane-perf">
+        <div id="settingsPerfHost"></div>
+        </div>
+        <div class="settings-pane" id="settingsPane-access">
+        <div class="settings-cols">
+        <!-- CARD: Users & Access (team deployments: ARIA_AUTH=local or header) -->
+        <div class="card settings-card" id="userAdminCard" style="border-top: 2px solid #38bdf8;">
+          <div class="settings-card-header">
+            <div class="settings-card-icon" style="background: rgba(56,189,248,0.12);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <div>
+              <div class="settings-card-title">Users &amp; Access</div>
+              <div class="settings-card-subtitle" id="userAdminWho"></div>
+            </div>
+          </div>
+          <div id="userAdminSignIn" style="margin-bottom:12px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:rgba(255,255,255,0.02);">
+            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between;">
+              <div>
+                <div style="font-size:0.85rem;font-weight:600;" id="signInStatus">Sign-in</div>
+                <div class="form-helper" id="signInDetail" style="margin:2px 0 0;"></div>
+              </div>
+              <button class="action-btn" id="signInToggle" style="font-size:0.76rem;padding:7px 14px;display:none;" onclick="signInToggle()"></button>
+            </div>
+          </div>
+          <div id="userAdminHeaderNote" class="form-helper" style="display:none;margin-bottom:12px;">Sign-in is handled by your single sign-on proxy. Who is an administrator is set with ARIA_ADMIN_USERS and ARIA_ADMIN_GROUPS; everyone else is a read-only viewer.</div>
+          <div id="userAdminAdmin" style="display:none;">
+            <div style="overflow-x:auto;margin-bottom:12px;">
+              <table style="width:100%;border-collapse:collapse;font-size:0.82rem;" id="userAdminTable"></table>
+            </div>
+            <div class="form-helper" style="margin-bottom:8px;">Add a user. The password you type is temporary: the person must choose their own at the first sign-in. Passwords need at least 10 characters. Viewers can read reports; administrators can also sync, change settings and write back to Active IQ.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+              <input type="text" id="userAdminNewName" class="form-input" placeholder="User name" autocomplete="off" style="max-width:180px;">
+              <input type="password" id="userAdminNewPw" class="form-input" placeholder="Temporary password" autocomplete="new-password" style="max-width:200px;">
+              <select id="userAdminNewRole" class="form-input" style="max-width:130px;"><option value="viewer">Viewer</option><option value="admin">Administrator</option></select>
+              <button class="action-btn" style="font-size:0.76rem;padding:7px 14px;" onclick="userAdminAdd()">Add user</button>
+            </div>
+          </div>
+          <div id="userAdminSelf" style="display:none;margin-top:14px;border-top:1px solid var(--border-color);padding-top:12px;">
+            <div class="form-label" style="margin-bottom:6px;">Change my password</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <input type="password" id="userAdminOldPw" class="form-input" placeholder="Current password" autocomplete="current-password" style="max-width:190px;">
+              <input type="password" id="userAdminNewPw1" class="form-input" placeholder="New password" autocomplete="new-password" style="max-width:190px;">
+              <input type="password" id="userAdminNewPw2" class="form-input" placeholder="New password again" autocomplete="new-password" style="max-width:190px;">
+              <button class="action-btn secondary" style="font-size:0.76rem;padding:7px 14px;" onclick="userAdminChangeOwn()">Change password</button>
+            </div>
+          </div>
+          <div id="userAdminMsg" class="form-helper" style="margin-top:10px;min-height:1.2em;"></div>
+        </div>
+
+        </div>
+        </div>
+        <div class="settings-pane" id="settingsPane-advanced">
+        <!-- ── Section: Advanced ─────────────────────────────── -->
+
+
+        <!-- Accordion: Developer Tools -->
+        <div class="card settings-accordion" style="margin-bottom: 10px;">
+          <div class="settings-accordion-header" onclick="const b=document.getElementById('advancedToolsBody');const a=document.getElementById('advancedToolsArrow');const open=b.style.display!=='none';b.style.display=open?'none':'block';a.style.transform=open?'rotate(0deg)':'rotate(90deg)';">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div class="settings-card-icon" style="background: rgba(56,189,248,0.08);">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              </div>
+              <div>
+                <div class="settings-card-title" style="color: var(--accent-cyan);">Developer Tools</div>
+                <div class="settings-card-desc">Live GraphQL query console</div>
+              </div>
+            </div>
+            <svg id="advancedToolsArrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" style="transform: rotate(0deg); transition: transform 0.2s; flex-shrink: 0;"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+
+          <div id="advancedToolsBody" style="display: none; margin-top: 20px;">
+            <div style="display: grid; grid-template-columns: 1fr; gap: 20px; align-items: start;">
+              <!-- GraphQL Console -->
+              <div class="settings-meta-panel">
+                <div style="font-weight: 700; font-size: 0.85rem; color: var(--accent-cyan); margin-bottom: 4px;">GraphQL Query Console</div>
+                <div style="font-size: 0.72rem; color: var(--text-secondary); margin-bottom: 14px;">Execute GraphQL queries to filter or aggregate Active IQ telemetry.</div>
+                <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; margin-bottom: 14px;">
+                  <div>
+                    <label class="form-label" for="sandboxGraphQLQuery" style="font-size: 0.72rem;">GraphQL Query</label>
+                    <textarea id="sandboxGraphQLQuery" class="form-input" rows="10" style="font-family: monospace; font-size: 0.78rem; background-color: var(--bg-sidebar);"></textarea>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <div>
+                      <label class="form-label" for="sandboxGraphQLVariables" style="font-size: 0.72rem;">Variables (JSON)</label>
+                      <textarea id="sandboxGraphQLVariables" class="form-input" rows="4" style="font-family: monospace; font-size: 0.78rem; background-color: var(--bg-sidebar);" placeholder="{}"></textarea>
+                    </div>
+                    <button class="action-btn" style="width: 100%; font-size: 0.82rem; padding: 9px;" onclick="runSandboxGraphQLQuery()">Execute Query</button>
+                    <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 10px; border-radius: var(--radius-sm);">
+                      <div style="font-size: 0.66rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">Execution Metrics</div>
+                      <div style="font-size: 0.75rem; display: flex; justify-content: space-between; margin-bottom: 4px;"><span>Status:</span><strong id="sandboxQueryStatus" style="color: var(--text-muted);">Idle</strong></div>
+                      <div style="font-size: 0.75rem; display: flex; justify-content: space-between;"><span>Latency:</span><strong id="sandboxQueryLatency" style="color: var(--text-muted);">-</strong></div>
+                    </div>
+                  </div>
+                </div>
+                <div style="border-top: 1px solid var(--border-color); padding-top: 12px;">
+                  <label class="form-label" style="font-size: 0.72rem;">Response (JSON)</label>
+                  <div style="background-color: rgba(0,0,0,0.3); border: 1px solid var(--border-color); padding: 14px; border-radius: var(--radius-sm); max-height: 220px; overflow-y: auto; font-family: monospace; font-size: 0.76rem; color: var(--status-normal); white-space: pre-wrap;" id="sandboxGraphQLOutput">// Executed query result will render here...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Utility strip: Config file + App update + API Setup Guide + Privacy -->
+        <div class="settings-utility-strip">
+          <!-- Config File -->
+          <div class="settings-utility-card">
+            <div class="settings-utility-label">Config File</div>
+            <div style="display: flex; gap: 8px;">
+              <button class="action-btn secondary" onclick="triggerImportFileInput()" style="flex: 1; font-size: 0.74rem; padding: 7px 6px;">📥 Import</button>
+              <button class="action-btn secondary" onclick="exportConfigJSON()" style="flex: 1; font-size: 0.74rem; padding: 7px 6px;">📤 Export</button>
+            </div>
+          </div>
+          <!-- App Update -->
+          <div class="settings-utility-card">
+            <div class="settings-utility-label">Application</div>
+            <button class="action-btn secondary" id="appUpdateButton" onclick="updateApplicationCode()" style="width: 100%; font-size: 0.74rem; padding: 8px;">🔄 Update Application</button>
+          </div>
+          <!-- Setup Guide (compact) -->
+          <div class="settings-utility-card" style="flex: 2;">
+            <div class="settings-utility-label">API Setup Guide</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+              <div class="settings-guide-step"><span class="step-num" style="width:18px;height:18px;font-size:0.65rem;">1</span> Log in to <a href="https://activeiq.netapp.com" target="_blank" onclick="window.open(this.href,'_blank');return false;" style="color:var(--accent-cyan);">activeiq.netapp.com</a></div>
+              <div class="settings-guide-step"><span class="step-num" style="width:18px;height:18px;font-size:0.65rem;">2</span> Quick Links → API Services → Generate Token</div>
+              <div class="settings-guide-step"><span class="step-num" style="width:18px;height:18px;font-size:0.65rem;">3</span> Paste Refresh Token above → Save Configuration</div>
+              <div class="settings-guide-step"><span class="step-num" style="width:18px;height:18px;font-size:0.65rem;">4</span> Click Sync Now — watchlists auto-discovered</div>
+            </div>
+          </div>
+          <!-- Privacy notice -->
+          <div class="settings-utility-card">
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <div style="font-size: 0.72rem; font-weight: 700; color: var(--accent-cyan);">Data Privacy</div>
+            </div>
+            <p style="font-size: 0.68rem; color: var(--text-secondary); margin: 0 0 3px; line-height: 1.45;"><strong>AI-Free</strong>: Deterministic, local JS. No LLMs.</p>
+            <p style="font-size: 0.68rem; color: var(--text-secondary); margin: 0 0 3px; line-height: 1.45;"><strong>Local-only</strong>: Tokens in <code style="color:var(--accent-cyan);">localStorage</code>. No tracking.</p>
+            <p style="font-size: 0.68rem; color: var(--text-secondary); margin: 0; line-height: 1.45;"><strong>Read-only</strong>: NetApp TLS API. Not affiliated with NetApp, Inc.</p>
+          </div>
+        </div>
+
+      </div>
+
+
+
+  <!-- SLIDING MODAL DIALOG: DETAILED REMEDIATION PLANS -->
+  <div id="remediationModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalRiskTitle" style="font-size: 1.2rem; font-weight: 700; background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Remediation Plan</h3>
+        <button class="modal-close" onclick="closeRemediationModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-section">
+          <h4 class="modal-section-title">Risk Description</h4>
+          <p id="modalRiskDesc" style="color: var(--text-primary); font-size: 0.9rem; font-weight: 500;"></p>
+        </div>
+        
+        <div class="modal-section">
+          <h4 class="modal-section-title">Root Cause Analysis</h4>
+          <p id="modalDetailCause" style="color: var(--text-secondary); font-size: 0.85rem; line-height: 1.4;"></p>
+        </div>
+
+        <div class="modal-section">
+          <h4 class="modal-section-title">Business & Data Integrity Impact</h4>
+          <p id="modalDetailImpact" style="color: var(--status-critical); font-size: 0.85rem; font-weight: 600; line-height: 1.4; background-color: rgba(255, 51, 102, 0.05); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 51, 102, 0.15);"></p>
+        </div>
+
+        <div class="modal-section">
+          <h4 class="modal-section-title">Step-by-Step Remediation Plan</h4>
+          <ul id="modalDetailSteps" style="margin-left: 20px; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5; font-family: monospace;">
+            <!-- JS updates -->
+          </ul>
+        </div>
+
+        <div class="modal-section">
+          <h4 class="modal-section-title">Options & Trade-offs</h4>
+          <ul id="modalDetailOptions" style="margin-left: 20px; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+            <!-- JS updates -->
+          </ul>
+        </div>
+
+        <div id="modalUpgradeContextSection" class="modal-section" style="display: none; background: rgba(0, 229, 255, 0.03); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(0, 229, 255, 0.15); margin-bottom: 16px;">
+          <h4 class="modal-section-title" style="color: var(--accent-cyan); margin-bottom: 6px;">Platform Version Compatibility</h4>
+          <div id="modalDetailUpgradeContext" style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.4;"></div>
+        </div>
+
+        <div class="modal-section">
+          <h4 class="modal-section-title">Hypervisor & 3rd-Party Compliance Settings</h4>
+          <p id="modalDetailThirdParty" style="color: var(--text-secondary); font-size: 0.85rem; line-height: 1.4;"></p>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; gap: 12px; justify-content: flex-end; padding-top: 20px; border-top: 1px solid var(--border-color);">
+        <button class="action-btn secondary" onclick="closeRemediationModal()">Close Action Plan</button>
+        <a id="modalKbLink" href="" target="_blank" class="action-btn" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center;" onclick="window.open(this.href, '_blank'); return false;">
+          Search NetApp KB
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden Import File Input -->
+  <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleJSONImport(event)">
+
+  <!-- Javascript File -->
+  <script src="aria-api.js?v=5.6.267-2"></script>
+  <script src="data/reference_library.js?v=5.6.267-2"></script>
+  <script src="app.js?v=5.6.267-2" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
+  <script>
+    // Verify app.js parsed OK — if APP_VERSION is undefined, the file had a parse error
+    if (typeof APP_VERSION === 'undefined') {
+      document.body.innerHTML = '<div style="background:#1a0000;color:#ef4444;padding:40px;font-family:monospace;font-size:16px;">' +
+        '<h1>❌ app.js Parse Error</h1>' +
+        '<p>The application script failed to parse. Open the browser console (F12 → Console tab) to see the exact error.</p>' +
+        '<p>This usually means a syntax error was introduced in a recent code edit.</p></div>';
+    }
+  </script>
+
+<!-- Hidden ASUP file picker -->
+<input type="file" id="asupFileInput" accept=".7z,.tgz,.tar.gz,.zip,.xml,.gz" style="display:none" onchange="handleAsupFileSelected(event)">
+
+<!-- ASUP Import Modal -->
+<div id="asupImportModal" class="modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.82); z-index:10000; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+  <div style="background:var(--bg-card); border:1px solid rgba(168,85,247,0.35); border-radius:12px; width:min(640px,92vw); max-height:88vh; overflow-y:auto; padding:28px; box-shadow:0 20px 60px rgba(0,0,0,0.6); position:relative;">
+    <button onclick="closeAsupImportModal()" style="position:absolute;top:14px;right:16px;background:transparent;border:none;color:var(--text-secondary);font-size:1.3rem;cursor:pointer;line-height:1;">&times;</button>
+
+    <div style="color:#c084fc;font-size:1.1rem;font-weight:700;margin-bottom:4px;">📦 Import ASUP Bundle</div>
+    <div style="color:var(--text-secondary);font-size:0.8rem;margin-bottom:20px;">Import an AutoSupport bundle onsite when Active IQ is unreachable. Supported formats: <code>.7z</code> &nbsp;<code>.tgz</code> &nbsp;<code>.zip</code> &nbsp;<code>.xml</code> &nbsp;<code>.gz</code></div>
+
+    <!-- Drop zone -->
+    <div id="asupDropZone"
+      style="border:2px dashed rgba(168,85,247,0.4); border-radius:10px; padding:36px 20px; text-align:center; cursor:pointer; transition:all 0.2s; margin-bottom:16px; background:rgba(168,85,247,0.04);"
+      ondragover="asupDragOver(event)" ondragleave="asupDragLeave(event)" ondrop="asupDrop(event)" onclick="document.getElementById('asupFileInput').click()">
+      <div style="font-size:2rem;margin-bottom:8px;">📁</div>
+      <div style="color:var(--text-primary);font-weight:600;margin-bottom:4px;">Drop bundle here or click to browse</div>
+      <div id="asupDropZoneFile" style="color:#c084fc;font-size:0.8rem;">No file selected</div>
+    </div>
+
+    <!-- Import button -->
+    <button id="asupImportSubmitBtn" onclick="submitAsupImport()" style="width:100%;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;border:none;border-radius:8px;padding:11px;font-size:0.9rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:opacity 0.2s;" disabled>
+      <span id="asupImportBtnIcon">📦</span>
+      <span id="asupImportBtnText">Select a file to import</span>
+    </button>
+
+    <!-- Progress bar -->
+    <div id="asupImportProgress" style="display:none;margin-top:16px;">
+      <div style="height:4px;background:rgba(168,85,247,0.15);border-radius:2px;overflow:hidden;">
+        <div id="asupProgressBar" style="height:100%;background:linear-gradient(90deg,#7c3aed,#c084fc);width:0%;transition:width 0.4s;"></div>
+      </div>
+      <div id="asupProgressLabel" style="font-size:0.8rem;color:var(--text-secondary);margin-top:8px;text-align:center;">Uploading…</div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         MATCH BANNER (shown after import if serial was recognised)
+         ════════════════════════════════════════════════════════ -->
+    <div id="asupMatchBanner" style="display:none;margin-top:20px;"></div>
+
+    <!-- ════════════════════════════════════════════════════════
+         ASSOCIATION FORM (shown after import for every result)
+         ════════════════════════════════════════════════════════ -->
+    <div id="asupAssocPanel" style="display:none;margin-top:20px;background:rgba(255,255,255,0.03);border:1px solid var(--border-color);border-radius:10px;padding:20px;">
+      <div style="font-weight:700;font-size:0.85rem;color:var(--text-primary);margin-bottom:14px;">🔗 Confirm Association</div>
+
+      <!-- Customer: dropdown (existing) + free text (new) -->
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Customer / Account</label>
+        <div style="display:flex;gap:8px;">
+          <select id="asupAssocCustomerSelect" style="flex:1;background:var(--bg-sidebar);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;color:var(--text-primary);font-size:0.85rem;" onchange="asupCustomerSelectChanged()">
+            <option value="">— Select existing —</option>
+          </select>
+          <span style="line-height:36px;color:var(--text-secondary);font-size:0.8rem;">or</span>
+          <input id="asupAssocCustomerNew" type="text" placeholder="Type new customer name"
+            style="flex:1;background:var(--bg-sidebar);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;color:var(--text-primary);font-size:0.85rem;">
+        </div>
+      </div>
+
+      <!-- Site / Location -->
+      <div style="margin-bottom:12px;">
+        <label style="display:block;font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Site / Location</label>
+        <div style="display:flex;gap:8px;">
+          <select id="asupAssocSiteSelect" style="flex:1;background:var(--bg-sidebar);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;color:var(--text-primary);font-size:0.85rem;" onchange="asupSiteSelectChanged()">
+            <option value="">— Select existing site —</option>
+          </select>
+          <span style="line-height:36px;color:var(--text-secondary);font-size:0.8rem;">or</span>
+          <input id="asupAssocSiteNew" type="text" placeholder="Type new site / DC name"
+            style="flex:1;background:var(--bg-sidebar);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;color:var(--text-primary);font-size:0.85rem;">
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Notes (optional)</label>
+        <textarea id="asupAssocNotes" rows="2" placeholder="e.g. Onsite visit 2026-07-20, migrating to AFF A90"
+          style="width:100%;background:var(--bg-sidebar);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;color:var(--text-primary);font-size:0.85rem;box-sizing:border-box;resize:vertical;"></textarea>
+      </div>
+
+      <button id="asupAssocSaveBtn" onclick="saveAsupAssociation()" style="width:100%;background:linear-gradient(135deg,#059669,#10b981);color:#fff;border:none;border-radius:8px;padding:10px;font-size:0.88rem;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+        <span id="asupAssocSaveBtnIcon">💾</span>
+        <span id="asupAssocSaveBtnText">Save Association</span>
+      </button>
+      <div id="asupAssocResult" style="display:none;margin-top:10px;font-size:0.82rem;text-align:center;"></div>
+    </div>
+
+    <!-- Coverage report (shown after import) -->
+    <div id="asupCoverageReport" style="display:none;margin-top:20px;">
+      <div style="font-weight:700;font-size:0.85rem;margin-bottom:12px;color:var(--text-primary);">📊 Import Coverage Report</div>
+      <div style="font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Parsed from Bundle</div>
+      <div id="asupCoverageSections" style="margin-bottom:16px;"></div>
+      <div style="font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Computed by ARIA (no API needed)</div>
+      <div id="asupCoverageComputed" style="margin-bottom:16px;"></div>
+      <div style="font-size:0.75rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Not Available Offline</div>
+      <div id="asupCoverageUnavailable" style="margin-bottom:16px;"></div>
+      <div id="asupCoverageWarnings" style="display:none;margin-top:12px;"></div>
+      <div style="display:flex;gap:10px;margin-top:16px;">
+        <button onclick="resetAsupImportForm()" style="flex:1;background:rgba(168,85,247,0.12);color:#c084fc;border:1px solid rgba(168,85,247,0.3);border-radius:8px;padding:10px;font-size:0.85rem;font-weight:600;cursor:pointer;">
+          ➕ Import Another Bundle
+        </button>
+        <button onclick="closeAsupImportModal();location.reload();" style="flex:1;background:rgba(16,185,129,0.12);color:#10b981;border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:10px;font-size:0.85rem;font-weight:600;cursor:pointer;">
+          ✅ Done — Reload Dashboard
+        </button>
+      </div>
+    </div>
+
+    <!-- Existing imports list -->
+    <div id="asupImportsList" style="margin-top:24px;"></div>
+  </div>
+        </div>
+      </div><!-- /.main-content -->
+</div><!-- /.app-container -->
+</body>
+</html>
+

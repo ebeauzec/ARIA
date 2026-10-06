@@ -1,0 +1,75 @@
+# Logs
+*.log
+.agents/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PyInstaller intermediate build artefacts (dist/ IS tracked — pre-built for no-install deployment)
+build/__pycache__/
+__pycache__/
+*.pyc
+
+# Runtime data (user-specific, not tracked)
+aiq_cache.db
+aiq_cache.db-shm
+aiq_cache.db-wal
+aiq_config.json
+aiq_harvested_systems.json
+aiq_scraped_data.json
+aiq_scraped_endpoints.json
+aiq_format_report.json
+
+# Real harvested customer data (serials, hostnames, contract IDs, customer
+# names) -- must never be committed. These two were previously tracked by
+# mistake; removed 2026-08-31.
+data/tam_complete_data.json
+data/tam_real_data.json
+
+# Generated report documents
+*.docx
+
+# Atomic-write backups (runtime artefacts, not tracked)
+data/*.bak
+
+# Scratch/dev artefacts
+brace_report.txt
+brace_find.py
+brace_find.txt
+cl_end.txt
+brace2.txt
+brace3.txt
+_dbg.py
+check.py
+temp.js
+
+# Local data dumps and capture tools
+data/tam_final_data.json
+data/tam_real_data.json
+data/tam_complete_data.json
+
+# Locally generated data and build output
+data/*
+!data/README.md
+dist/**/data/*
+kb_sample.html
+docs/images/*.png
+!docs/images/architecture_rendered.png
+!docs/images/workflow_rendered.png
+
+# Build output (rebuild with PyInstaller; contains bundled local copies)
+dist/
+build/work/
+
+# Local deployment secrets
+.env
+deploy/k8s/secret.yaml
+aria_users.json
+aria_session.key
+
+# Local sensitive-data guard lists (built from the local cache; never committed)
+.aria_guard_terms.json
+.aria_guard_allow.txt
+aria_settings.json

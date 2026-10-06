@@ -1,0 +1,22 @@
+# Example for an NGINX ingress with TLS. Adjust the class, host and certificate to your cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aria
+  namespace: aria
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"   # a full sync and large exports take minutes
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"      # offline AutoSupport imports
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [aria.example.com]
+      secretName: aria-tls
+  rules:
+    - host: aria.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: aria, port: {name: http}}
