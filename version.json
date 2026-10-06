@@ -1,8 +1,8 @@
 {
-  "version": "5.6.267",
+  "version": "5.6.268",
   "major": 5,
   "minor": 6,
-  "patch": 267,
-  "date": "2026-10-05",
-  "notes": "Tabbed Settings, keys and tokens that stay saved, sign-in for the desktop program, default administrator password Changeme1!."
+  "patch": 268,
+  "date": "2026-10-06",
+  "notes": "More Active IQ data (risk age, case trend, forecasts, workloads, feature usage), shorter and less repetitive documents, Word reports, Download All in the deliverables bar."
 }

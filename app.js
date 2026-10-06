@@ -45,9 +45,32 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.267";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.268";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.268",
+    date: "6 October 2026",
+    title: "More Active IQ Data, Shorter Documents, Word Reports",
+    sections: [
+      {
+        icon: "📄",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "Context in the documents, all from Active IQ: service outcomes, how long serious risks have been open, aggregates that will fill, the support case trend, forecast power and feature usage appear in the QBR Pack, MSP Service Report, Risk & Remediation Brief, Sustainability Report and Sales Proposals.",
+          "Word downloads: choosing Word on the Technical Risks, Security Advisories, Support Cases, OS Upgrade and TAM Recommendations tabs now produces the purpose-built Word report. Technical Risks lists systems with the same findings once and Security Advisories writes each mitigation once, so both are much shorter, and the reading note at the top is shorter and only appears where a document has general guidance.",
+          "Documents are shorter and repeat less: the findings list is in one document and summarised elsewhere, vendor reference lists are only in the engineering documents, identical systems share one change ticket or plan, repeated per-system lines are combined, and Site Logistics is a table. The Success Plan, Security Posture Brief, MSP Service Report and Handover Brief are 30 to 60 percent shorter.",
+          "More Active IQ data: aggregate RAID and storage types and offline volumes, volume counts and capacity by workload, the StorageGRID capacity forecast and ONTAP feature usage (Service History), and each support case's resolution, linked bugs and replacement parts.",
+          "New Active IQ data: how long each open risk has been open (and the versions that fix it), Active IQ's own risk counts by severity and impact area, support case counts and trend, forecast power and carbon, and used capacity split into NAS, SAN and snapshots. They appear in Service History, Support Cases and the power and capacity sections of the reports.",
+          "Download All now covers every document on the Deliverables page (the 15 suite deliverables, the Action Planner reports, the StorageGRID assessment when the scope has one) and saves the As-Built sheet as an Excel workbook; the button shows the real count.",
+          "When sign-in is on and a session has lapsed, the open page now goes to the sign-in page instead of showing empty lists and buttons that do nothing.",
+          "No money or invented rates anywhere. The Value Reporting setting (cost per TiB per month) and every dollar figure built from it are gone, along with the unused support-cost and incident-cost constants; savings are shown as terabytes saved, as Active IQ reports them.",
+          "Active IQ is the only source of figures. An upgrade target is shown only when Active IQ reports one (its recommended version, or for E-Series its minimum recommended version); ARIA no longer works one out from the version number. Recommendation counts for a customer are those measured on its own systems; a count is no longer extrapolated from an account-wide score.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.267",
     date: "5 October 2026",
@@ -58,14 +81,6 @@ const APP_CHANGELOG = [
         label: "Changed",
         color: "#22c55e",
         items: [
-          "Word downloads: choosing Word on the Technical Risks, Security Advisories, Support Cases, OS Upgrade and TAM Recommendations tabs now produces the purpose-built Word report. Technical Risks lists systems with the same findings once and Security Advisories writes each mitigation once, so both are much shorter, and the reading note at the top is shorter and only appears where a document has general guidance.",
-          "Documents are shorter and repeat less: the findings list is in one document and summarised elsewhere, vendor reference lists are only in the engineering documents, identical systems share one change ticket or plan, repeated per-system lines are combined, and Site Logistics is a table. The Success Plan, Security Posture Brief, MSP Service Report and Handover Brief are 30 to 60 percent shorter.",
-          "More Active IQ data: aggregate RAID and storage types and offline volumes, volume counts and capacity by workload, the StorageGRID capacity forecast and ONTAP feature usage (Service History), and each support case's resolution, linked bugs and replacement parts.",
-          "New Active IQ data: how long each open risk has been open (and the versions that fix it), Active IQ's own risk counts by severity and impact area, support case counts and trend, forecast power and carbon, and used capacity split into NAS, SAN and snapshots. They appear in Service History, Support Cases and the power and capacity sections of the reports.",
-          "Download All now covers every document on the Deliverables page (the 15 suite deliverables, the Action Planner reports, the StorageGRID assessment when the scope has one) and saves the As-Built sheet as an Excel workbook; the button shows the real count.",
-          "When sign-in is on and a session has lapsed, the open page now goes to the sign-in page instead of showing empty lists and buttons that do nothing.",
-          "No money or invented rates anywhere. The Value Reporting setting (cost per TiB per month) and every dollar figure built from it are gone, along with the unused support-cost and incident-cost constants; savings are shown as terabytes saved, as Active IQ reports them.",
-          "Active IQ is the only source of figures. An upgrade target is shown only when Active IQ reports one (its recommended version, or for E-Series its minimum recommended version); ARIA no longer works one out from the version number. Recommendation counts for a customer are those measured on its own systems; a count is no longer extrapolated from an account-wide score.",
           "Settings is now seven tabs (Connection, Data & Sync, Policies & Reports, Fleet, StoragePerf, Access, Advanced) with the cards in two columns, so far less scrolling. Users & Access is always there, with a switch to turn sign-in on or off.",
           "Keys and tokens (Active IQ refresh token, NVD key, GitHub token, webhook URL) save when you leave the field and show \"Saved on the server\" after a reload, with a Clear link. Before, they were only stored by the Save Configuration button and looked empty afterwards.",
           "The desktop program (ARIA.exe) now runs the full server, so it has sync, cache, reports and optional sign-in: ARIA.exe --sign-in, or the switch in Settings > Access. The default administrator password is now Changeme1!, to be changed at the first sign-in.",
@@ -23190,6 +23205,79 @@ function _dfMergeSystemBlocks(text, kind) {
   });
   return pre + out.join('') + tail;
 }
+// ── Context blocks for the deliverables ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// Facts Active IQ already reports that the documents did not carry: what the last months looked like (uptime, risks found and resolved, ARP
+// coverage), how long the serious risks have been open, which aggregates will fill, the trend in support cases, forecast power and feature
+// usage. Each returns '' when Active IQ has nothing for the scope, so a document only gets a block that has content.
+const _DF_RULE = '-'.repeat(80);
+function _dfBlock(title, body) { return body ? `${title}\n${_DF_RULE}\n${body}\n` : ''; }
+function _dfServiceOutcomesText(systems, nMonths) {
+  const ont = (systems || []).filter(s => _platformFamily(s) === 'ontap' && s.monthlyStats);
+  const M = {};
+  ont.forEach(s => {
+    const st = s.monthlyStats, get = (k, mo, f) => { (st[k] || []).forEach(x => { if (!x || !x.month) return; const m = M[x.month] = M[x.month] || { systems: new Set(), tot: 0, unpl: 0, pl: 0, found: 0, res: 0, cf: 0, cr: 0, vol: 0, arp: 0 }; f(m, x); }); };
+    get('uptime', 0, (m, x) => { if ((x.totalSeconds || 0) > 0) { m.systems.add(s.serialNumber); m.tot += x.totalSeconds; m.unpl += x.unplannedDowntimeSeconds || 0; m.pl += x.plannedDowntimeSeconds || 0; } });
+    get('risks', 0, (m, x) => { m.found += x.totalRisksFoundCount || 0; m.res += x.totalRisksResolvedCount || 0; m.cf += x.criticalRisksFoundCount || 0; m.cr += x.criticalRisksResolvedCount || 0; });
+    get('arp', 0, (m, x) => { m.vol += x.totalVolumesCount || 0; m.arp += x.totalVolumesWithArpEnabled || 0; });
+  });
+  const months = Object.keys(M).filter(k => M[k].tot > 0).sort().reverse().slice(0, nMonths || 6);
+  if (!months.length) return '';
+  const pct = (n, d) => d > 0 ? (n / d * 100).toFixed(1) + '%' : '—';
+  const rows = months.map(k => { const m = M[k]; return [k, m.systems.size, pct(m.tot - m.unpl, m.tot), Math.round(m.unpl / 60), Math.round(m.pl / 60), m.found, m.res, pct(m.arp, m.vol)]; });
+  const sum = f => months.reduce((t, k) => t + f(M[k]), 0);
+  const unplSys = new Set(); ont.forEach(s => ((s.monthlyStats || {}).uptime || []).forEach(x => { if (months.includes(x.month) && (x.unplannedDowntimeSeconds || 0) > 0) unplSys.add(s.systemName || s.serialNumber); }));
+  const lead = `Active IQ monthly statistics for ${ont.length} ONTAP system${ont.length !== 1 ? 's' : ''}, newest month first. Availability counts unplanned downtime only. Over these ${months.length} months: ${sum(m => m.found)} risks found and ${sum(m => m.res)} resolved (${sum(m => m.cf)} critical found, ${sum(m => m.cr)} resolved); ${Math.round(sum(m => m.unpl) / 60)} minutes of unplanned downtime${unplSys.size && Math.round(sum(m => m.unpl) / 60) > 0 ? ' on ' + unplSys.size + ' system' + (unplSys.size !== 1 ? 's' : '') : ''}.`;
+  return lead + '\n\n' + _dfTable(['Month', 'Systems', 'Availability', 'Unplanned downtime (min)', 'Planned downtime (min)', 'Risks found', 'Risks resolved', 'ARP coverage (volumes)'], rows);
+}
+function _dfRiskAgeText(systems) {
+  const now = Date.now(), B = [['Under 30 days', 0, 30], ['30 to 90 days', 30, 90], ['90 to 180 days', 90, 180], ['Over 180 days', 180, Infinity]];
+  let open = 0, dated = 0; const cnt = B.map(() => ({ critical: 0, high: 0 })), oldest = new Map();
+  (systems || []).forEach(s => (s.risks || []).forEach(r => {
+    const sev = String(r.severity || '').toLowerCase(); if (sev !== 'critical' && sev !== 'high') return;
+    open++; const t = Date.parse(r.firstSeen || ''); if (isNaN(t)) return; dated++;
+    const days = Math.max(0, Math.floor((now - t) / 86400000)), bi = B.findIndex(b => days >= b[1] && days < b[2]); if (bi >= 0) cnt[bi][sev]++;
+    const k = sev + '|' + r.description, o = oldest.get(k) || { sev, desc: String(r.description || '').replace(/\s+/g, ' ').trim(), days: 0, systems: new Set() };
+    o.days = Math.max(o.days, days); o.systems.add(s.systemName || s.serialNumber); oldest.set(k, o);
+  }));
+  if (!dated) return '';
+  const over90 = cnt[2].critical + cnt[2].high + cnt[3].critical + cnt[3].high;
+  const top = [...oldest.values()].sort((x, y) => y.days - x.days).slice(0, 5);
+  return `Active IQ's own first-raised date for each critical and high risk (${dated} of ${open} have one). ${over90} ${over90 === 1 ? 'has' : 'have'} been open for more than 90 days.\n\n` +
+    _dfTable(['Open for', 'Critical', 'High'], B.map((b, i) => [b[0], cnt[i].critical, cnt[i].high])) +
+    `\n  Longest open\n` + _dfTable(['Days open', 'Severity', 'Risk', 'Systems'], top.map(o => [o.days, o.sev.toUpperCase(), o.desc.slice(0, 120), o.systems.size]));
+}
+function _dfAggForecastText(systems) {
+  const rows = [];
+  (systems || []).forEach(s => ((s.aggregateDetail || {}).forecasts || []).forEach(f => {
+    const m100 = f.monthsTo100, m90 = f.monthsTo90;
+    if ((m100 != null && m100 <= 12) || (m90 != null && m90 <= 12)) rows.push([s.systemName || s.serialNumber, f.name, f.currentPct != null ? f.currentPct + '%' : '—', m90 == null ? '—' : (m90 === 0 ? 'now' : m90), m100 == null ? '—' : m100, m100 == null ? 9999 : m100, m90 == null ? 9999 : m90]);
+  }));
+  if (!rows.length) return '';
+  rows.sort((x, y) => x[5] - y[5] || x[6] - y[6]);
+  return `Aggregates that Active IQ forecasts will pass 90% used, or fill, within 12 months, soonest first. "Now" means already above 90%.\n\n` + _dfTable(['System', 'Aggregate', 'Used now', 'Months to 90%', 'Months to full'], rows.map(r => r.slice(0, 5)));
+}
+function _dfCaseTrendText() {
+  const d = (typeof _caseSummaryData === 'function') ? _caseSummaryData() : null; if (!d) return '';
+  const rows = []; d.counts.forEach(c => c.caseCount.slice().sort((x, y) => x.highestPriority - y.highestPriority).forEach(x => rows.push(['Last ' + c.duration + ' days', 'P' + x.highestPriority, x.totalCount, x.open, x.closed])));
+  if (!rows.length) return '';
+  return `Counted by Active IQ for the whole account (or watchlist), not only the customer in this document; it can lag the support portal by up to 24 hours.\n\n` + _dfTable(['Period', 'Priority', 'Cases', 'Open', 'Closed'], rows);
+}
+function _dfEnergyForecastText(systems) {
+  const fs = _dfForecastSplit(systems); if (!fs.forecastRows.length) return '';
+  const v = _dfPlatformInsights(systems), now = v.energy && v.energy.totalW ? v.energy.totalW : 0;
+  const sumW = fs.forecastRows.reduce((t, r) => t + r.powerW, 0), sumC = fs.forecastRows.reduce((t, r) => t + r.carbonKg, 0), sumH = fs.forecastRows.reduce((t, r) => t + r.heatBTU, 0);
+  const date = fs.forecastRows.map(r => r.date).sort().pop();
+  return `Active IQ's forecast for ${fs.forecastRows.length} system${fs.forecastRows.length !== 1 ? 's' : ''}, at the furthest forecast date (${date}).\n\n` +
+    _dfTable(['', 'Power (kW)', 'Heat (BTU/h)', 'Carbon (kg, as reported)'], [['Now (reported power)', (now / 1000).toFixed(1), '—', '—'], ['Forecast', (sumW / 1000).toFixed(1), Math.round(sumH).toLocaleString(), Math.round(sumC).toLocaleString()]]) +
+    `\n  Highest forecast power\n` + _dfTable(['System', 'Power (W)', 'Heat (BTU/h)', 'Carbon (kg)'], fs.forecastRows.slice(0, 5).map(r => [r.system, r.powerW.toLocaleString(), r.heatBTU.toLocaleString(), r.carbonKg.toLocaleString()]));
+}
+function _dfFeatureUsageText(systems) {
+  const cn = new Set((systems || []).map(s => s.customerName).filter(Boolean)), QI = q => ['Q1', 'Q2', 'Q3', 'Q4'].indexOf(q);
+  const rows = (state.customers || []).filter(c => cn.has(c.name) && Array.isArray(c.quarterlyOntapFeatureUsageStats) && c.quarterlyOntapFeatureUsageStats.length)
+    .map(c => { const q = c.quarterlyOntapFeatureUsageStats.slice().sort((x, y) => (y.year * 4 + QI(y.quarter)) - (x.year * 4 + QI(x.quarter)))[0], top = l => (l || []).slice(0, 4).map(f => f.name + ' (' + f.systemCount + ')').join(', ') || '—'; return [c.name, q.quarter + ' ' + q.year, q.totalSystemsCount, top(q.mostUsedFeatures), top(q.leastUsedFeatures)]; });
+  if (!rows.length) return '';
+  return `Active IQ's most and least used ONTAP features in the latest quarter it reports; the number in brackets is how many of the customer's systems use the feature. Features that are barely used are the adoption conversation.\n\n` + _dfTable(['Customer', 'Quarter', 'Systems', 'Most used', 'Least used'], rows);
+}
 // Inserts a block before the first match of `re` (a section heading); if the heading is not found the block is appended, so it is never lost.
 function _dfInsertNcf(text, re, block) {
   if (!block) return text;
@@ -29566,6 +29654,18 @@ Reference: mysupport.netapp.com/matrix (NetApp Interoperability Matrix Tool)
     mspReport = _dfInsertNcf(mspReport, /(-{20,}\n)10\. IMPROVEMENT BACKLOG/, ncf({ prefix: '9a. ' }));
     handoverBrief = _dfInsertNcf(handoverBrief, /(-{20,}\n)6\. CONTRACT & LIFECYCLE STATUS/, ncf({ prefix: '5a. ' }));
     riskRemediationBrief = _dfInsertNcf(riskRemediationBrief, /(={20,}\n)?SUPPORTING EVIDENCE/, ncf({ prefix: '', full: true }));
+    // context blocks (each is empty when Active IQ has nothing for the scope)
+    const _so = _dfBlock('SERVICE OUTCOMES (Active IQ monthly statistics)', _dfServiceOutcomesText(targetSystems, 6)), _ra = _dfBlock('HOW LONG SERIOUS RISKS HAVE BEEN OPEN', _dfRiskAgeText(targetSystems)),
+      _af = _dfBlock('AGGREGATES APPROACHING FULL (Active IQ forecast)', _dfAggForecastText(targetSystems)), _ct = _dfBlock('SUPPORT CASE TREND (Active IQ)', _dfCaseTrendText());
+    qbrPack = _dfInsertNcf(qbrPack, /(-{20,}\n)3\. RISK POSTURE/, _so ? _so.replace(/^/, '2c. ') : '');
+    qbrPack = _dfInsertNcf(qbrPack, /(-{20,}\n)4\. SVM & NETWORK HEALTH/, (_ra ? _ra.replace(/^/, '3b. ') : '') + (_ct ? '\n' + _ct.replace(/^/, '3c. ') : ''));
+    qbrPack = _dfInsertNcf(qbrPack, /(-{20,}\n)9\. RECOMMENDATIONS/, _af ? _af.replace(/^/, '8a. ') : '');
+    mspReport = _dfInsertNcf(mspReport, /(-{20,}\n)4\. CAPACITY CONSUMPTION/, _so ? _so.replace(/^/, '3b. ') : '');
+    mspReport = _dfInsertNcf(mspReport, /(-{20,}\n)5\. INCIDENT/, _af ? _af.replace(/^/, '4a. ') : '');
+    mspReport = _dfInsertNcf(mspReport, /(-{20,}\n)6\. CONTRACT PORTFOLIO/, _ct ? _ct.replace(/^/, '5a. ') : '');
+    riskRemediationBrief = _dfInsertNcf(riskRemediationBrief, /(={20,}\n)?SUPPORTING EVIDENCE/, _ra);
+    { const _en = _dfBlock('FORECAST POWER AND CARBON (Active IQ)', _dfEnergyForecastText(targetSystems)); if (_en) sustainabilityReport = sustainabilityReport.replace(/\s*$/, '') + '\n\n' + _en; }
+    { const _fu = _dfBlock('FEATURE USAGE (Active IQ)', _dfFeatureUsageText(targetSystems)); if (_fu) salesProposals = _dfInsertNcf(salesProposals, /(-{20,}\n)?COMMERCIAL CONTEXT/, _fu); }
   }
   return {
     problemStatements,
