@@ -1,0 +1,157 @@
+# -*- mode: python ; coding: utf-8 -*-
+r"""
+PyInstaller spec for NetApp Active IQ Advisor
+Builds a native desktop app from the existing HTML/JS dashboard + Python proxy.
+
+Usage:
+  Windows:  pyinstaller ARIA.spec
+  macOS:    pyinstaller ARIA.spec
+
+Output:
+  Windows:  dist\ARIA\ARIA.exe  (+ support files)
+  macOS:    dist/ARIA.app
+"""
+
+import sys
+import os
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+IS_MAC = sys.platform == 'darwin'
+IS_WIN = sys.platform == 'win32'
+
+import json as _json
+with open(os.path.join(SPECPATH, '..', 'version.json'), 'r') as _vf:
+    _APP_VERSION = _json.load(_vf).get('version', '4.0.0')
+
+block_cipher = None
+
+# ---------------------------------------------------------------------------
+# Static web assets to bundle alongside the Python code
+# ---------------------------------------------------------------------------
+web_datas = [
+    (os.path.join(SPECPATH, '..', 'index.html'), '.'),
+    (os.path.join(SPECPATH, '..', 'app.js'),     '.'),
+    (os.path.join(SPECPATH, '..', 'styles.css'), '.'),
+    (os.path.join(SPECPATH, '..', 'chart.js'),   '.'),
+    (os.path.join(SPECPATH, '..', 'index_src.html'), '.'),
+    (os.path.join(SPECPATH, '..', 'pptxgen.bundle.js'), '.'),
+    (os.path.join(SPECPATH, '..', 'version.json'), '.'),
+    # Every Active IQ endpoint and query (edit by hand; a copy next to the exe overrides this one)
+    (os.path.join(SPECPATH, '..', 'api_queries.json'), '.'),
+    # Demo (mock) mode overlay -- anonymized, real-shaped telemetry (see tools/build_demo_dataset.py)
+    (os.path.join(SPECPATH, '..', 'data', 'demo_dataset.json'), 'data'),
+    (os.path.join(SPECPATH, '..', 'data', 'demo_storageperf.json'), 'data'),
+    # Current slot/port assignments harvested from NetApp's documentation (hw_docs_harvester.py)
+    (os.path.join(SPECPATH, '..', 'data', 'platform_hardware.json'), 'data'),
+]
+web_datas = [d for d in web_datas if os.path.exists(d[0])]
+
+# ---------------------------------------------------------------------------
+# pywebview: collect everything so platform-specific backends are included
+# ---------------------------------------------------------------------------
+webview_datas, webview_binaries, webview_hidden = collect_all('webview')
+
+all_datas    = web_datas    + webview_datas
+all_binaries = webview_binaries
+all_hidden   = webview_hidden + collect_submodules('webview') + ['server', 'aria_auth', 'perf_integration', 'hw_docs_harvester', 'asup_parser', 'dqp_parser', 'firmware_harvester', 'reference_harvester']
+
+# Platform-specific hidden imports
+if IS_WIN:
+    all_hidden += [
+        'webview.platforms.winforms',
+        'clr', 'clr._ClrModule',
+        'System', 'System.Windows.Forms',
+        'pythonnet',
+    ]
+elif IS_MAC:
+    all_hidden += [
+        'webview.platforms.cocoa',
+        'Foundation', 'AppKit', 'objc', 'WebKit',
+    ]
+
+# ---------------------------------------------------------------------------
+# Analysis
+# ---------------------------------------------------------------------------
+a = Analysis(
+    [os.path.join(SPECPATH, '..', 'launcher.py')],
+    pathex=[os.path.join(SPECPATH, '..'), os.path.join(SPECPATH, '..', 'tools')],
+    binaries=all_binaries,
+    datas=all_datas,
+    hiddenimports=all_hidden,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=['tkinter', 'matplotlib', 'numpy', 'PIL', 'Pillow', 'scipy'],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+# ---------------------------------------------------------------------------
+# macOS: one-directory build wrapped into a .app bundle
+# ---------------------------------------------------------------------------
+if IS_MAC:
+    exe = EXE(
+        pyz, a.scripts, [],
+        exclude_binaries=True,
+        name='ARIA',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        argv_emulation=True,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+    )
+    coll = COLLECT(
+        exe, a.binaries, a.zipfiles, a.datas,
+        strip=False, upx=False, upx_exclude=[],
+        name='ARIA',
+    )
+    app = BUNDLE(
+        coll,
+        name='ARIA.app',
+        icon=None,                          # drop icon.icns here to use it
+        bundle_identifier='com.netapp.aiqadvisor',
+        version=_APP_VERSION,
+        info_plist={
+            'NSPrincipalClass': 'NSApplication',
+            'NSAppleScriptEnabled': False,
+            'CFBundleName': 'ARIA',
+            'CFBundleDisplayName': 'ARIA',
+            'CFBundleShortVersionString': _APP_VERSION,
+            'LSMinimumSystemVersion': '10.13.0',
+            'NSHighResolutionCapable': True,
+        },
+    )
+
+# ---------------------------------------------------------------------------
+# Windows / Linux: one-directory build (more reliable with WebView2 DLLs)
+# ---------------------------------------------------------------------------
+else:
+    exe = EXE(
+        pyz, a.scripts, [],
+        exclude_binaries=True,
+        name='ARIA',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=True,
+        console=False,          # No console window in production
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon=None,              # drop icon.ico here to use it
+    )
+    coll = COLLECT(
+        exe, a.binaries, a.zipfiles, a.datas,
+        strip=False, upx=True, upx_exclude=[],
+        name='ARIA',
+    )

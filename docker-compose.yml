@@ -1,0 +1,32 @@
+# Run ARIA for a team:  docker compose up -d --build
+# Optional: create .env next to this file to choose the first administrator's password yourself (otherwise the default admin / Changeme1! is
+# created and has to be changed at the first sign-in, so sign in before anyone else can reach it). Delete the password line after the first start:
+#   ARIA_ADMIN_USER=admin
+#   ARIA_ADMIN_PASSWORD=<at least 10 characters>
+# Put a TLS-terminating reverse proxy in front of it for anything beyond a trusted network (see docs/DEPLOY.md).
+services:
+  aria:
+    build: .
+    image: aria:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ARIA_AUTH: local
+      ARIA_ADMIN_USER: ${ARIA_ADMIN_USER:-}
+      ARIA_ADMIN_PASSWORD: ${ARIA_ADMIN_PASSWORD:-}
+      ARIA_ALLOWED_HOSTS: ${ARIA_ALLOWED_HOSTS:-localhost}      # the names people use to reach it, comma separated
+      ARIA_COOKIE_SECURE: ${ARIA_COOKIE_SECURE:-0}               # 1 when served over HTTPS
+      # ARIA_CA_BUNDLE: /certs/corporate-ca.pem                 # extra trusted CA for TLS inspection (mount the file below)
+    volumes:
+      - aria-data:/var/lib/aria
+      # - ./corporate-ca.pem:/certs/corporate-ca.pem:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  aria-data:

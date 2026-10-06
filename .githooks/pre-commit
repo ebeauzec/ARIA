@@ -1,0 +1,6 @@
+#!/bin/sh
+# 1. never commit locally generated data, secrets or build output; 2. never commit customer or other sensitive data.
+bad=$(git diff --cached --name-only --diff-filter=AM | grep -E '^(data/[^R]|data/R[^E]|dist/.*/data/|kb_sample\.html|aiq_config\.json|aiq_cache\.db|aria_users\.json|aria_session\.key|\aria_settings.json|.aria_guard_[a-z_]*|\.env$|CLAUDE\.md$|\.claude/)|\.(db|sqlite|docx|pptx|xlsx|pem|key|pfx|p12)$|^docs/images/[^/]*\.png$' | grep -vE '^docs/images/(architecture|workflow)_rendered\.png$')
+if [ -n "$bad" ]; then echo "Commit blocked: files that must stay on this machine:"; echo "$bad"; exit 1; fi
+python tools/guard_sensitive.py --refresh >/dev/null 2>&1
+python tools/guard_sensitive.py --staged || python3 tools/guard_sensitive.py --staged || { echo "Commit blocked: the sensitive-data check could not run or found something."; exit 1; }

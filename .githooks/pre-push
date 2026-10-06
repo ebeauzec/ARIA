@@ -1,0 +1,4 @@
+#!/bin/sh
+# Scans every commit about to be pushed (files and commit messages) for customer or sensitive data. Do not bypass.
+python tools/guard_sensitive.py --refresh >/dev/null 2>&1
+python tools/guard_sensitive.py --push || python3 tools/guard_sensitive.py --push || { echo "Push blocked: the sensitive-data check could not run or found something."; exit 1; }
