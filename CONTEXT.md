@@ -915,20 +915,20 @@ shape changes; write JS edit scripts with the Write tool, not heredocs (escape m
 
 - **Deliverable formatting audit:** paste `tools/audit_formatting.js` into the browser console of a running ARIA and run `await ariaAudit.run()`. Fixed in this pass (`_dxParse` and the generators): pipe-joined prose lists, a run of `- Label: value | Label: value` lines is one table, text above a rule no longer becomes a heading, `[n] [SEV]` items are one level under their heading, no heading over an empty section. Very long paragraphs (hundreds of system names) are normal for the largest accounts.
 
-## More Active IQ data (v5.6.267)
+## More Active IQ data (v5.6.268)
 
 - `api_queries.json`: new queries `case_summary` (`caseSummary`) and `risks_count` (`risksCount`, by severity and impact area); `risk_instances_page` adds `riskTriggeredDate`, `riskLastTriggeredDate`, `fixedVersions`; new fragment `CAPACITY_ENERGY_FIELDS` (NAS/SAN/snapshot capacity and `forecastedEnergyConsumptions`), fetched in its own pass because of the field-count limit.
 - `server.py`: harvest results `tamCaseSummary`, `tamRisksCount` (one element per account, merged per account) and per-system `capacitySplit`, `energyForecast`; risks carry `riskTriggeredDate`/`riskLastTriggeredDate`/`fixedVersions`.
 - `app.js`: risk `firstSeen`/`lastSeen`; Service History (risk age, risk counts), `_caseSummaryHtml` (Support Cases tab), `_dfForecastSplit` (platform insights). Checked with made-up data only, not yet against a live harvest.
 - Action Planner downloads are named with `_dlFilename(title, scope, ext)`, like the suite.
 
-## Second batch (v5.6.267)
+## Second batch (v5.6.268)
 
 - `api_queries.json`: `workload_summary`, `sg_capacity_forecast`; `cases_page` adds `bugIds resolution rmaParts`; `aggregates_page` adds `raidType storageType offlineVolumesCount maxRaidSize snapLockMode`; `customers_page` adds `quarterlyOntapFeatureUsageStats`.
 - `server.py`: `tamWorkloadSummary`, `tamSgForecast` (merged per account); `aggregateDetail` gains `raidTypes`, `storageTypes`, `offlineVolumes`, `aggregatesWithOfflineVolumes`, `snapLockAggregates`.
 - `app.js`: Service History sections (aggregate profile, workloads, StorageGRID forecast, feature usage); case cards and Markdown show linked bugs and replacement parts. Checked with made-up data only. Not added: drive power-on hours (no query path from a system), cluster `osRecommendation` extras, write-back mutations.
 
-## Document audit (v5.6.267)
+## Document audit (v5.6.268)
 
 - Ownership: the full non-CVE findings list is in the Risk & Remediation Brief (`_dfNonCveFindingsText(..., { full: true })`); every other document uses the short form. Vendor KB blocks (`getFleetEnrichmentSections`) are attached only to change tickets, implementation plans, security brief and risk brief.
 - `_dfMergeSystemBlocks` merges identical per-system tickets/plans; `_collapseRuns` (in `compileExtendedDeliverables`) folds repeated `name: text` lines; the CVE matrix in `compileSecurityBrief` groups CVEs by fix.
