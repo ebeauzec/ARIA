@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.268";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.269";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.269",
+    date: "7 October 2026",
+    title: "Signed-in Badge Fix",
+    sections: [
+      {
+        icon: "🐛",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The signed-in user badge no longer sits on top of the version label: it is in the sidebar footer, with Sign out on its own line, and shows the role only when it differs from the username (no more 'admin (admin)').",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.268",
     date: "6 October 2026",
@@ -44074,17 +44089,18 @@ document.addEventListener('DOMContentLoaded', function() {
     fetch('/api/auth/me', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(me => {
       if (!me || me.mode === 'none') return;
       const d = document.createElement('div');
-      d.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9999;font-size:11px;padding:4px 8px;border-radius:6px;background:rgba(15,22,38,.85);color:#cbd5e1;border:1px solid rgba(255,255,255,.12);';
-      d.textContent = me.user + ' (' + me.role + ')';
+      d.id = 'ariaSessionBadge';
+      d.style.cssText = 'margin-top:8px;font-size:0.7rem;line-height:1.5;color:#cbd5e1;';
+      d.textContent = me.role && me.role !== me.user ? me.user + ' (' + me.role + ')' : me.user;
       if (me.mode === 'local') {
         const b = document.createElement('a');
-        b.textContent = ' · Sign out';
+        b.textContent = 'Sign out';
         b.href = '#';
-        b.style.cssText = 'color:#38bdf8;text-decoration:none;';
+        b.style.cssText = 'display:block;color:#38bdf8;text-decoration:none;';
         b.onclick = ev => { ev.preventDefault(); fetch('/logout', { method: 'POST' }).finally(() => { location.href = '/login'; }); };
         d.appendChild(b);
       }
-      document.body.appendChild(d);
+      (document.querySelector('.nav-footer') || document.body).appendChild(d);
     }).catch(() => {});
   } catch (e) { /* not a team deployment */ }
 })();

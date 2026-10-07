@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.269 (2026-10-07)
+
+### Fixed
+- The signed-in user badge no longer overlaps the version label. It is in the sidebar footer, Sign out is on its own line, and the role shows only when it differs from the username.
+
 ## 5.6.268 (2026-10-06)
 
 ### Added
