@@ -45,7 +45,7 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.286";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.287";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
   {
@@ -26715,25 +26715,25 @@ ${dashboardLines}
 --------------------------------------------------------------------------------
 3. SLA COMPLIANCE MATRIX [METRICS]
 --------------------------------------------------------------------------------
-  Metric                    Target    Actual    Status
-  ─────────────────────────────────────────────────────
-  ASUP Compliance           ${String(slaThresholds.asup).padEnd(3)}%      ${String(asupPct).padStart(3)}%      ${slaStatus(asupPct, slaThresholds.asup)}
-  ARP Enablement            ${String(slaThresholds.arp).padEnd(3)}%      ${_ontapN > 0 ? String(arpPct).padStart(3) + '%' : ' N/A'}      ${_ontapN > 0 ? slaStatus(arpPct, slaThresholds.arp) : 'N/A (ONTAP only)'}
-  OS Currency               ${String(slaThresholds.fw).padEnd(3)}%      ${String(fwPct).padStart(3)}%      ${slaStatus(fwPct, slaThresholds.fw)}
-  Support Contract Coverage ${String(slaThresholds.contract).padEnd(3)}%      ${String(contractPct).padStart(3)}%      ${slaStatus(contractPct, slaThresholds.contract)}
-  Risk Posture (Crit<=${slaThresholds.critRisks})   ${String(slaThresholds.critRisks).padEnd(3)}       ${String(critCount).padStart(3)}       ${critCount <= slaThresholds.critRisks ? 'MET' : 'MISSED'}
-  Case MTTR (<=${mttrTarget}d)        ${String(mttrTarget).padEnd(3)}d      ${mttrDays != null ? String(mttrDays).padStart(3) + 'd' : ' N/A'}      ${mttrDays != null ? (parseFloat(mttrDays) <= mttrTarget ? 'MET' : 'MISSED') : 'NO DATA'}
+${_dfTable(['Metric', 'Target', 'Actual', 'Status'], [
+  ['ASUP Compliance', slaThresholds.asup + '%', asupPct + '%', slaStatus(asupPct, slaThresholds.asup)],
+  ['ARP Enablement', slaThresholds.arp + '%', _ontapN > 0 ? arpPct + '%' : 'N/A', _ontapN > 0 ? slaStatus(arpPct, slaThresholds.arp) : 'N/A (ONTAP only)'],
+  ['OS Currency', slaThresholds.fw + '%', fwPct + '%', slaStatus(fwPct, slaThresholds.fw)],
+  ['Support Contract Coverage', slaThresholds.contract + '%', contractPct + '%', slaStatus(contractPct, slaThresholds.contract)],
+  ['Risk Posture (Crit<=' + slaThresholds.critRisks + ')', String(slaThresholds.critRisks), String(critCount), critCount <= slaThresholds.critRisks ? 'MET' : 'MISSED'],
+  ['Case MTTR (<=' + mttrTarget + 'd)', mttrTarget + 'd', mttrDays != null ? mttrDays + 'd' : 'N/A', mttrDays != null ? (parseFloat(mttrDays) <= mttrTarget ? 'MET' : 'MISSED') : 'NO DATA']])}
 ${(() => {
   const bm = _dfPortfolioBenchmark(targetSystems);
   if (!bm) return '';
-  const cmp = (mine, theirs) => theirs == null || mine == null ? '' : (mine > theirs ? ` (portfolio avg ${theirs}%, above)` : mine < theirs ? ` (portfolio avg ${theirs}%, below)` : ` (portfolio avg ${theirs}%, even)`);
+  const cmp = (mine, theirs) => theirs == null || mine == null ? '' : (mine > theirs ? 'Above' : mine < theirs ? 'Below' : 'Even');
+  const bmRows = [['ASUP Compliance', asupPct + '%', bm.asupPct != null ? bm.asupPct + '%' : 'n/a', cmp(parseFloat(asupPct), bm.asupPct)],
+    ['ARP Enablement', _ontapN > 0 ? arpPct + '%' : 'N/A', bm.arpPct != null ? bm.arpPct + '%' : 'n/a', _ontapN > 0 ? cmp(parseFloat(arpPct), bm.arpPct) : ''],
+    ['Support Contract Coverage', contractPct + '%', bm.contractPct != null ? bm.contractPct + '%' : 'n/a', cmp(parseFloat(contractPct), bm.contractPct)]];
   return `
 --------------------------------------------------------------------------------
 3a. PORTFOLIO BENCHMARK -- vs. ${bm.portfolioCustomerCount} other managed customer(s) [${bm.portfolioSystemCount} systems]
 --------------------------------------------------------------------------------
-  ASUP Compliance           ${String(asupPct).padStart(3)}%${cmp(parseFloat(asupPct), bm.asupPct)}
-  ARP Enablement            ${_ontapN > 0 ? String(arpPct).padStart(3) + '%' : ' N/A'}${_ontapN > 0 ? cmp(parseFloat(arpPct), bm.arpPct) : ''}
-  Support Contract Coverage ${String(contractPct).padStart(3)}%${cmp(parseFloat(contractPct), bm.contractPct)}
+${_dfTable(['Metric', 'This customer', 'Portfolio average', 'Compared'], bmRows)}
 `;
 })()}
 --------------------------------------------------------------------------------
@@ -27129,10 +27129,7 @@ function compileAccountHandoverBrief(targetSystems, allRisks, allUpgrades, expir
   // ── Propensity ──
   const propSystems = targetSystems.filter(s => s.propensityCategory);
   const propLines = propSystems.length > 0
-    ? propSystems.map(s => {
-      const modelStr = s.platform ? ` (${s.platform})` : '';
-      return `      ${s.systemName}${modelStr}: ${s.propensityCategory}${s.nextBestAction ? ' - ' + s.nextBestAction : ''}`;
-    }).join('\n')
+    ? _dfTable(['System', 'Platform', 'Propensity', 'Next best action'], propSystems.map(s => [s.systemName, s.platform || '', s.propensityCategory || '', s.nextBestAction || '']))
     : '    No propensity data available.';
 
   // ── Inventory Table ──
@@ -37213,7 +37210,7 @@ function _dxParse(text, isMd, ctx) {
       const titleish = ind <= 6 && t.length >= 4 && t.length <= (caps || /^[A-Z]{3,}(?: [A-Z&\/\-]{2,})+ \(/.test(t) ? 100 : 80) && !/[.!?:;,|]$/.test(t) && !/^\s*[-*\u2022\u2713\u2717\u26A0]/.test(l) && !/^\d+[a-z]?[.)]\s/.test(t) && (caps || !/^[A-Za-z][A-Za-z0-9 \/&\-.()#<>%]{1,32}:\s+\S/.test(t)) && !/https?:/.test(t);   // an ALL-CAPS title may carry "(Score: 12)"
       const introTable = _dxSplitCols(nx).length >= 2 && !!_dxSegRule(nx2);
       const introList = /^\s*([-*\u2022]|\d+\.)\s+\S/.test(nx) && (ind > 0 || caps);
-      const introRule = _dxIsRule(nx);                                        // title underlined with a rule (also when indented)
+      const introRule = _dxIsRule(nx) && !segNext;                                        // title underlined with a rule (also when indented)
       const introKv = caps && /^\s+[A-Za-z][A-Za-z0-9 \/&\-.()#<>%]{1,32}:\s+\S/.test(nx);   // ALL-CAPS title over indented "Label: value" lines
       const introCaps = (caps || /^[A-Z]{3,}(?: [A-Z&\/\-]{2,})+ \(/.test(t)) && ind <= 2 && /\s/.test(t) && !/\d/.test(t) && !!nx.trim();   // an ALL-CAPS title of two or more words on its own line
       if (prevBlank && titleish && (introTable || introList || introRule || introKv || introCaps) && _dxClean(noTag(t))) { if (/^\[\d+\]\s+\[/.test(t)) setItem(_dxClean(noTag(t))); else setSub(_dxClean(noTag(t))); continue; }   // a bracketed placeholder line has no title text: leave it as a paragraph

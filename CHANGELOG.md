@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.287 (2026-10-07)
+
+### Changed
+- Swept the other documents for column layouts that Word showed as headings and plain lines. The SLA compliance matrix, the portfolio benchmark and the Handover propensity list are tables, and a column header directly above its rule line is no longer read as a sub-heading.
+
 ## 5.6.286 (2026-10-07)
 
 ### Changed

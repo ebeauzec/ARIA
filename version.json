@@ -1,8 +1,8 @@
 {
-  "version": "5.6.286",
+  "version": "5.6.287",
   "major": 5,
   "minor": 6,
-  "patch": 286,
+  "patch": 287,
   "date": "2026-10-07",
-  "notes": "SVM and LIF per-system summary is a table with colour-coded health."
+  "notes": "Sweep: SLA matrix, portfolio benchmark and propensity list are tables; column tables are no longer read as headings."
 }
