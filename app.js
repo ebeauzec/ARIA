@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.280";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.281";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.281",
+    date: "7 October 2026",
+    title: "No Findings That Active IQ Did Not Raise",
+    sections: [
+      {
+        icon: "🧾",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Findings ARIA made up are no longer listed. ARIA's reference library produced its own 'Security' findings (a version range matched against hand-written advisories) and its own platform end-of-availability finding, and added them to every system in range alongside what Active IQ reported: about 4,100 security findings on 898 systems in the largest fleet. 513 cited advisories NetApp does not publish, 465 were for releases that already have the fix, and the end-of-availability note duplicated Active IQ's own on systems where Active IQ reports it. A finding Active IQ did not raise is now kept only when a real NetApp advisory confirms it for the installed release; the documents say how many were left out.",
+          "Advisory entries built from a finding that is no longer listed go with it (Breede Valley, for example, still cited three advisory IDs NetApp does not publish).",
+          "A finding with no published fix names the system's single upgrade target even when Active IQ reports no recommended release. One report said 'upgrade to a release that contains the fix' for a system whose other documents said 9.15.1P20.",
+          "'Total Risks' in the Handover Brief and Security Brief now says how many best-practice findings it leaves out, so it no longer reads as a different total from the best-practice count elsewhere.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.280",
     date: "7 October 2026",
@@ -20020,9 +20038,9 @@ function riskResolution(sys, r) {
   if (!sys) sys = _rrOwner.get(r) || {};
   const hit = _rrMemo.get(r); if (hit && hit._v === _advResVersion && hit._n === (sys.risks || []).length) return hit;
   let out = _rrBase(sys, r);
-  if (out.kind === 'upgrade' && !out.fixed && out.minVersion) {   // Active IQ asks for an upgrade but NetApp publishes no fixed release for this finding
-    const t = _sysFixTarget(sys), aiq = out.minVersion.replace(/^\S+(?: OS)?\s/, '');
-    out = t ? { ...out, summary: `Upgrade ${t.product} to at least ${t.vtext}, the release that clears every finding on this system with a published fix; no fixed release is published for this finding, and Active IQ's recommended release is ${aiq}`, systemTarget: t.version }
+  if (out.kind === 'upgrade' && !out.fixed) {   // an upgrade is asked for but NetApp publishes no fixed release for this finding
+    const t = _sysFixTarget(sys), aiq = out.minVersion ? out.minVersion.replace(/^\S+(?: OS)?\s/, '') : '';
+    out = t ? { ...out, summary: `Upgrade ${t.product} to at least ${t.vtext}, the release that clears every finding on this system with a published fix; no fixed release is published for this finding${aiq ? `, and Active IQ's recommended release is ${aiq}` : ''}${out.summary.includes('(disruptive') ? ' (disruptive: needs an outage window)' : ''}`, systemTarget: t.version }
             : { ...out, summary: out.summary.replace(/, Active IQ's recommended release; no fixed release is published for this finding/, ` (Active IQ's recommended release); no fixed release is published for this finding`) };
   }
   if (out.kind === 'upgrade' && out.fixed && out.minVersion) {
@@ -20115,11 +20133,12 @@ function _rrGroupLines(pairs) {
 function _rrNaText(systems) {
   let n = 0, cl = 0; const adv = new Set();
   (systems || []).forEach(s => { (s.risksNotApplicable || []).forEach(r => { n++; const id = _advIdOf(r); if (id) adv.add(id.toUpperCase()); }); cl += (s.bulletinsCleared || []).length; });
-  let un = 0, st = 0; (systems || []).forEach(s => { un += (s.bulletinsUnverified || []).length; st += (s.risksStale || []).length; });
+  let un = 0, st = 0, ow = 0; (systems || []).forEach(s => { un += (s.bulletinsUnverified || []).length; st += (s.risksStale || []).length; ow += (s.risksUnverified || []).length; });
+  const owText = ow ? `${ow} finding${ow !== 1 ? 's' : ''} that ARIA's own reference library produced, and Active IQ did not raise, ${ow !== 1 ? 'were' : 'was'} left out: no advisory that NetApp publishes confirms ${ow !== 1 ? 'them' : 'it'} for the installed release, the release already has the fix, or Active IQ reports the same thing itself.` : '';
   const stText = st ? `${st} finding${st !== 1 ? 's' : ''} that Active IQ last reported more than two weeks ago, on a release that already contains the fix, ${st !== 1 ? 'were' : 'was'} left out as resolved by an upgrade.` : '';
   const unText = un ? `${un} version-matched advisory entr${un !== 1 ? 'ies' : 'y'} were left out because NetApp publishes no advisory with that ID.` : '';
   const clText0 = cl ? `${cl} advisor${cl !== 1 ? 'ies' : 'y'} matched to these systems by software version ${cl !== 1 ? 'were' : 'was'} also left out: the installed release is at or beyond the fixed release in NetApp's advisory.` : '';
-  const clText = [clText0, unText, stText].filter(Boolean).join(' ');
+  const clText = [clText0, unText, stText, owText].filter(Boolean).join(' ');
   if (!n) return clText;
   const ex = [...adv].sort().slice(0, 3).join(', ');
   return `${n} finding${n !== 1 ? 's' : ''} that Active IQ attached to these systems${adv.size ? ` (${adv.size} advisor${adv.size !== 1 ? 'ies' : 'y'}${ex ? ', for example ' + ex : ''})` : ''} ${n !== 1 ? 'are' : 'is'} left out: NetApp's advisory lists only other products (for example Active IQ Unified Manager) as affected, so there is nothing to change on these systems.${clText ? ' ' + clText : ''}`;
@@ -20180,15 +20199,25 @@ function _rrIsStale(s, r) {
   const t = Date.parse((r && r.lastSeen) || ''); if (isNaN(t) || (Date.now() - t) <= _RR_STALE_DAYS * 864e5) return false;
   const x = _rrBase(s, r); return !!(x && x.cleared);
 }
+// A finding Active IQ never raised: ARIA built it from its own reference library (a security advisory matched by version range, or a platform lifecycle note)
+const _rrIsOwn = r => !!r && !('fixAction' in r) && typeof r.id === 'number' && (r.category === 'Security' || r.category === 'Lifecycle');
+function _rrOwnRejected(s, r, hasAiqEol) {
+  if (r.category === 'Lifecycle') return hasAiqEol && /End-of-Availability|End-of-Support/i.test(String(r.description || ''));   // Active IQ already reports the platform's end of availability
+  const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r));
+  if (!a || ADVISORY_NOT_FOUND.has(a)) return true;   // NetApp publishes no such advisory
+  if (!ADVISORY_RES[a]) return true;                   // nothing at NetApp confirms it
+  const x = _rrBase(s, r); return !!(x && x.cleared);  // the installed release already has the fix
+}
 function _applyAdvisoryApplicability(systems) {
   let moved = 0;
   (systems || []).forEach(s => {
     if (!s) return;
-    const all = (s.risks || []).concat(s.risksNotApplicable || [], s.risksStale || []);
+    const all = (s.risks || []).concat(s.risksNotApplicable || [], s.risksStale || [], s.risksUnverified || []);
     all.forEach(r => _rrOwner.set(r, s));
-    const keep = [], na = [], stale = [];
-    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; if (ap && ap.applies === false) na.push(r); else if (_rrIsStale(s, r)) stale.push(r); else keep.push(r); });
-    if (na.length !== (s.risksNotApplicable || []).length || stale.length !== (s.risksStale || []).length || keep.length !== (s.risks || []).length) { moved++; s.risks = keep; s.risksNotApplicable = na; s.risksStale = stale; _recomputeStatusFromRisks(s); }
+    const keep = [], na = [], stale = [], unv = [];
+    const _aiqEol = all.some(r => 'fixAction' in r && /end[- ]of[- ](availability|support)|\bEOA\b|\bEOS\b/i.test(String(r.description || '')));
+    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; if (ap && ap.applies === false) na.push(r); else if (_rrIsOwn(r) && _rrOwnRejected(s, r, _aiqEol)) unv.push(r); else if (_rrIsStale(s, r)) stale.push(r); else keep.push(r); });
+    if (na.length !== (s.risksNotApplicable || []).length || stale.length !== (s.risksStale || []).length || unv.length !== (s.risksUnverified || []).length || keep.length !== (s.risks || []).length) { moved++; s.risks = keep; s.risksNotApplicable = na; s.risksStale = stale; s.risksUnverified = unv; _recomputeStatusFromRisks(s); }
     // the system's advisory list (what the Security Advisories and CVE sections print) is built from the same advisories:
     // drop the ones that do not apply here, and put the resolution (not the generic "see the advisory") on the rest
     if (Array.isArray(s.securityBulletins) && (s.securityBulletins.length || (s._bulletinsDropped || []).length)) {
@@ -20201,7 +20230,8 @@ function _applyAdvisoryApplicability(systems) {
         const ntap = String(b.ntapId || b.advisoryId || '').toLowerCase() || ((String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i) || [''])[0].toLowerCase();
         const pseudo = { advisoryId: ntap, advisoryUrl: b.link || '', description: b.title || '', cveDetails: b.cve ? [{ id: b.cve }] : [], fixAction: '', fixedVersions: [] };
         const x = (ntap || b.cve) ? riskResolution(s, pseudo) : null;
-        if (ntap && ADVISORY_NOT_FOUND.has(ntap) && b.source === 'db') { s.bulletinsUnverified.push(ntap); dropB.push(b); return; }   // no such advisory at NetApp: a hand-entered database row, not a finding
+        if (ntap && ADVISORY_NOT_FOUND.has(ntap) && (b.source === 'db' || b.source === 'risk')) { s.bulletinsUnverified.push(ntap); dropB.push(b); return; }
+        if (b.source === 'risk' && !(s.risks || []).some(r => String(r.description) === String(b.title))) { dropB.push(b); return; }   // built from a finding that is no longer listed   // no such advisory at NetApp: a hand-entered database row, not a finding
         if (x && x.kind === 'na') { dropB.push(b); return; }
         if (x && x.cleared && b.source === 'db') { s.bulletinsCleared.push(ntap || b.id); dropB.push(b); return; }   // the database's version range says 'affected'; the advisory's own fixed releases say this system has the fix
         const generic = !b.mitigation || /^(none at this time|consult netapp|refer to the netapp advisory|see (the )?security advisory|upgrade to recommended)/i.test(String(b.mitigation).trim());
@@ -27172,7 +27202,7 @@ ${compileSvmLifSummaryText(targetSystems)}
 --------------------------------------------------------------------------------
 5. RISK & COMPLIANCE POSTURE
 --------------------------------------------------------------------------------
-  Total Risks:          ${allRisks.filter(r => r.severity !== 'best_practice').length} (Critical: ${critCount}, High: ${highCount}, Medium: ${allRisks.filter(r => r.severity === 'medium').length}, Low: ${allRisks.filter(r => r.severity === 'low').length})
+  Total Risks:          ${allRisks.filter(r => r.severity !== 'best_practice').length} (Critical: ${critCount}, High: ${highCount}, Medium: ${allRisks.filter(r => r.severity === 'medium').length}, Low: ${allRisks.filter(r => r.severity === 'low').length})${(() => { const _bp = allRisks.filter(r => r.severity === 'best_practice').length; return _bp ? `, plus ${_bp} best-practice finding${_bp !== 1 ? 's' : ''} listed separately` : ''; })()}
   Security Advisories:  ${secCount}
   Support Cases:        ${(() => { const cc = _dfCaseCounts(allSupportCases); return `${cc.open} open, ${cc.closed} closed (${cc.total} total)`; })()}
   ASUP Compliance:      ${asupPct}%
@@ -27468,7 +27498,7 @@ ${_kevAckLines}
 ${kevAckBlock}
   1. SECURITY HEALTH SUMMARY
   ────────────────────────────────────────────────────────────────────────────
-    Total Risks:              ${totalRisks} (Critical: ${critical}, High: ${high}, Medium: ${medium}, Low: ${low})
+    Total Risks:              ${totalRisks} (Critical: ${critical}, High: ${high}, Medium: ${medium}, Low: ${low})${(() => { const _bp = (allRisks || []).filter(r => r.severity === 'best_practice').length; return _bp ? `, plus ${_bp} best-practice finding${_bp !== 1 ? 's' : ''} listed separately` : ''; })()}
     Security-Specific Risks:  ${securityRisks.length}
     CVE Exposure:             ${Object.keys(_cveIdx).length} unique CVEs (all severities) across ${new Set(Object.values(_cveIdx).flatMap(c => [...c.systems])).size} systems
     ARP Coverage:             ${_covTxt(arpEnabled, _ontapCountSec)} — Anti-Ransomware Protection
