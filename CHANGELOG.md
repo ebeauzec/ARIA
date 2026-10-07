@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.6.282 (2026-10-07)
+
+### Fixed
+- Data audit against NetApp's own sources. ARIA now downloads NetApp's complete advisory index each day (about 4,500 advisories, mapped CVE to advisory) and every advisory a finding names, so any finding or advisory entry that names a CVE is checked against the real advisory, whatever its source. Hand-entered rows are replaced by the real advisory's title, severity and CVSS score, or dropped when no NetApp advisory backs them: 9 advisory IDs in the local database do not exist, 6 rows paired a CVE with the wrong advisory, 15 rows had invented IDs and a generic link, and the reference library's own advisories included three CVEs NetApp has no advisory for (CVE-2025-27082, CVE-2025-22399 and a Microsoft CVE, CVE-2026-20833) and one (CVE-2024-50379) whose real advisory affects only the HCI compute node, not ONTAP.
+- Findings ARIA builds itself from its reference library are kept only when NetApp's advisory names ONTAP (or the system's own software) as affected, so an advisory that names no product yet no longer produces a finding on every system (852 systems for CVE-2026-4747).
+- End of availability: the finding named the platform 'ONTAP' instead of the model and fired for dates still in the future. It now names the model (for example 'Platform AFF-A800'), and the checklist's hardware row uses Active IQ's own date for each system first; the hand-compiled table disagreed with Active IQ on most models and omitted several.
+- Active IQ Talking Points are a table, one row per system (age, highest-use aggregate, cluster capacity, system capacity, next best action) instead of one long stream of sentences. Active IQ quotes a system's age in two places and the figures can differ (0.93 and 1.13 years for one system): when they differ the age shows as Active IQ's rounded age with both figures, so one system no longer has two ages.
+- Knowledge-base links: 277 of 854 were pages NetApp does not serve (205 'gap analysis' links and 9 'feature' links were addresses the scanner guessed). They are removed, gap-analysis entries point at the real Interoperability Matrix Tool, and a feature page is added only when NetApp serves it.
+- Remediation Tracker: open, untouched items for findings Active IQ no longer reports (the tracker held 6,653 from one import in August, 220 citing advisories NetApp does not publish) are left out of the list and figures, with a 'No Longer Reported' count.
+
 ## 5.6.281 (2026-10-07)
 
 ### Fixed
