@@ -1,8 +1,8 @@
 {
-  "version": "5.6.277",
+  "version": "5.6.278",
   "major": 5,
   "minor": 6,
-  "patch": 277,
+  "patch": 278,
   "date": "2026-10-07",
-  "notes": "Failing checklist rows list every system that fails."
+  "notes": "Advisories already fixed on the installed release are no longer listed."
 }
