@@ -1,8 +1,8 @@
 {
-  "version": "5.6.276",
+  "version": "5.6.277",
   "major": 5,
   "minor": 6,
-  "patch": 276,
+  "patch": 277,
   "date": "2026-10-07",
-  "notes": "One upgrade target per system and one system count in every document; no contradictions between deliverables."
+  "notes": "Failing checklist rows list every system that fails."
 }

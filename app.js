@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.276";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.277";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.277",
+    date: "7 October 2026",
+    title: "Checklist Rows List Every Failing System",
+    sections: [
+      {
+        icon: "📋",
+        label: "Added",
+        color: "#22c55e",
+        items: [
+          "Every failing row of the Operations & Security and Data Protection & Lifecycle checklists (Value & ROI tab) opens when clicked and lists every system that fails the check, with the value that fails it (installed and target release, percent free, days left on the contract, open case counts, and so on). Before, only two examples and a '+N more' count were shown.",
+          "Commit hooks: a commit-msg hook removes, and the pre-push hook refuses, any commit that lists an AI assistant as author or co-author.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.276",
     date: "7 October 2026",
@@ -17347,6 +17363,8 @@ function renderCSMTab() {
     let _svmPass = 0, _clonePass = 0, _cotermPass = 0, _adoptPass = 0,
         _configDriftPass = 0, _mttrPass = 0;
 
+    // every system that fails a check, with the value that fails it, so a failing row can list them all when clicked
+    const _fl = {}, _fail = (k, s, why) => { (_fl[k] = _fl[k] || []).push({ name: s.systemName || s.serialNumber || '', why: why || '' }); };
     let _verDetails = [], _capDetails = [], _caseDetails = [], _haDetails = [];
     let _portDetails = [], _cotermDetails = [], _adoptDetails = [];
     // Applicability: many checks are ONTAP-only (efficiency ratio, HA pairs, ARP,
@@ -17365,23 +17383,27 @@ function renderCSMTab() {
       // 1. OS on recommended version
       const _hasUpgrade = !!(s.upgrades && s.upgrades.targetVersion && s.upgrades.targetVersion !== 'Up to Date');
       if (!_hasUpgrade) _verPass++;
-      else _verDetails.push(`${s.systemName}: ${s.ontapVersion || s.santricityVersion || s.osVersion || '?'} \u2192 ${s.upgrades.targetVersion}`);
+      else { _verDetails.push(`${s.systemName}: ${s.ontapVersion || s.santricityVersion || s.osVersion || '?'} \u2192 ${s.upgrades.targetVersion}`); _fail('ver', s, `${s.ontapVersion || s.santricityVersion || s.osVersion || '?'} \u2192 ${s.upgrades.targetVersion}`); }
 
       // 2. Storage efficiency >= 1.5:1
       if (_isOnt && parseFloat(((s.efficiency || {}).ratio || '1:1').split(':')[0]) > 1.5) _effPass++;
+      else if (_isOnt) _fail('eff', s, `ratio ${(s.efficiency || {}).ratio || 'not reported'}`);
 
       // 3. AutoSupport HTTPS reporting (<=7 days)
       const _asup = s.autosupport || {};
       if (_asup.enabled !== false && _asup.status !== 'failed' && _asup.status !== 'disabled' &&
           (_asup.lastReceivedDays == null || _asup.lastReceivedDays <= 7)) _asupPass++;
+      else _fail('asup', s, _asup.lastReceivedDays != null && _asup.lastReceivedDays > 7 ? `last AutoSupport ${_asup.lastReceivedDays} days ago` : `AutoSupport ${_asup.status || 'disabled'}`);
 
       // 4. Hardware non-EOA
       const _modelStr = (s.platform || s.model || '').toUpperCase();
       if (!_getEoaPlatforms().some(p => _modelStr.includes(p.toUpperCase()))) _hwPass++;
+      else _fail('hw', s, `${s.platform || s.model} is past end of availability`);
 
       // 5. No active CVEs (PSIRT)
       const _sec = getApplicableSecurityBulletins(s.ontapVersion, s.platform).filter(b => b.status !== 'resolved');
       if (_isOnt && _sec.length === 0) _secPass++;
+      else if (_isOnt) _fail('sec', s, `${_sec.length} applicable advisor${_sec.length === 1 ? 'y' : 'ies'}`);
 
       // 6. Capacity headroom >= 20% -- applies to every family that reported
       // capacity; systems with no capacity data are not counted (was: silently
@@ -17390,13 +17412,13 @@ function renderCSMTab() {
       if (_headroomPct != null) {
         _nCap++;
         if (_headroomPct >= 20) _capPass++;
-        else _capDetails.push(`${s.systemName}: ${Math.round(_headroomPct)}% free`);
+        else { _capDetails.push(`${s.systemName}: ${Math.round(_headroomPct)}% free`); _fail('cap', s, `${Math.round(_headroomPct)}% free`); }
       }
 
       // 7. HA pair configured (ONTAP concept)
       if (_isOnt) {
         if (s.haConfigured === true) _haPass++;
-        else if (s.haConfigured === false) _haDetails.push(`${s.systemName}: no HA`);
+        else if (s.haConfigured === false) { _haDetails.push(`${s.systemName}: no HA`); _fail('ha', s, 'no HA partner configured'); }
         else _haPass++; // unknown — don't penalise
       }
 
@@ -17408,20 +17430,22 @@ function renderCSMTab() {
         return !isClosed && (sevStr.startsWith('S1') || sevStr.startsWith('S2'));
       });
       if (_openCritCases.length === 0) _casePass++;
-      else _caseDetails.push(`${s.systemName}: ${_openCritCases.length} critical case${_openCritCases.length > 1 ? 's' : ''}`);
+      else { _caseDetails.push(`${s.systemName}: ${_openCritCases.length} critical case${_openCritCases.length > 1 ? 's' : ''}`); _fail('case', s, `${_openCritCases.length} open S1/S2 case${_openCritCases.length > 1 ? 's' : ''}`); }
 
       // 10. Anti-Ransomware Protection (ARP)
       if (_isOnt && (s.isARPEnabled === true || s.isARPEnabled === null)) _arpPass++;
+      else if (_isOnt) _fail('arp', s, 'ARP is disabled');
 
       // 11. No outstanding FSAs
       if (!s.fieldActions || s.fieldActions.length === 0) _fsaPass++;
+      else _fail('fsa', s, `${s.fieldActions.length} active field safety alert${s.fieldActions.length > 1 ? 's' : ''}`);
 
       // 12. Network port health (no link-down on active ports)
       const _ports = ((s.networkPorts || {}).networkPorts || []);
       const _downPorts = _ports.filter(p => p.link === 'down' && p.role && p.role !== 'node_mgmt');
       if (_isOnt) {
         if (_downPorts.length === 0) _portHealthPass++;
-        else _portDetails.push(`${s.systemName}: ${_downPorts.length} port(s) down`);
+        else { _portDetails.push(`${s.systemName}: ${_downPorts.length} port(s) down`); _fail('port', s, `${_downPorts.length} port${_downPorts.length > 1 ? 's' : ''} down`); }
       }
 
       // 13. Firmware currency (shelf/disk FW not flagged)
@@ -17430,43 +17454,52 @@ function renderCSMTab() {
         return desc.includes('firmware') || desc.includes('disk qual') || desc.includes('shelf fw');
       });
       if (_fwRisks.length === 0) _fwCurrPass++;
+      else _fail('fw', s, `${_fwRisks.length} firmware finding${_fwRisks.length > 1 ? 's' : ''}`);
 
       // 14. No CISA KEV active exploitation alerts
       const _cisaHits = _sec.filter(b => b.cisaKEV === true || b.cisaKev === true || (b.tags || []).includes('CISA-KEV'));
       if (_isOnt && _cisaHits.length === 0) _cisaKevPass++;
+      else if (_isOnt) _fail('kev', s, `${_cisaHits.length} CISA KEV CVE${_cisaHits.length > 1 ? 's' : ''}`);
 
       // 15. AutoSupport configured (real AutoSupportStatus enum -- QoS was
       // here before, but Active IQ's schema has no QoS field at all;
       // confirmed via live introspection, not a harvesting gap)
       const _asupCfgState = _getAsupConfiguredState(s);
       if (_asupCfgState === true || _asupCfgState == null) _asupCfgPass++;
+      else _fail('asupcfg', s, 'AutoSupport not configured');
 
       // ── Data Protection & Lifecycle checks ──────────────────────────────────
 
       // 17. SnapMirror replication configured
       if (_isOnt && s.snapmirror && s.snapmirror.enabled) _drPass++;
+      else if (_isOnt) _fail('dr', s, 'no SnapMirror relationship');
 
       // 18. Zero high/critical risks
-      if (s.risks.filter(r => r.severity === 'critical' || r.severity === 'high').length === 0) _riskPass++;
+      { const _ch = s.risks.filter(r => r.severity === 'critical' || r.severity === 'high');
+        if (_ch.length === 0) _riskPass++;
+        else _fail('risk', s, `${_ch.filter(r => r.severity === 'critical').length} critical, ${_ch.filter(r => r.severity === 'high').length} high`); }
 
       // 19. Support contract active (>90 days)
       if (s.contracts && s.contracts.daysRemaining > 90) _contractPass++;
+      else _fail('contract', s, s.contracts && s.contracts.daysRemaining != null ? (s.contracts.daysRemaining < 0 ? `expired ${-s.contracts.daysRemaining} days ago` : `${s.contracts.daysRemaining} days left`) : 'no contract data');
 
       // 20. SVM/LIF inventory available
       const _svms = (typeof getSystemSvms === 'function') ? (getSystemSvms(s) || []) : (s.vservers || []);
       if (_isOnt && _svms.length > 0) _svmPass++;
+      else if (_isOnt) _fail('svm', s, 'no SVM/LIF inventory');
 
       // 21. No excessive FlexClone sprawl
       // FlexClones from snapshots can consume space; if >10 clone volumes exist flag it.
       // Since this data isn't always available, don't penalise when absent.
       const _cloneCount = s.flexCloneCount || 0;
       if (_isOnt && _cloneCount <= 10) _clonePass++;
+      else if (_isOnt) _fail('clone', s, `${_cloneCount} FlexClones`);
 
       // 22. Feature adoption score >= 60%
       const _adoptScore = (_isOnt && typeof computeFeatureAdoptionScore === 'function') ? computeFeatureAdoptionScore(s) : null;
       if (!_isOnt) { /* ONTAP feature set -- N/A for E-Series/StorageGRID */ }
       else if (_adoptScore && _adoptScore.pct >= 60) _adoptPass++;
-      else if (_adoptScore && _adoptScore.pct < 60) _adoptDetails.push(`${s.systemName}: ${_adoptScore.pct}%`);
+      else if (_adoptScore && _adoptScore.pct < 60) { _adoptDetails.push(`${s.systemName}: ${_adoptScore.pct}%`); _fail('adopt', s, `${_adoptScore.pct}% of features in use`); }
       else _adoptPass++; // unavailable — don't penalise
 
       // 23. Config drift — no duplicate/stale network configs
@@ -17474,6 +17507,7 @@ function renderCSMTab() {
       const _bdPorts = _ports.filter(p => p.broadcastDomain && p.broadcastDomain !== '');
       const _unassigned = _ports.filter(p => !p.broadcastDomain || p.broadcastDomain === '');
       if (_isOnt && (_unassigned.length <= 2 || _ports.length === 0)) _configDriftPass++;
+      else if (_isOnt) _fail('drift', s, `${_unassigned.length} ports not in a broadcast domain`);
 
       // 24. MTTR posture (no stale S3/S4 cases >90 days)
       const _staleCases = (s.supportCases || []).filter(c => {
@@ -17483,6 +17517,7 @@ function renderCSMTab() {
         return age > 90;
       });
       if (_staleCases.length === 0) _mttrPass++;
+      else _fail('mttr', s, `${_staleCases.length} case${_staleCases.length > 1 ? 's' : ''} open over 90 days`);
     });
 
     // 25. Contract co-term alignment (fleet-level check)
@@ -17490,6 +17525,7 @@ function renderCSMTab() {
     const _cotermOk = _cotermGroups.length === 0;
     if (_cotermGroups.length > 0) {
       _cotermDetails.push(`${_cotermGroups.length} co-term group(s) detected`);
+      _cotermGroups.forEach((g, gi) => (Array.isArray(g) ? g : []).forEach(x => _fail('coterm', typeof x === 'string' ? { systemName: x } : x, `co-term group ${gi + 1}: contracts end on different dates`)));
     }
 
     const _n = targetCSMSystems.length;
@@ -17515,40 +17551,40 @@ function renderCSMTab() {
     // ── Left column: Operations & Security ──────────────────────────────────
     const _leftChecks = [
       // — Software & Platform —
-      { cat: 'SOFTWARE \u0026 PLATFORM', name: _osCheckLabel(_famSet, _latestOntap), completedCount: _verPass, detail: _vDetail, tip: 'Systems running ONTAP at the vendor-recommended target version. Systems behind may be missing security patches, bug fixes, or feature parity with the rest of the fleet.' },
-      { name: 'Hardware on Current Platform Generation (non-EOA)',     completedCount: _hwPass,          detail: '', tip: 'Systems on a hardware platform NetApp has not yet marked End-of-Availability (EOA). EOA hardware is still supported but no longer sold -- a signal to start planning a refresh before End-of-Support.' },
-      { name: 'Firmware \u0026 Disk Qualification Current',               completedCount: _fwCurrPass,      detail: '', tip: 'Systems whose disk, shelf, and SP/BMC firmware match NetApp current qualified baseline versions for their ONTAP release.' },
+      { cat: 'SOFTWARE \u0026 PLATFORM', name: _osCheckLabel(_famSet, _latestOntap), completedCount: _verPass, fails: _fl.ver, detail: _vDetail, tip: 'Systems running ONTAP at the vendor-recommended target version. Systems behind may be missing security patches, bug fixes, or feature parity with the rest of the fleet.' },
+      { name: 'Hardware on Current Platform Generation (non-EOA)',     completedCount: _hwPass, fails: _fl.hw,          detail: '', tip: 'Systems on a hardware platform NetApp has not yet marked End-of-Availability (EOA). EOA hardware is still supported but no longer sold -- a signal to start planning a refresh before End-of-Support.' },
+      { name: 'Firmware \u0026 Disk Qualification Current',               completedCount: _fwCurrPass, fails: _fl.fw,      detail: '', tip: 'Systems whose disk, shelf, and SP/BMC firmware match NetApp current qualified baseline versions for their ONTAP release.' },
       // — Infrastructure Health —
-      { cat: 'INFRASTRUCTURE HEALTH', name: 'Storage Efficiency \u2265 1.5:1 (dedup + compression)',  total: _nOntap, completedCount: _effPass,  detail: '', tip: 'Systems achieving at least a 1.5:1 combined dedupe + compression ratio -- a common baseline efficiency benchmark for ONTAP. Lower ratios may mean efficiency features are disabled or the workload does not compress well.' },
-      { name: 'Capacity Headroom \u2265 20%',                    total: _nCap, completedCount: _capPass,         detail: _capDetail, tip: 'Systems with at least 20% free aggregate capacity -- the generally recommended buffer to avoid performance degradation and leave room for snapshot and unplanned data growth.' },
-      { name: 'HA Pair Configured (No Single Point of Failure)',       total: _nOntap, completedCount: _haPass,          detail: _haDetail, tip: 'Systems configured in a high-availability (HA) controller pair, so a single controller failure does not take the system offline.' },
-      { name: 'Network Port Health (no link-down on active ports)',    total: _nOntap, completedCount: _portHealthPass,  detail: _portDetail, tip: 'Systems with no in-use network port currently reporting a link-down state -- a down port on an active path can mean reduced redundancy or an active outage.' },
-      { name: 'AutoSupport Configured',                               completedCount: _asupCfgPass,     detail: '', tip: 'Systems with AutoSupport turned on (real Active IQ AutoSupportStatus). Without it, a system is invisible to proactive risk detection and this tool\'s own health scoring.' },
+      { cat: 'INFRASTRUCTURE HEALTH', name: 'Storage Efficiency \u2265 1.5:1 (dedup + compression)',  total: _nOntap, completedCount: _effPass, fails: _fl.eff,  detail: '', tip: 'Systems achieving at least a 1.5:1 combined dedupe + compression ratio -- a common baseline efficiency benchmark for ONTAP. Lower ratios may mean efficiency features are disabled or the workload does not compress well.' },
+      { name: 'Capacity Headroom \u2265 20%',                    total: _nCap, completedCount: _capPass, fails: _fl.cap,         detail: _capDetail, tip: 'Systems with at least 20% free aggregate capacity -- the generally recommended buffer to avoid performance degradation and leave room for snapshot and unplanned data growth.' },
+      { name: 'HA Pair Configured (No Single Point of Failure)',       total: _nOntap, completedCount: _haPass, fails: _fl.ha,          detail: _haDetail, tip: 'Systems configured in a high-availability (HA) controller pair, so a single controller failure does not take the system offline.' },
+      { name: 'Network Port Health (no link-down on active ports)',    total: _nOntap, completedCount: _portHealthPass, fails: _fl.port,  detail: _portDetail, tip: 'Systems with no in-use network port currently reporting a link-down state -- a down port on an active path can mean reduced redundancy or an active outage.' },
+      { name: 'AutoSupport Configured',                               completedCount: _asupCfgPass, fails: _fl.asupcfg,     detail: '', tip: 'Systems with AutoSupport turned on (real Active IQ AutoSupportStatus). Without it, a system is invisible to proactive risk detection and this tool\'s own health scoring.' },
       // — Security & Compliance —
-      { cat: 'SECURITY \u0026 COMPLIANCE', name: 'No Active Security CVEs Applicable (PSIRT)',            total: _nOntap, completedCount: _secPass,         detail: '', tip: 'Systems with zero NetApp PSIRT-published CVEs applicable to their current OS version.' },
-      { name: 'No CISA KEV Active Exploitation Alerts',               total: _nOntap, completedCount: _cisaKevPass,     detail: '', tip: 'Systems with no CVEs matching CISA Known Exploited Vulnerabilities (KEV) catalog -- confirmed active real-world exploitation, not just theoretical risk.' },
+      { cat: 'SECURITY \u0026 COMPLIANCE', name: 'No Active Security CVEs Applicable (PSIRT)',            total: _nOntap, completedCount: _secPass, fails: _fl.sec,         detail: '', tip: 'Systems with zero NetApp PSIRT-published CVEs applicable to their current OS version.' },
+      { name: 'No CISA KEV Active Exploitation Alerts',               total: _nOntap, completedCount: _cisaKevPass, fails: _fl.kev,     detail: '', tip: 'Systems with no CVEs matching CISA Known Exploited Vulnerabilities (KEV) catalog -- confirmed active real-world exploitation, not just theoretical risk.' },
 
-      { name: 'Anti-Ransomware Protection (ARP) Active',              total: _nOntap, completedCount: _arpPass,         detail: '', tip: 'Systems with ONTAP built-in Anti-Ransomware Protection enabled -- entropy-based anomaly detection on volumes that flags likely ransomware encryption activity.' },
+      { name: 'Anti-Ransomware Protection (ARP) Active',              total: _nOntap, completedCount: _arpPass, fails: _fl.arp,         detail: '', tip: 'Systems with ONTAP built-in Anti-Ransomware Protection enabled -- entropy-based anomaly detection on volumes that flags likely ransomware encryption activity.' },
       // — Support & Monitoring —
-      { cat: 'SUPPORT \u0026 MONITORING', name: 'AutoSupport HTTPS Reporting (last check \u2264 7 days)',  completedCount: _asupPass,  detail: '', tip: 'Systems whose AutoSupport telemetry was received by NetApp within the last 7 days -- a stale or disabled feed means proactive support and this tool own risk data are both flying blind on that system.' },
-      { name: 'No Open S1/S2 Critical Support Cases',                 completedCount: _casePass,        detail: _caseDetail, tip: 'Systems with no open Severity 1 or 2 (business-impacting) support cases.' },
-      { name: 'No Outstanding Field Safety Alerts (FSA)',              completedCount: _fsaPass,         detail: '', tip: 'Systems with no active NetApp-issued Field Safety Alert -- a mandatory hardware or firmware remediation NetApp engineering has flagged for that specific system.' },
+      { cat: 'SUPPORT \u0026 MONITORING', name: 'AutoSupport HTTPS Reporting (last check \u2264 7 days)',  completedCount: _asupPass, fails: _fl.asup,  detail: '', tip: 'Systems whose AutoSupport telemetry was received by NetApp within the last 7 days -- a stale or disabled feed means proactive support and this tool own risk data are both flying blind on that system.' },
+      { name: 'No Open S1/S2 Critical Support Cases',                 completedCount: _casePass, fails: _fl.case,        detail: _caseDetail, tip: 'Systems with no open Severity 1 or 2 (business-impacting) support cases.' },
+      { name: 'No Outstanding Field Safety Alerts (FSA)',              completedCount: _fsaPass, fails: _fl.fsa,         detail: '', tip: 'Systems with no active NetApp-issued Field Safety Alert -- a mandatory hardware or firmware remediation NetApp engineering has flagged for that specific system.' },
     ];
 
     // ── Right column: Data Protection & Lifecycle ───────────────────────────
     const _rightChecks = [
       // — Data Protection —
-      { cat: 'DATA PROTECTION', name: 'SnapMirror Async/Sync Replication Configured',  total: _nOntap, completedCount: _drPass,     detail: '', tip: 'Systems with at least one active SnapMirror relationship, providing off-system data protection or disaster recovery replication.' },
-      { name: 'SVM/LIF Inventory Mapped',                             total: _nOntap, completedCount: _svmPass,    detail: '', tip: 'Systems where Storage Virtual Machine (SVM) and Logical Interface (LIF) topology was successfully retrieved from Active IQ. A system failing this check has a data gap here, not necessarily a real SVM/LIF problem.' },
-      { name: 'No Excessive FlexClone Sprawl (\u226410 clones)',          total: _nOntap, completedCount: _clonePass,  detail: '', tip: 'Systems with 10 or fewer FlexClone volumes. Excessive clone sprawl without a cleanup/lifecycle policy consumes capacity and complicates management over time.' },
+      { cat: 'DATA PROTECTION', name: 'SnapMirror Async/Sync Replication Configured',  total: _nOntap, completedCount: _drPass, fails: _fl.dr,     detail: '', tip: 'Systems with at least one active SnapMirror relationship, providing off-system data protection or disaster recovery replication.' },
+      { name: 'SVM/LIF Inventory Mapped',                             total: _nOntap, completedCount: _svmPass, fails: _fl.svm,    detail: '', tip: 'Systems where Storage Virtual Machine (SVM) and Logical Interface (LIF) topology was successfully retrieved from Active IQ. A system failing this check has a data gap here, not necessarily a real SVM/LIF problem.' },
+      { name: 'No Excessive FlexClone Sprawl (\u226410 clones)',          total: _nOntap, completedCount: _clonePass, fails: _fl.clone,  detail: '', tip: 'Systems with 10 or fewer FlexClone volumes. Excessive clone sprawl without a cleanup/lifecycle policy consumes capacity and complicates management over time.' },
       // — Risk & Remediation —
-      { cat: 'RISK \u0026 REMEDIATION', name: 'Zero High/Critical Risks Outstanding',          completedCount: _riskPass,           detail: '', tip: 'Systems with no unresolved Active IQ risk findings rated Critical or High severity.' },
-      { name: 'Feature Adoption Score \u2265 60%',                        total: _nOntap, completedCount: _adoptPass,          detail: _adoptDetail, tip: 'Systems using at least 60% of NetApp recommended best-practice feature set (this same left/right checklist, scored) -- how much of the platform available capability is actually turned on, not just installed.' },
-      { name: 'No Config Drift (unassigned ports \u2264 2)',              total: _nOntap, completedCount: _configDriftPass,    detail: '', tip: 'Systems with 2 or fewer network ports lacking a broadcast domain assignment. Unassigned ports beyond that are typically a sign of incomplete or drifted network configuration.' },
-      { name: 'MTTR Posture (no stale cases \u003e 90 days)',             completedCount: _mttrPass,           detail: '', tip: 'Systems with no support case open longer than 90 days. Cases open that long usually indicate a stuck escalation, a resourcing gap, or a fix waiting on the customer.' },
+      { cat: 'RISK \u0026 REMEDIATION', name: 'Zero High/Critical Risks Outstanding',          completedCount: _riskPass, fails: _fl.risk,           detail: '', tip: 'Systems with no unresolved Active IQ risk findings rated Critical or High severity.' },
+      { name: 'Feature Adoption Score \u2265 60%',                        total: _nOntap, completedCount: _adoptPass, fails: _fl.adopt,          detail: _adoptDetail, tip: 'Systems using at least 60% of NetApp recommended best-practice feature set (this same left/right checklist, scored) -- how much of the platform available capability is actually turned on, not just installed.' },
+      { name: 'No Config Drift (unassigned ports \u2264 2)',              total: _nOntap, completedCount: _configDriftPass, fails: _fl.drift,    detail: '', tip: 'Systems with 2 or fewer network ports lacking a broadcast domain assignment. Unassigned ports beyond that are typically a sign of incomplete or drifted network configuration.' },
+      { name: 'MTTR Posture (no stale cases \u003e 90 days)',             completedCount: _mttrPass, fails: _fl.mttr,           detail: '', tip: 'Systems with no support case open longer than 90 days. Cases open that long usually indicate a stuck escalation, a resourcing gap, or a fix waiting on the customer.' },
       // — Contracts & Lifecycle —
-      { cat: 'CONTRACTS \u0026 LIFECYCLE', name: 'Support Contract Active (\u003e 90 days remaining)',   completedCount: _contractPass,  detail: '', tip: 'Systems with more than 90 days remaining on their support contract (real isContractActive/overallContractEndDate from Active IQ), i.e. not yet in the renewal-urgency window.' },
-      { name: 'Warranty Co-Term Alignment',                            completedCount: _cotermOk ? _n : Math.max(_n - _cotermGroups.reduce((s, g) => s + g.length, 0), 0), detail: _cotermDetails.join(' | '), tip: 'Whether this account systems share a common warranty end date. Staggered (non-co-termed) end dates across a fleet create renewal admin overhead and forfeit bundling/volume-discount opportunities -- co-terming them onto one renewal date simplifies procurement for both sides.' },
+      { cat: 'CONTRACTS \u0026 LIFECYCLE', name: 'Support Contract Active (\u003e 90 days remaining)',   completedCount: _contractPass, fails: _fl.contract,  detail: '', tip: 'Systems with more than 90 days remaining on their support contract (real isContractActive/overallContractEndDate from Active IQ), i.e. not yet in the renewal-urgency window.' },
+      { name: 'Warranty Co-Term Alignment',                            fails: _fl.coterm, completedCount: _cotermOk ? _n : Math.max(_n - _cotermGroups.reduce((s, g) => s + g.length, 0), 0), detail: _cotermDetails.join(' | '), tip: 'Whether this account systems share a common warranty end date. Staggered (non-co-termed) end dates across a fleet create renewal admin overhead and forfeit bundling/volume-discount opportunities -- co-terming them onto one renewal date simplifies procurement for both sides.' },
     ];
 
     // ── Render helper ───────────────────────────────────────────────────────
@@ -17574,8 +17610,12 @@ function renderCSMTab() {
       const status = _allDone ? 'pass' : item.completedCount === 0 ? 'fail' : 'warn';
       const _col = _allDone ? 'var(--status-normal)' : item.completedCount === 0 ? 'var(--status-critical)' : 'var(--status-warning)';
       const _pct = Math.round((item.completedCount / Math.max(_tot, 1)) * 100);
+      const _fails = (!_allDone && Array.isArray(item.fails) && item.fails.length) ? item.fails.slice().sort((x, y) => String(x.name).localeCompare(String(y.name), undefined, { numeric: true })) : null;
+      const _open = _fails ? '<details class="chk-expand"><summary style="list-style:none;cursor:pointer;" title="Click to list every system that fails this check">' : '', _close = _fails
+        ? `</summary><div style="margin:6px 0 2px;padding:6px 8px;background:rgba(0,0,0,0.18);border-radius:4px;max-height:260px;overflow:auto;font-size:0.72rem;"><div style="color:var(--text-muted);margin-bottom:4px;">${_fails.length} system${_fails.length !== 1 ? 's' : ''} fail${_fails.length === 1 ? 's' : ''} this check:</div><table style="width:100%;border-collapse:collapse;">${_fails.map(f => `<tr><td style="padding:2px 6px 2px 0;white-space:nowrap;vertical-align:top;font-weight:600;">${_esc(f.name)}</td><td style="padding:2px 0;color:var(--text-secondary);">${_esc(f.why)}</td></tr>`).join('')}</table></div></details>` : '';
       const html = `
           <div style="padding: 6px 10px; background: rgba(255,255,255,0.01); border-bottom: 1px solid var(--border-color);"${item.tip ? ` title="${_esc(item.tip)}"` : ''}>
+            ${_open}
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: ${item.detail ? 3 : 2}px;">
               <span style="font-size: 0.78rem;${item.tip ? ' cursor: help; border-bottom: 1px dotted var(--text-muted);' : ''}">${item.name}</span>
               <span style="font-size: 0.78rem; font-weight: 600; color: ${_col}; white-space: nowrap; margin-left: 8px;">${item.completedCount}/${_tot}${_tot < n ? ' <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;" title="Applies only to the systems this check is relevant to (ONTAP-only checks exclude E-Series/StorageGRID)">(applicable)</span>' : ''}</span>
@@ -17584,6 +17624,7 @@ function renderCSMTab() {
             <div style="height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;">
               <div style="height: 100%; width: ${_pct}%; background: ${_col}; border-radius: 2px;"></div>
             </div>
+            ${_close}
           </div>
         `;
       return { html, status };

@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.277 (2026-10-07)
+
+### Added
+- Every failing row of the Operations & Security and Data Protection & Lifecycle checklists (Value & ROI tab) opens when clicked and lists every system that fails the check, with the value that fails it (installed and target release, percent free, days left on the contract, open case counts, and so on). Before, only two examples and a '+N more' count were shown.
+- Commit hooks: a commit-msg hook removes, and the pre-push hook refuses, any commit that lists an AI assistant as author or co-author.
+
 ## 5.6.276 (2026-10-07)
 
 ### Fixed
