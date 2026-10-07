@@ -1,8 +1,8 @@
 {
-  "version": "5.6.284",
+  "version": "5.6.285",
   "major": 5,
   "minor": 6,
-  "patch": 284,
+  "patch": 285,
   "date": "2026-10-07",
-  "notes": "Advisory data refreshed only when NetApp changes it."
+  "notes": "Scores in Word reports are bold and colour-coded."
 }

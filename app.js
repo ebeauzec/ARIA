@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.284";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.285";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.285",
+    date: "7 October 2026",
+    title: "Colour-Coded Scores In Word Reports",
+    sections: [
+      {
+        icon: "🎨",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "Recommendation scores in the Word reports are bold and colour-coded with the same bands as the on-screen view: green from 80%, amber from 50%, red below. This covers the '[Score N%]' tags beside each recommendation, the 'Active IQ score N%' line in each finding, and the Score column of the TAM Recommendations summary table.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.284",
     date: "7 October 2026",
@@ -35714,7 +35729,7 @@ Prepared ${today} from the recommendations Active IQ publishes for this customer
     + `A score is the percentage of systems meeting the check; 100% means all clear.
 
 `;
-  o += _wdTable(['Area', 'Check', 'Score', 'Systems not meeting it'], rows.map(x => [nice(x.r.category), nice(x.r.subCategory), x.score != null ? x.score + '%' : 'n/a', cnt(x)]));
+  o += _wdTable(['Area', 'Check', 'Score', 'Systems not meeting it'], rows.map(x => [nice(x.r.category), nice(x.r.subCategory), x.score != null ? '{{score:' + x.score + '}}' : 'n/a', cnt(x)]));
   o += `## 2. Recommendations by area
 
 For each check: the **Finding** is what Active IQ measured for this customer; the **General guidance** is Active IQ's standard advice for that check, not a statement about a particular system.
@@ -36906,8 +36921,10 @@ function _dxLongDate(s) {
 let _dxLinks = [];   // link targets collected while a document is rendered; written to document.xml.rels as rId100+
 // http(s) URLs, e-mail addresses, and bare web addresses ("security.netapp.com", "docs.netapp.com/us-en/active-iq/")
 const _DX_LINK_RE = /https?:\/\/[^\s<>"]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+|(?<![@\w\/.-])(?:[a-z0-9-]+\.)+(?:com|org|net|gov|edu|io)\b(?:\/[^\s<>"|]*)?/;
+// A score is green from 80%, amber from 50%, red below: the same bands as the on-screen recommendations, in darker shades that read on white paper.
+const _dxScoreColor = pct => `<w:color w:val="${pct >= 80 ? '15803D' : pct >= 50 ? 'B45309' : 'B91C1C'}"/>`;
 function _docxRuns(text, base) {
-  const out = []; const re = /(\*\*(.+?)\*\*)|(`([^`]+)`)|((?:^|(?<=[\s(]))_(.+?)_(?=[\s).,;:]|$))/g; let last = 0, m;
+  const out = []; const re = /(\*\*(.+?)\*\*)|(`([^`]+)`)|((?:^|(?<=[\s(]))_(.+?)_(?=[\s).,;:]|$))|(\[Score (\d+)%[^\]]*\])|(Active IQ score (\d+)%)|(\{\{score:(\d+)\}\})/g; let last = 0, m;
   const plain = (t, extra) => t ? `<w:r><w:rPr>${extra || ''}${base || ''}</w:rPr><w:t xml:space="preserve">${_xe(t)}</w:t></w:r>` : '';
   const run = (t, extra, code) => {   // plain text: any URL, bare NetApp/web address or e-mail in it becomes a clickable link
     if (!t) return '';
@@ -36924,7 +36941,7 @@ function _docxRuns(text, base) {
     }
     return o + plain(t.slice(at), extra);
   };
-  while ((m = re.exec(text))) { out.push(run(text.slice(last, m.index))); if (m[2] != null) out.push(run(m[2], '<w:b/>')); else if (m[4] != null) out.push(run(m[4], '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="18"/>', true)); else out.push(run(m[6], '<w:i/>')); last = m.index + m[0].length; }
+  while ((m = re.exec(text))) { out.push(run(text.slice(last, m.index))); if (m[2] != null) out.push(run(m[2], '<w:b/>')); else if (m[4] != null) out.push(run(m[4], '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="18"/>', true)); else if (m[7] != null) out.push(run(m[7], '<w:b/>' + _dxScoreColor(+m[8]))); else if (m[9] != null) { out.push(run('Active IQ score ')); out.push(run(m[10] + '%', '<w:b/>' + _dxScoreColor(+m[10]))); } else if (m[11] != null) out.push(run(m[12] + '%', '<w:b/>' + _dxScoreColor(+m[12]))); else out.push(run(m[6], '<w:i/>')); last = m.index + m[0].length; }
   out.push(run(text.slice(last))); return out.join('');
 }
 

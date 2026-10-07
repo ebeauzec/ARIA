@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.285 (2026-10-07)
+
+### Changed
+- Recommendation scores in the Word reports are bold and colour-coded with the same bands as the on-screen view: green from 80%, amber from 50%, red below. This covers the '[Score N%]' tags beside each recommendation, the 'Active IQ score N%' line in each finding, and the Score column of the TAM Recommendations summary table.
+
 ## 5.6.284 (2026-10-07)
 
 ### Fixed
