@@ -45,9 +45,28 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.278";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.279";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.279",
+    date: "7 October 2026",
+    title: "Logic Audit Across All Customers",
+    sections: [
+      {
+        icon: "🔎",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Advisories that do not exist: the local advisory database held hand-entered rows with advisory IDs that NetApp does not publish (they return 'not found'), with placeholder ranges ('9.0 to check advisory') that matched every system. Nine such IDs produced about 3,100 system-advisory entries across the fleet (one, 'Intel Ethernet Controller Info Disclosure', on 832 systems). ARIA now checks every database advisory against NetApp's own advisory service and drops those it cannot find; the documents say how many were left out.",
+          "Impossible capacity figures: used capacity above 100% (for example '809% used', '-709% free') came from physical-used compared with usable capacity, two figures that do not always describe the same thing. Headroom, the used-capacity lines and the runway now use Active IQ's own utilisation figure first, and a computed figure that is not between 0 and 100 is not printed. Systems at 6% used no longer appear in the red capacity zone with no runway.",
+          "'Up to date' and 'needs an upgrade' no longer contradict each other: a system counts as on a current release for the OS Currency figures and the checklist only when NetApp's advisories also need no newer release (43 systems Active IQ called up to date still had fixes available in a later release). The checklist row names the release needed.",
+          "Findings that Active IQ still reports although the installed release is at or beyond the fixed release (731 findings on 525 systems in the largest fleet) are one 'check in Active IQ' action instead of being counted as upgrade work, and each says Active IQ still reports it.",
+          "ARIA's own stock sentence ('Upgrade to ONTAP x which includes the patch') is no longer quoted as the recommended action.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.278",
     date: "7 October 2026",
@@ -17396,9 +17415,11 @@ function renderCSMTab() {
       if (_isOnt) _nOntap++;
       // ── Operations & Security checks ────────────────────────────────────────
       // 1. OS on recommended version
-      const _hasUpgrade = !!(s.upgrades && s.upgrades.targetVersion && s.upgrades.targetVersion !== 'Up to Date');
+      const _aiqTgt = s.upgrades && s.upgrades.targetVersion && s.upgrades.targetVersion !== 'Up to Date' ? s.upgrades.targetVersion : '';
+      const _fixNeed = _fixUpgradeNeeded(s), _hasUpgrade = !!_aiqTgt || !!_fixNeed;
+      const _tgtTxt = _aiqTgt ? _aiqTgt + (_fixNeed ? ` (findings need ${_fixNeed.replace(/^\S+(?: OS)?\s/, '')})` : '') : `${_fixNeed.replace(/^\S+(?: OS)?\s/, '')} to clear findings (Active IQ reports no newer release)`;
       if (!_hasUpgrade) _verPass++;
-      else { _verDetails.push(`${s.systemName}: ${s.ontapVersion || s.santricityVersion || s.osVersion || '?'} \u2192 ${s.upgrades.targetVersion}`); _fail('ver', s, `${s.ontapVersion || s.santricityVersion || s.osVersion || '?'} \u2192 ${s.upgrades.targetVersion}`); }
+      else { _verDetails.push(`${s.systemName}: ${s.ontapVersion || s.santricityVersion || s.osVersion || '?'} \u2192 ${_tgtTxt}`); _fail('ver', s, `${s.ontapVersion || s.santricityVersion || s.osVersion || '?'} \u2192 ${_tgtTxt}`); }
 
       // 2. Storage efficiency >= 1.5:1
       if (_isOnt && parseFloat(((s.efficiency || {}).ratio || '1:1').split(':')[0]) > 1.5) _effPass++;
@@ -19194,7 +19215,14 @@ function _osKnown(s) {
   // upgrades.source === 'not-reported' with "Up to Date" means Active IQ reported no target for the system, not an assessment
   return !!(s.upgrades && s.upgrades.targetVersion && !(s.upgrades.source === 'not-reported' && s.upgrades.targetVersion === 'Up to Date'));
 }
+// the release a system needs to clear its findings that have a published fix, when it runs an older one ('' when none is needed or the installed release is unknown)
+function _fixUpgradeNeeded(s) {
+  const t = _sysFixTarget(s); if (!t) return '';
+  const cur = _rrCurrentVersion(s, _platformFamily(s)), v = _dfVerParse(t.vtext);
+  return cur && v && _dfVerCmp(v, cur) > 0 ? t.version : '';
+}
 function _osIsCurrent(s) {
+  if (_fixUpgradeNeeded(s)) return false;   // Active IQ's baseline can say current while NetApp's advisories say the release still has open fixes
   if (_platformFamily(s) === 'ontap') return !!(s.swRecMin && s.osVersion && !versionLt(s.osVersion, s.swRecMin));
   return _osKnown(s) && s.upgrades.targetVersion === 'Up to Date';   // a default 'Up to Date' with no data is not current
 }
@@ -19212,12 +19240,17 @@ function _covTxt(n, d) {
 // array's free space is what is unallocated in groups/pools plus unconfigured
 // drives -- using the generic usable-vs-used figures would overstate headroom
 // (e.g. a grid with 0.6% remaining would show 4%).
+function _capacityUsedPct(s) {
+  const h = _capacityHeadroomPct(s);
+  return h == null ? null : Math.round((100 - h) * 10) / 10;
+}
 function _capacityHeadroomPct(s) {
   const g = s && s.storagegridCapacity, e = s && s.eseriesCapacity;
   if (g && g.totalTB > 0) return (g.remainingTB / g.totalTB) * 100;
   if (e && e.totalTB > 0) return ((e.freeTB + (e.unconfiguredTB || 0)) / e.totalTB) * 100;
+  if (s && s.clusterCapacityUtilPct > 0 && s.clusterCapacityUtilPct <= 100) return 100 - s.clusterCapacityUtilPct;   // Active IQ's own utilisation figure
   const u = s && s.efficiency && s.efficiency.usableCapacityTB > 0 ? s.efficiency.usableCapacityTB : 0;
-  if (u > 0) return ((u - ((s.efficiency || {}).physicalUsedTB || 0)) / u) * 100;
+  if (u > 0) { const h = ((u - ((s.efficiency || {}).physicalUsedTB || 0)) / u) * 100; return h >= 0 && h <= 100 ? h : null; }   // used above usable (tiered or logical figures mixed in) is not a headroom figure
   return null;
 }
 
@@ -19843,6 +19876,7 @@ function _dfSgRec(title) {
 // that list only Unified Manager (or another product) as affected -- nothing a controller change can fix.
 // How products are matched and worded is data, not code: resolution_rules.json (served with the advisory data).
 let ADVISORY_RES = {};              // advisory id (lower case) -> record from the server
+let ADVISORY_NOT_FOUND = new Set();   // advisory ids in the local database that NetApp does not publish (they were typed in by hand)
 let _advResVersion = 0;             // bumped when ADVISORY_RES or the rules change, invalidates the memo
 let _advResLoading = false;
 let RESOLUTION_RULES = {
@@ -20012,7 +20046,7 @@ function _riskResolution(sys, r) {
   const parts = [];
   if (fixVersions.length) {
     const f = _advPickFix(cur, fixVersions);
-    if (f.pick && f.already) { res.kind = 'review'; res.cleared = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(f.newer ? `The advisory lists fixes only up to ${prod} ${f.pick.text}; the installed ${cur.text} is newer, so this should no longer apply. Confirm in Active IQ, then acknowledge or close the finding` : `Installed ${prod} ${cur.text} is at or beyond the fixed release ${f.pick.text}; confirm Active IQ clears the finding on its next AutoSupport`); }
+    if (f.pick && f.already) { res.kind = 'review'; res.cleared = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(f.newer ? `The advisory lists fixes only up to ${prod} ${f.pick.text}; the installed ${cur.text} is newer, so this should no longer apply. Confirm in Active IQ, then acknowledge or close the finding` : `Installed ${prod} ${cur.text} is at or beyond the fixed release ${f.pick.text}; Active IQ still reports it, so confirm the release in Active IQ and acknowledge the finding (or raise a case if it keeps returning)`); }
     else if (f.pick) { res.kind = 'upgrade'; res.fixed = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(`Upgrade ${prod} to at least ${f.pick.text}${cur ? ` (now ${cur.text})` : ''}`); }
   } else if (/FIRMWARE_UPGRADE/.test(r.fixAction || '')) {
     res.kind = 'firmware'; parts.push(`Update ${(RESOLUTION_RULES.firmwareLabels || {})[r.fixActionSub] || (RESOLUTION_RULES.firmwareLabels || {}).NONE || 'firmware'} to the current release`);
@@ -20032,7 +20066,7 @@ function _riskResolution(sys, r) {
     if (tr) { res.kind = tr.kind || 'review'; parts.push(tr.summary); }
   }
   if (!parts.length) {
-    const act = _rrImperative(r.riskDetail || '') || _rrImperative(r.recommendation || '') || (_rrRx('^(' + RESOLUTION_RULES.guidanceVerbs + ')\\b').test(desc) ? _rrClip(desc.replace(/\.$/, ''), 200) : '');
+    const act = _rrImperative(r.riskDetail || '') || (_rrIsStockText(r.recommendation) ? '' : _rrImperative(r.recommendation || '')) || (_rrRx('^(' + RESOLUTION_RULES.guidanceVerbs + ')\\b').test(desc) ? _rrClip(desc.replace(/\.$/, ''), 200) : '');
     const g = (Array.isArray(r.guidance) ? r.guidance : []).map(x => x && x.displayName).filter(Boolean)[0];
     const sub = r.fixActionSub && r.fixActionSub !== 'NONE' ? r.fixActionSub : '';
     const via = g ? `; steps in NetApp guidance "${_rrClip(g, 90)}"` : '';
@@ -20063,12 +20097,16 @@ function _rrGroupLines(pairs) {
 function _rrNaText(systems) {
   let n = 0, cl = 0; const adv = new Set();
   (systems || []).forEach(s => { (s.risksNotApplicable || []).forEach(r => { n++; const id = _advIdOf(r); if (id) adv.add(id.toUpperCase()); }); cl += (s.bulletinsCleared || []).length; });
-  const clText = cl ? `${cl} advisor${cl !== 1 ? 'ies' : 'y'} matched to these systems by software version ${cl !== 1 ? 'were' : 'was'} also left out: the installed release is at or beyond the fixed release in NetApp's advisory.` : '';
+  let un = 0; (systems || []).forEach(s => { un += (s.bulletinsUnverified || []).length; });
+  const unText = un ? `${un} version-matched advisory entr${un !== 1 ? 'ies' : 'y'} were left out because NetApp publishes no advisory with that ID.` : '';
+  const clText0 = cl ? `${cl} advisor${cl !== 1 ? 'ies' : 'y'} matched to these systems by software version ${cl !== 1 ? 'were' : 'was'} also left out: the installed release is at or beyond the fixed release in NetApp's advisory.` : '';
+  const clText = [clText0, unText].filter(Boolean).join(' ');
   if (!n) return clText;
   const ex = [...adv].sort().slice(0, 3).join(', ');
   return `${n} finding${n !== 1 ? 's' : ''} that Active IQ attached to these systems (${adv.size} advisor${adv.size !== 1 ? 'ies' : 'y'}${ex ? ', for example ' + ex : ''}) ${n !== 1 ? 'are' : 'is'} left out: NetApp's advisory lists only other products (for example Active IQ Unified Manager) as affected, so there is nothing to change on these systems.${clText ? ' ' + clText : ''}`;
 }
 // the sentences ARIA itself wrote when Active IQ gave no advice ("Upgrade to ONTAP x which includes the patch"): say less than the resolution, and can disagree with it
+const _rrIsStockText = t => /^(Upgrade to .* which includes the patch|Upgrade to the latest recommended OS version|Apply the corrective action per NetApp|See (the )?Security Advisory)/i.test(String(t || ''));
 const _rrIsStockAdvice = r => { const x = riskResolution(null, r); return !!(x && x.summary && x.kind !== 'review' && /^(Upgrade to .* which includes the patch|Upgrade to the latest recommended OS version|Apply the corrective action per NetApp|See (the )?Security Advisory)/i.test(String((r && r.recommendation) || ''))); };
 function _rrSteps(sys, r, plan) {
   if (plan && Array.isArray(plan.steps) && plan.steps.length) return plan.steps;
@@ -20118,21 +20156,26 @@ function _applyAdvisoryApplicability(systems) {
     if (na.length !== (s.risksNotApplicable || []).length || keep.length !== (s.risks || []).length) { moved++; s.risks = keep; s.risksNotApplicable = na; _recomputeStatusFromRisks(s); }
     // the system's advisory list (what the Security Advisories and CVE sections print) is built from the same advisories:
     // drop the ones that do not apply here, and put the resolution (not the generic "see the advisory") on the rest
-    if (Array.isArray(s.securityBulletins) && s.securityBulletins.length) {
-      s.bulletinsCleared = [];
-      const keepB = [];
-      s.securityBulletins.forEach(b => {
+    if (Array.isArray(s.securityBulletins) && (s.securityBulletins.length || (s._bulletinsDropped || []).length)) {
+      // every pass starts from the full list (the ones dropped earlier are kept aside, not saved), so the result does not depend on how often the pass runs
+      const _seenB = new Set(), _allB = [];
+      s.securityBulletins.concat(s._bulletinsDropped || []).forEach(b => { const k = b.source + '|' + b.id + '|' + (b.link || ''); if (!_seenB.has(k)) { _seenB.add(k); _allB.push(b); } });
+      s.bulletinsCleared = []; s.bulletinsUnverified = [];
+      const keepB = [], dropB = [];
+      _allB.forEach(b => {
         const ntap = String(b.ntapId || b.advisoryId || '').toLowerCase() || ((String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i) || [''])[0].toLowerCase();
         const pseudo = { advisoryId: ntap, advisoryUrl: b.link || '', description: b.title || '', cveDetails: b.cve ? [{ id: b.cve }] : [], fixAction: '', fixedVersions: [] };
         const x = ntap ? riskResolution(s, pseudo) : null;
-        if (x && x.kind === 'na') return;
-        if (x && x.cleared && b.source === 'db') { (s.bulletinsCleared = s.bulletinsCleared || []).push(ntap || b.id); return; }   // the database's version range says 'affected'; the advisory's own fixed releases say this system has the fix
+        if (ntap && ADVISORY_NOT_FOUND.has(ntap) && b.source === 'db') { s.bulletinsUnverified.push(ntap); dropB.push(b); return; }   // no such advisory at NetApp: a hand-entered database row, not a finding
+        if (x && x.kind === 'na') { dropB.push(b); return; }
+        if (x && x.cleared && b.source === 'db') { s.bulletinsCleared.push(ntap || b.id); dropB.push(b); return; }   // the database's version range says 'affected'; the advisory's own fixed releases say this system has the fix
         const generic = !b.mitigation || /^(none at this time|consult netapp|refer to the netapp advisory|see (the )?security advisory|upgrade to recommended)/i.test(String(b.mitigation).trim());
         if (x && x.summary && (x.kind !== 'review' || generic)) { b.mitigation = x.summary; b.resolution = x.summary; if (x.minVersion) b.fixedIn = b.fixedIn || x.minVersion; }
         else if (generic) b.mitigation = 'No workaround is published; the fix is a software upgrade. See the advisory for the fixed releases';
         keepB.push(b);
       });
       if (keepB.length !== s.securityBulletins.length) s.securityBulletins = keepB;
+      Object.defineProperty(s, '_bulletinsDropped', { value: dropB, writable: true, configurable: true, enumerable: false });
     }
   });
   return moved;
@@ -20153,7 +20196,7 @@ async function loadAdvisoryResolutions(systems) {
       if (!resp.ok) break;
       const d = await resp.json();
       if (d.rules && d.rules.productClasses) { RESOLUTION_RULES = { ...RESOLUTION_RULES, ...d.rules }; _rrClassRx = null; }
-      ADVISORY_RES = d.resolutions || {}; _advResVersion++;
+      ADVISORY_RES = d.resolutions || {}; ADVISORY_NOT_FOUND = new Set((d.notFound || []).map(x => String(x).toLowerCase())); _advResVersion++;
       const moved = _applyAdvisoryApplicability(state.systems);
       if (!d.pending || i === 59) { if (moved || i > 0) { try { switchTab(state.currentTab); } catch (_e) { /* view refreshes on next navigation */ } } break; }
       await new Promise(res => setTimeout(res, 4000));
@@ -21262,7 +21305,10 @@ function enrichSystemTelemetry(s) {
 
     // ── Runway: use usable capacity at 90% threshold ──
     const ceilingTB   = (s.clusterUsableCapacityTB || rawTB) * 0.9;
-    const remainingTB = Math.max(0, ceilingTB - physTB);
+    // Used capacity for the runway is Active IQ's own utilisation of the usable capacity when it reports one: the physical-used figure can exceed the usable
+    // capacity (tiered or logical data counted in it), which made a system at 6% used show no runway at all. Same single source as _capacityHeadroomPct.
+    const _usedForRunway = (s.clusterCapacityUtilPct > 0 && s.clusterCapacityUtilPct <= 100 && (s.clusterUsableCapacityTB || 0) > 0) ? s.clusterUsableCapacityTB * s.clusterCapacityUtilPct / 100 : physTB;
+    const remainingTB = Math.max(0, ceilingTB - _usedForRunway);
     const daysToLimit = growthPerDayTB > 0 ? Math.round(remainingTB / growthPerDayTB) : 9999;
     const limitDate   = new Date(Date.now() + daysToLimit * 86400000).toISOString().split('T')[0];
 
@@ -23554,7 +23600,8 @@ function _filterAndDeduplicateRisks(risks, targetSystems) {
     }
 
     { const _rx = riskResolution(sys, r);
-      if (_rx && _rx.summary && ['upgrade', 'firmware', 'workaround', 'config', 'hardware'].includes(_rx.kind)) {
+      if (_rx && _rx.cleared) { fixLabel = 'Check in Active IQ the findings the installed release already fixes: acknowledge them, or raise a support case if Active IQ keeps reporting them'; fixKey = 'verify:cleared'; }
+      else if (_rx && _rx.summary && ['upgrade', 'firmware', 'workaround', 'config', 'hardware'].includes(_rx.kind)) {
         const _t = _rx.kind === 'upgrade' && _rx.fixed ? _sysFixTarget(sys) : null;
         fixLabel = _t ? `Upgrade ${_t.product} to at least ${_t.vtext}` : _rx.summary.replace(/ \(now [^)]*\)/g, '').replace(/\. All findings on this system clear at .*$/, ''); fixKey = 'res:' + fixLabel; } }
     if (fixGroups.has(fixKey)) {
@@ -27909,7 +27956,7 @@ function computeFleetCapacitySummary(targetSystems) {
     }
     const rag = computeCapacityRAG(s);
     if (rag === 'red') { redCount++; { const _e = s.efficiency || {}; const _u = _e.usableCapacityTB || _e.rawCapacityTB || 0;
-      atRisk.push({ name: s.systemName, runway: (s.projections && s.projections.daysToLimit) || 0, platform: s.platform || '', utilPct: _u > 0 && _e.physicalUsedTB != null ? Math.round(_e.physicalUsedTB / _u * 100) : null }); } }
+      atRisk.push({ name: s.systemName, runway: (s.projections && s.projections.daysToLimit) || 0, platform: s.platform || '', utilPct: (() => { const _p = _capacityUsedPct(s); return _p != null ? Math.round(_p) : null; })() }); } }
     else if (rag === 'amber') amberCount++;
     else greenCount++;
     if (s.projections && s.projections.growthRateGBPerDay > 0) {
