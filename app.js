@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.272";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.273";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.273",
+    date: "7 October 2026",
+    title: "StorageGRID Model Badge",
+    sections: [
+      {
+        icon: "🐛",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The model badge beside the rear-panel title showed the storage controller's model (4000, 2806, 5700) for StorageGRID appliance nodes. It now shows the appliance model from the grid's node list (SG5860, SG5712, SGF6024, ...).",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.272",
     date: "7 October 2026",
@@ -41641,7 +41656,8 @@ function getSystemPortMappings(sys) {
 // Maps each NetApp hardware family to its real physical port/slot layout.
 // ──────────────────────────────────────────────────────────────────────────────
 function _buildControllerBackplate(sys, ports, _plat, isEseries, isCloud, isStorageGrid) {
-  const modelName = getSystemModelName(sys);
+  const _nrM = _sgNodeRecord(sys);
+  const modelName = _nrM && _nrM.applianceModel ? String(_nrM.applianceModel) : getSystemModelName(sys);   // grid node list has the real appliance model (Active IQ reports the storage controller, e.g. 4000)
   const isCtrlB = (sys.systemName || '').toLowerCase().endsWith('b');
   const ctrlLabel = isCtrlB ? 'CONTROLLER B' : 'CONTROLLER A';
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.273 (2026-10-07)
+
+### Fixed
+- The model badge beside the rear-panel title showed the storage controller model (4000, 2806, 5700) for StorageGRID appliance nodes; it now shows the appliance model from the grid node list (SG5860, SG5712, SGF6024, ...).
+
 ## 5.6.272 (2026-10-07)
 
 ### Fixed
