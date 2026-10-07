@@ -1,8 +1,8 @@
 {
-  "version": "5.6.282",
+  "version": "5.6.283",
   "major": 5,
   "minor": 6,
-  "patch": 282,
+  "patch": 283,
   "date": "2026-10-07",
-  "notes": "Reference data checked against NetApp; talking points as a table; end-of-availability finding names the model."
+  "notes": "Shelf firmware table retired; test units excluded; unknown ARP/HA not a pass; reporting duplicates removed."
 }

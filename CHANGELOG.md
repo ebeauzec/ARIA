@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.6.283 (2026-10-07)
+
+### Fixed
+- The shelf-module firmware table (IOM, NSM, PSM, ESM) is retired. It disagreed with Active IQ for every module (IOM12 0260 against Active IQ's 0412). A module's recommended release is now Active IQ's own figure for that system, and 'not reported' when Active IQ gives none. Switch firmware baselines are unchanged.
+- NetApp's manufacturing test units (systems named MFG_TEST_..., one with a ship date in 1900) that Active IQ lists under a customer are left out of every list and total; they are not the customer's systems.
+- A system that does not report ARP or HA status is no longer counted as a pass. It leaves that check's total, so 'ARP 6/6 (applicable)' means six systems confirmed on, and the single-system checklist shows 'not reported' instead of OK.
+- The reporting tables mirror a system once even when two Active IQ accounts both report it (38 systems were counted twice), and a recorded age outside 0 to 30 years (one system had -7,973) is stored as unknown.
+- Data files nothing reads (the tam_* and firmware probe files and the advisory database backup) were moved to data/archive_unused instead of sitting beside live data.
+
 ## 5.6.282 (2026-10-07)
 
 ### Fixed
