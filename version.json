@@ -1,8 +1,8 @@
 {
-  "version": "5.6.287",
+  "version": "5.6.288",
   "major": 5,
   "minor": 6,
-  "patch": 287,
+  "patch": 288,
   "date": "2026-10-07",
-  "notes": "Sweep: SLA matrix, portfolio benchmark and propensity list are tables; column tables are no longer read as headings."
+  "notes": "Word tables: MET/MISSED coloured, column widths keep names and versions whole, remaining column text checked in Word."
 }

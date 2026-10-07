@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.287";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.288";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.288",
+    date: "7 October 2026",
+    title: "Word Table Polish",
+    sections: [
+      {
+        icon: "📊",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "Regenerated every document for one customer and opened them in Word to check the remaining column layouts: they are real tables. In Word, MET is green and MISSED is red in the SLA matrix, table columns are never narrower than their longest unbreakable word (system names and versions no longer split mid-word), and the risk-age section has a proper Longest open heading.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.286",
     date: "7 October 2026",
@@ -24037,7 +24052,7 @@ function _dfRiskAgeText(systems) {
   const top = [...oldest.values()].sort((x, y) => y.days - x.days).slice(0, 5);
   return `Active IQ's own first-raised date for each critical and high risk (${dated} of ${open} have one). ${over90} ${over90 === 1 ? 'has' : 'have'} been open for more than 90 days.\n\n` +
     _dfTable(['Open for', 'Critical', 'High'], B.map((b, i) => [b[0], cnt[i].critical, cnt[i].high])) +
-    `\n  Longest open\n` + _dfTable(['Days open', 'Severity', 'Risk', 'Systems'], top.map(o => [o.days, o.sev.toUpperCase(), o.desc.slice(0, 120), o.systems.size]));
+    `\n  LONGEST OPEN\n` + _dfTable(['Days open', 'Severity', 'Risk', 'Systems'], top.map(o => [o.days, o.sev.toUpperCase(), o.desc.slice(0, 120), o.systems.size]));
 }
 function _dfAggForecastText(systems) {
   const rows = [];
@@ -36935,7 +36950,7 @@ const _DX_LINK_RE = /https?:\/\/[^\s<>"]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A
 // A score is green from 80%, amber from 50%, red below: the same bands as the on-screen recommendations, in darker shades that read on white paper.
 const _dxScoreColor = pct => `<w:color w:val="${pct >= 80 ? '15803D' : pct >= 50 ? 'B45309' : 'B91C1C'}"/>`;
 function _docxRuns(text, base) {
-  const out = []; const re = /(\*\*(.+?)\*\*)|(`([^`]+)`)|((?:^|(?<=[\s(]))_(.+?)_(?=[\s).,;:]|$))|(\[Score (\d+)%[^\]]*\])|(Active IQ score (\d+)%)|(\{\{score:(\d+)\}\})|(\u2713 Healthy)|(\u26a0 \d+ (?:down\/degraded|non-homed)(?:, \d+ (?:down\/degraded|non-homed))*)/g; let last = 0, m;
+  const out = []; const re = /(\*\*(.+?)\*\*)|(`([^`]+)`)|((?:^|(?<=[\s(]))_(.+?)_(?=[\s).,;:]|$))|(\[Score (\d+)%[^\]]*\])|(Active IQ score (\d+)%)|(\{\{score:(\d+)\}\})|(\u2713 Healthy)|(\u26a0 \d+ (?:down\/degraded|non-homed)(?:, \d+ (?:down\/degraded|non-homed))*)|(\b(?:MISSED|MET)\b)/g; let last = 0, m;
   const plain = (t, extra) => t ? `<w:r><w:rPr>${extra || ''}${base || ''}</w:rPr><w:t xml:space="preserve">${_xe(t)}</w:t></w:r>` : '';
   const run = (t, extra, code) => {   // plain text: any URL, bare NetApp/web address or e-mail in it becomes a clickable link
     if (!t) return '';
@@ -36952,7 +36967,7 @@ function _docxRuns(text, base) {
     }
     return o + plain(t.slice(at), extra);
   };
-  while ((m = re.exec(text))) { out.push(run(text.slice(last, m.index))); if (m[2] != null) out.push(run(m[2], '<w:b/>')); else if (m[4] != null) out.push(run(m[4], '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="18"/>', true)); else if (m[7] != null) out.push(run(m[7], '<w:b/>' + _dxScoreColor(+m[8]))); else if (m[9] != null) { out.push(run('Active IQ score ')); out.push(run(m[10] + '%', '<w:b/>' + _dxScoreColor(+m[10]))); } else if (m[11] != null) out.push(run(m[12] + '%', '<w:b/>' + _dxScoreColor(+m[12]))); else if (m[13] != null) out.push(run(m[13], '<w:b/>' + '<w:color w:val="15803D"/>')); else if (m[14] != null) out.push(run(m[14], '<w:b/>' + `<w:color w:val="${/down/.test(m[14]) ? 'B91C1C' : 'B45309'}"/>`)); else out.push(run(m[6], '<w:i/>')); last = m.index + m[0].length; }
+  while ((m = re.exec(text))) { out.push(run(text.slice(last, m.index))); if (m[2] != null) out.push(run(m[2], '<w:b/>')); else if (m[4] != null) out.push(run(m[4], '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="18"/>', true)); else if (m[7] != null) out.push(run(m[7], '<w:b/>' + _dxScoreColor(+m[8]))); else if (m[9] != null) { out.push(run('Active IQ score ')); out.push(run(m[10] + '%', '<w:b/>' + _dxScoreColor(+m[10]))); } else if (m[11] != null) out.push(run(m[12] + '%', '<w:b/>' + _dxScoreColor(+m[12]))); else if (m[13] != null) out.push(run(m[13], '<w:b/>' + '<w:color w:val="15803D"/>')); else if (m[14] != null) out.push(run(m[14], '<w:b/>' + `<w:color w:val="${/down/.test(m[14]) ? 'B91C1C' : 'B45309'}"/>`)); else if (m[15] != null) out.push(run(m[15], '<w:b/>' + `<w:color w:val="${m[15] === 'MET' ? '15803D' : 'B91C1C'}"/>`)); else out.push(run(m[6], '<w:i/>')); last = m.index + m[0].length; }
   out.push(run(text.slice(last))); return out.join('');
 }
 
@@ -37329,7 +37344,7 @@ function _docxTable(rows, opts) {
   const cols = Math.max(...rows.map(r => r.length)); let widths = opts.widths;
   if (!widths) {
     if (opts.keyCol && cols === 2) widths = [2900, _DX.W - 2900];
-    else { const len = Array.from({ length: cols }, (_, c) => Math.max(6, Math.min(40, Math.max(...rows.map(r => String(r[c] || '').length))))).map(x => x + 3); const tot = len.reduce((a, b) => a + b, 0); const hmin = c => opts.header ? Math.min(2400, String((rows[0] || [])[c] || '').split(' ').reduce((a, w) => Math.max(a, w.length), 0) * 105 + 260) : 600; widths = len.map((l, c) => Math.max(hmin(c), Math.floor(_DX.W * l / tot))); const sum = widths.reduce((a, b) => a + b, 0); widths = widths.map(w => Math.floor(w * _DX.W / sum)); widths[cols - 1] += _DX.W - widths.reduce((a, b) => a + b, 0); }
+    else { const len = Array.from({ length: cols }, (_, c) => Math.max(6, Math.min(40, Math.max(...rows.map(r => String(r[c] || '').length))))).map(x => x + 3); const tot = len.reduce((a, b) => a + b, 0); const hmin = c => opts.header ? Math.min(2400, String((rows[0] || [])[c] || '').split(' ').reduce((a, w) => Math.max(a, w.length), 0) * 105 + 260) : 600; const tmin = c => Math.min(12, Math.max(...rows.map(r => String(r[c] || '').split(/\s+/).reduce((m, w) => Math.max(m, w.length), 0)))) * 95 + 360; widths = len.map((l, c) => Math.max(hmin(c), tmin(c), Math.floor(_DX.W * l / tot))); const sum = widths.reduce((a, b) => a + b, 0); widths = widths.map(w => Math.floor(w * _DX.W / sum)); widths[cols - 1] += _DX.W - widths.reduce((a, b) => a + b, 0); }
   }
   const hdr = !!opts.header;
   const cell = (t, ri, ci) => {
