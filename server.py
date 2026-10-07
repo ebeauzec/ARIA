@@ -5073,6 +5073,8 @@ def fetch_netapp_psirt(advisory_id):
     """
     url = f'https://security.netapp.com/adv_api/advisory/{urllib.parse.quote(advisory_id)}/'
     text, err = _enrich_fetch(url)
+    if err and '404' in str(err):
+        return {'id': advisory_id, 'error': 'not found'}   # NetApp publishes no advisory with this ID
     if err or not text:
         return None
     try:
@@ -5187,7 +5189,7 @@ def _adv_res_worker(adv_id):
         store = _adv_res_load()
         if res and res.get('_raw'):
             rec = _adv_compact(adv_id, res['_raw'])
-        else:   # not found or unreachable: remember, retry after a day
+        else:   # not found or unreachable: remember (an ID NetApp does not publish is retried after a week, an unreachable one after a day)
             rec = {'id': adv_id, 'error': (res or {}).get('error') or 'unreachable', 'fetched': datetime.now(timezone.utc).isoformat()[:19]}
         with _ADV_RES_LOCK:
             store[adv_id] = rec
@@ -5215,7 +5217,7 @@ def adv_res_request(ids):
                 continue
             if rec and rec.get('error'):
                 try:
-                    if now - datetime.fromisoformat(rec.get('fetched', '2000-01-01T00:00:00')).replace(tzinfo=timezone.utc) < timedelta(days=1):
+                    if now - datetime.fromisoformat(rec.get('fetched', '2000-01-01T00:00:00')).replace(tzinfo=timezone.utc) < timedelta(days=7 if rec.get('error') == 'not found' else 1):
                         continue
                 except Exception:
                     pass
@@ -10194,9 +10196,10 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         store = _adv_res_load()
         with _ADV_RES_LOCK:
             out = {k: v for k, v in store.items() if not v.get('error')}
+            missing = sorted(k for k, v in store.items() if v.get('error') == 'not found')
         if post and pending == 0:
             _adv_res_save()
-        self._send_json(200, {'resolutions': out, 'pending': pending, 'rules': _resolution_rules()})
+        self._send_json(200, {'resolutions': out, 'pending': pending, 'notFound': missing, 'rules': _resolution_rules()})
 
     def handle_knowledge_base_get(self):
         """GET /api/knowledge-base — Return the full knowledge base for enrichment mapping."""

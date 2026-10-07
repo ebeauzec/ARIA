@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.6.279 (2026-10-07)
+
+### Fixed
+- Advisories that do not exist: the local advisory database held hand-entered rows with advisory IDs that NetApp does not publish (they return 'not found'), with placeholder ranges ('9.0 to check advisory') that matched every system. Nine such IDs produced about 3,100 system-advisory entries across the fleet (one, 'Intel Ethernet Controller Info Disclosure', on 832 systems). ARIA now checks every database advisory against NetApp's own advisory service and drops those it cannot find; the documents say how many were left out.
+- Impossible capacity figures: used capacity above 100% (for example '809% used', '-709% free') came from physical-used compared with usable capacity, two figures that do not always describe the same thing. Headroom, the used-capacity lines and the runway now use Active IQ's own utilisation figure first, and a computed figure that is not between 0 and 100 is not printed. Systems at 6% used no longer appear in the red capacity zone with no runway.
+- 'Up to date' and 'needs an upgrade' no longer contradict each other: a system counts as on a current release for the OS Currency figures and the checklist only when NetApp's advisories also need no newer release (43 systems Active IQ called up to date still had fixes available in a later release). The checklist row names the release needed.
+- Findings that Active IQ still reports although the installed release is at or beyond the fixed release (731 findings on 525 systems in the largest fleet) are one 'check in Active IQ' action instead of being counted as upgrade work, and each says Active IQ still reports it.
+- ARIA's own stock sentence ('Upgrade to ONTAP x which includes the patch') is no longer quoted as the recommended action.
+
 ## 5.6.278 (2026-10-07)
 
 ### Fixed
