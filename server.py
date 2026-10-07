@@ -1278,9 +1278,16 @@ def _populate_reporting_tables(db, account_id, account_label, result):
                 s.get("serviceLevel", ""), s.get("latestAsupDate", ""),
                 risk_counts["critical"], risk_counts["high"], risk_counts["medium"], risk_counts["low"],
                 open_cases, s.get("salesRepName", ""), s.get("csmName", ""), s.get("samName", ""),
-                s.get("ageInYears"), s.get("originalShipDate", ""), now_iso,
+                (s.get("ageInYears") if isinstance(s.get("ageInYears"), (int, float)) and 0 <= s.get("ageInYears") <= 30 else None), s.get("originalShipDate", ""), now_iso,   # a recorded age outside 0-30 years is a bad ship date, not an age
             ))
 
+        # A system that two accounts both report (a watchlist that overlaps another) is mirrored once, under the account that stored it first;
+        # otherwise every total over these tables counts it twice.
+        _other = {r[0] for r in db.execute("SELECT DISTINCT serial_number FROM reporting_systems WHERE account_id != ?", (account_id,))}
+        if _other:
+            sys_rows = [r for r in sys_rows if r[0] not in _other]
+            risk_rows = [r for r in risk_rows if r[0] not in _other]
+            case_rows = [r for r in case_rows if r[0] not in _other]
         if sys_rows:
             db.execute("DELETE FROM reporting_systems WHERE account_id = ?", (account_id,))
             db.execute("DELETE FROM reporting_risks WHERE account_id = ?", (account_id,))

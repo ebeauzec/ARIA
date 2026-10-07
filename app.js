@@ -45,9 +45,28 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.282";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.283";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.283",
+    date: "7 October 2026",
+    title: "Open Items Closed",
+    sections: [
+      {
+        icon: "🧹",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The shelf-module firmware table (IOM, NSM, PSM, ESM) is retired. It disagreed with Active IQ for every module (IOM12 0260 against Active IQ's 0412). A module's recommended release is now Active IQ's own figure for that system, and 'not reported' when Active IQ gives none. Switch firmware baselines are unchanged.",
+          "NetApp's manufacturing test units (systems named MFG_TEST_..., one with a ship date in 1900) that Active IQ lists under a customer are left out of every list and total; they are not the customer's systems.",
+          "A system that does not report ARP or HA status is no longer counted as a pass. It leaves that check's total, so 'ARP 6/6 (applicable)' means six systems confirmed on, and the single-system checklist shows 'not reported' instead of OK.",
+          "The reporting tables mirror a system once even when two Active IQ accounts both report it (38 systems were counted twice), and a recorded age outside 0 to 30 years (one system had -7,973) is stored as unknown.",
+          "Data files nothing reads (the tam_* and firmware probe files and the advisory database backup) were moved to data/archive_unused instead of sitting beside live data.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.282",
     date: "7 October 2026",
@@ -13583,13 +13602,12 @@ const REFERENCE_LIBRARY_FIRMWARE_BASELINES = (window.ARIA_REF && window.ARIA_REF
 // Dynamic accessor that merges server-provided baselines with hardcoded defaults.
 // Server baselines (from firmware_baselines.json) override hardcoded values.
 function _getRefLibBaselines() {
-  const baselines = { ...REFERENCE_LIBRARY_FIRMWARE_BASELINES };
+  // Shelf-module firmware (IOM, NSM, PSM, ESM) is not in here: the hand-kept table disagreed with Active IQ for every module (IOM12 0260 against Active IQ's 0412),
+  // so a module's recommended release is Active IQ's own figure for that system, and "not reported" when Active IQ gives none.
+  const baselines = {};
+  Object.entries(REFERENCE_LIBRARY_FIRMWARE_BASELINES).forEach(([k, v]) => { if (!/^(IOM|NSM|PSM|ESM)\d/i.test(k)) baselines[k] = v; });
   const fb = (typeof state !== 'undefined' && state.firmwareBaselines) || {};
-  const serverShelf = fb.shelfModules || {};
   const serverSwitches = fb.switches || {};
-  for (const [k, v] of Object.entries(serverShelf)) {
-    if (v && v.recommended) baselines[k] = v;
-  }
   for (const [k, v] of Object.entries(serverSwitches)) {
     if (v && v.recommended) baselines[k] = v;
   }
@@ -17463,6 +17481,7 @@ function renderCSMTab() {
 
     // every system that fails a check, with the value that fails it, so a failing row can list them all when clicked
     const _fl = {}, _fail = (k, s, why) => { (_fl[k] = _fl[k] || []).push({ name: s.systemName || s.serialNumber || '', why: why || '' }); };
+    let _arpNA = 0, _haNA = 0;   // systems that do not report the setting: counted in neither the passes nor the total
     let _verDetails = [], _capDetails = [], _caseDetails = [], _haDetails = [];
     let _portDetails = [], _cotermDetails = [], _adoptDetails = [];
     // Applicability: many checks are ONTAP-only (efficiency ratio, HA pairs, ARP,
@@ -17519,7 +17538,7 @@ function renderCSMTab() {
       if (_isOnt) {
         if (s.haConfigured === true) _haPass++;
         else if (s.haConfigured === false) { _haDetails.push(`${s.systemName}: no HA`); _fail('ha', s, 'no HA partner configured'); }
-        else _haPass++; // unknown — don't penalise
+        else _haNA++; // not reported: not a pass, and not counted either way
       }
 
       // 8. No open S1/S2 cases
@@ -17533,7 +17552,8 @@ function renderCSMTab() {
       else { _caseDetails.push(`${s.systemName}: ${_openCritCases.length} critical case${_openCritCases.length > 1 ? 's' : ''}`); _fail('case', s, `${_openCritCases.length} open S1/S2 case${_openCritCases.length > 1 ? 's' : ''}`); }
 
       // 10. Anti-Ransomware Protection (ARP)
-      if (_isOnt && (s.isARPEnabled === true || s.isARPEnabled === null)) _arpPass++;
+      if (_isOnt && s.isARPEnabled === true) _arpPass++;
+      else if (_isOnt && s.isARPEnabled === null) _arpNA++;
       else if (_isOnt) _fail('arp', s, 'ARP is disabled');
 
       // 11. No outstanding FSAs
@@ -17657,14 +17677,14 @@ function renderCSMTab() {
       // — Infrastructure Health —
       { cat: 'INFRASTRUCTURE HEALTH', name: 'Storage Efficiency \u2265 1.5:1 (dedup + compression)',  total: _nOntap, completedCount: _effPass, fails: _fl.eff,  detail: '', tip: 'Systems achieving at least a 1.5:1 combined dedupe + compression ratio -- a common baseline efficiency benchmark for ONTAP. Lower ratios may mean efficiency features are disabled or the workload does not compress well.' },
       { name: 'Capacity Headroom \u2265 20%',                    total: _nCap, completedCount: _capPass, fails: _fl.cap,         detail: _capDetail, tip: 'Systems with at least 20% free aggregate capacity -- the generally recommended buffer to avoid performance degradation and leave room for snapshot and unplanned data growth.' },
-      { name: 'HA Pair Configured (No Single Point of Failure)',       total: _nOntap, completedCount: _haPass, fails: _fl.ha,          detail: _haDetail, tip: 'Systems configured in a high-availability (HA) controller pair, so a single controller failure does not take the system offline.' },
+      { name: 'HA Pair Configured (No Single Point of Failure)',       total: _nOntap - _haNA, completedCount: _haPass, fails: _fl.ha,          detail: _haDetail, tip: 'Systems configured in a high-availability (HA) controller pair, so a single controller failure does not take the system offline.' },
       { name: 'Network Port Health (no link-down on active ports)',    total: _nOntap, completedCount: _portHealthPass, fails: _fl.port,  detail: _portDetail, tip: 'Systems with no in-use network port currently reporting a link-down state -- a down port on an active path can mean reduced redundancy or an active outage.' },
       { name: 'AutoSupport Configured',                               completedCount: _asupCfgPass, fails: _fl.asupcfg,     detail: '', tip: 'Systems with AutoSupport turned on (real Active IQ AutoSupportStatus). Without it, a system is invisible to proactive risk detection and this tool\'s own health scoring.' },
       // — Security & Compliance —
       { cat: 'SECURITY \u0026 COMPLIANCE', name: 'No Active Security CVEs Applicable (PSIRT)',            total: _nOntap, completedCount: _secPass, fails: _fl.sec,         detail: '', tip: 'Systems with zero NetApp PSIRT-published CVEs applicable to their current OS version.' },
       { name: 'No CISA KEV Active Exploitation Alerts',               total: _nOntap, completedCount: _cisaKevPass, fails: _fl.kev,     detail: '', tip: 'Systems with no CVEs matching CISA Known Exploited Vulnerabilities (KEV) catalog -- confirmed active real-world exploitation, not just theoretical risk.' },
 
-      { name: 'Anti-Ransomware Protection (ARP) Active',              total: _nOntap, completedCount: _arpPass, fails: _fl.arp,         detail: '', tip: 'Systems with ONTAP built-in Anti-Ransomware Protection enabled -- entropy-based anomaly detection on volumes that flags likely ransomware encryption activity.' },
+      { name: 'Anti-Ransomware Protection (ARP) Active',              total: _nOntap - _arpNA, completedCount: _arpPass, fails: _fl.arp,         detail: '', tip: 'Systems with ONTAP built-in Anti-Ransomware Protection enabled -- entropy-based anomaly detection on volumes that flags likely ransomware encryption activity.' },
       // — Support & Monitoring —
       { cat: 'SUPPORT \u0026 MONITORING', name: 'AutoSupport HTTPS Reporting (last check \u2264 7 days)',  completedCount: _asupPass, fails: _fl.asup,  detail: '', tip: 'Systems whose AutoSupport telemetry was received by NetApp within the last 7 days -- a stale or disabled feed means proactive support and this tool own risk data are both flying blind on that system.' },
       { name: 'No Open S1/S2 Critical Support Cases',                 completedCount: _casePass, fails: _fl.case,        detail: _caseDetail, tip: 'Systems with no open Severity 1 or 2 (business-impacting) support cases.' },
@@ -18194,8 +18214,8 @@ function renderCSMTab() {
     },
 
     { name: 'Anti-Ransomware Protection (ARP) Active',
-      na: !_sIsOnt,
-      ok: sys.isARPEnabled === true || sys.isARPEnabled === null,
+      na: !_sIsOnt || sys.isARPEnabled === null,
+      ok: sys.isARPEnabled === true,
       detail: (() => {
         if (!_sIsOnt) return `${_sNA} (ARP is an ONTAP NAS feature)`;
         if (sys.isARPEnabled === true) return 'ARP active \u2014 entropy analysis monitoring enabled on volumes';
@@ -20339,7 +20359,13 @@ function _sgApplyApplianceModels(list) {
   });
 }
 
+// Active IQ lists NetApp's own manufacturing test units (MFG_TEST_..., some with a ship date in 1900) under a customer. They are not the customer's systems.
+const _isMfgTestSystem = s => /^MFG_TEST/i.test(String((s && (s.systemName || s.hostName)) || ''));
 function applyStorageGridRisks(systems) {
+  if ((!systems || systems === state.systems) && Array.isArray(state.systems) && state.systems.some(_isMfgTestSystem)) {
+    state.systemsExcluded = (state.systemsExcluded || []).concat(state.systems.filter(_isMfgTestSystem));
+    state.systems = state.systems.filter(s => !_isMfgTestSystem(s)); systems = state.systems;
+  }
   const list = systems || state.systems || [];
   try { _sgApplyApplianceModels(list); } catch (_e) { console.warn('[SG] appliance model labelling failed', _e); }
   try { _applyAdvisoryApplicability(list); setTimeout(() => loadAdvisoryResolutions(list), 0); } catch (_e) { console.warn('[ADVISORY] applicability failed', _e); }
@@ -22717,8 +22743,7 @@ function generateDynamicRemediationPlan(risk, sys) {
                         desc.includes("iom12b") ? "IOM12B" :
                         desc.includes("iom12") ? "IOM12" :
                         desc.includes("iom3") ? "IOM3" : "shelf module";
-    const fwBaseline = (_getRefLibBaselines())[shelfModule.split(" ")[0]] || { recommended: "current" };
-    cause  = `${shelfModule} shelf module firmware is below the recommended baseline version (target: ${fwBaseline.recommended}).`;
+    cause  = `${shelfModule} shelf module firmware is below the release Active IQ recommends for it (the target is shown on the system's shelf firmware line).`;
     impact = "Outdated shelf module firmware may contain known stability bugs affecting SAS/NVMe path throughput or causing unexpected shelf resets.";
     steps  = [
       `1. Download the latest ${shelfModule} shelf firmware package from: https://mysupport.netapp.com/site/downloads/firmware/disk-shelf-firmware`,
