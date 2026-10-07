@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.283";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.284";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.284",
+    date: "7 October 2026",
+    title: "Advisory Data Refreshes Only When NetApp Changes It",
+    sections: [
+      {
+        icon: "🔄",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "NetApp advisory data is refreshed only when NetApp changes it. Each stored advisory remembers the date NetApp last updated it; the daily index of NetApp's advisories carries the current dates, and only advisories that are new or whose date differs are fetched again. Before, an advisory was stored once and never refreshed, so a fix or severity NetApp added later would never have appeared.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.283",
     date: "7 October 2026",
@@ -20321,9 +20336,10 @@ function _applyAdvisoryApplicability(systems) {
   return moved;
 }
 // ask the server for the advisories this fleet's findings refer to (it fetches the missing ones in the background), then apply them
+let _advResRetries = 0;
 async function loadAdvisoryResolutions(systems) {
   if (_advResLoading || typeof fetch !== 'function') return;
-  _advResLoading = true;
+  _advResLoading = true; let _retry = false;
   try {
     const ids = new Set();
     const cves = new Set();   // every CVE a finding or advisory entry names: the server looks each up in NetApp's own index
@@ -20333,7 +20349,7 @@ async function loadAdvisoryResolutions(systems) {
     if (!ids.size && !cves.size) return;
     for (let i = 0; i < 60; i++) {
       const resp = await fetch('/api/advisory-resolutions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...ids], cves: [...cves] }), cache: 'no-store' });
-      if (!resp.ok) break;
+      if (!resp.ok) { _retry = true; break; }
       const d = await resp.json();
       if (d.rules && d.rules.productClasses) { RESOLUTION_RULES = { ...RESOLUTION_RULES, ...d.rules }; _rrClassRx = null; }
       ADVISORY_RES = d.resolutions || {}; ADVISORY_NOT_FOUND = new Set((d.notFound || []).map(x => String(x).toLowerCase())); ADVISORY_BY_CVE = d.byCve || {}; ADVISORY_INDEX_READY = !!d.indexReady; _advResVersion++;
@@ -20341,8 +20357,9 @@ async function loadAdvisoryResolutions(systems) {
       if ((!d.pending && (d.indexReady || !cves.size)) || i === 59) { if (moved || i > 0) { try { switchTab(state.currentTab); } catch (_e) { /* view refreshes on next navigation */ } } break; }
       await new Promise(res => setTimeout(res, 4000));
     }
-  } catch (e) { console.warn('[ADVISORY] resolution load failed', e); }
+  } catch (e) { console.warn('[ADVISORY] resolution load failed', e); _retry = true; }   // the server may still be starting
   finally { _advResLoading = false; }
+  if (_retry && _advResRetries++ < 5) setTimeout(() => loadAdvisoryResolutions(state.systems), 30000);
 }
 
 // Active IQ reports the storage controller inside a StorageGRID appliance as its own system (model 4000 / 2806 / 5700),

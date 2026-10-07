@@ -5150,6 +5150,7 @@ def _adv_compact(adv_id, adv):
     sc = (adv.get('kb_scoring_calc') or [{}])[0] or {}
     return {'id': adv_id, 'cve': adv.get('kb_cve') or [], 'title': adv.get('kb_title') or adv_id,
             'score': sc.get('score'), 'severity': str(sc.get('range') or '').lower(),
+            'modified': str(adv.get('modified_date') or adv.get('updated_date') or '')[:19],
             'published': (adv.get('published_date') or '')[:10],
             'workaround': _adv_plain(adv.get('kb_workarounds')), 'fixes': fixes,
             'affected': list(adv.get('kb_affected_list') or []),
@@ -5184,12 +5185,13 @@ def _adv_index_build():
             print(f'  [ADVISORY] index download failed: {err}', flush=True)
             return
         items = (json.loads(text).get('advisories')) or []
-        by = {}
+        by, mod = {}, {}
         for a in items:
             aid = str(a.get('ntap_advisory_id') or a.get('adv_id') or '').lower()
+            mod[aid] = str(a.get('modified_date') or a.get('updated_date') or '')[:19]
             for c in a.get('kb_cve') or []:
                 by.setdefault(str(c).upper(), []).append(aid)
-        idx = {'fetched': datetime.now(timezone.utc).isoformat()[:19], 'count': len(items), 'byCve': by}
+        idx = {'fetched': datetime.now(timezone.utc).isoformat()[:19], 'count': len(items), 'byCve': by, 'mod': mod}
         ADV_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = ADV_INDEX_PATH.with_suffix('.tmp'); tmp.write_text(json.dumps(idx), encoding='utf-8'); tmp.replace(ADV_INDEX_PATH)
         with _ADV_RES_LOCK:
@@ -5275,8 +5277,10 @@ def adv_res_request(ids):
             rec = store.get(adv_id)
             if adv_id in _ADV_RES_INFLIGHT:
                 continue
-            if rec and not rec.get('error') and 'score' in rec:
-                continue
+            if rec and not rec.get('error') and 'score' in rec and 'modified' in rec:
+                _m = ((_ADV_INDEX or {}).get('mod') or {}).get(adv_id)
+                if not _m or _m == rec.get('modified'):
+                    continue   # unchanged at NetApp since it was stored
             if rec and rec.get('error'):
                 try:
                     if now - datetime.fromisoformat(rec.get('fetched', '2000-01-01T00:00:00')).replace(tzinfo=timezone.utc) < timedelta(days=7 if rec.get('error') == 'not found' else 1):
