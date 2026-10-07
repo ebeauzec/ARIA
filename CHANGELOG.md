@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.288 (2026-10-07)
+
+### Changed
+- Word tables: MET and MISSED are coloured in the SLA matrix, columns are never narrower than their longest unbreakable word, and the risk-age section has a Longest open heading. Checked by regenerating all documents for one customer and opening them in Word.
+
 ## 5.6.287 (2026-10-07)
 
 ### Changed
