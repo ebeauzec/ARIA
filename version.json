@@ -1,8 +1,8 @@
 {
-  "version": "5.6.274",
+  "version": "5.6.275",
   "major": 5,
   "minor": 6,
-  "patch": 274,
+  "patch": 275,
   "date": "2026-10-07",
-  "notes": "StorageGRID appliance model shown in every document."
+  "notes": "Resolution for every finding; advisory data fetched automatically; not-applicable findings left out."
 }

@@ -935,3 +935,14 @@ shape changes; write JS edit scripts with the Write tool, not heredocs (escape m
 - Action Planner text exports: Prioritized Technical Risks and Security Advisories group identical items; Site Logistics (index 7) is a table. `getLogisticsUpdateTicketsAndDiffs` treats N/A, Not Set, None and empty as the same.
 - Not changed: the Word generators for tabs 2, 3, 4, 5, 12 and 18 (already grouped), Customer Health & Lifecycle Report and Customer Value Report.
 - Word: `downloadPlanSection` hands tabs 2, 3, 4, 5 and 12 to `downloadPlanSectionWord` when the chosen format is Word. `compileRisksWordMd` groups systems with identical findings; `compileAdvisoriesWordMd` section 3 groups advisories by mitigation and systems; `_wdClean` strips HTML and line breaks. `_dfWithReadingGuide` adds its note only when the document contains guidance.
+
+
+## Finding resolution (5.6.275)
+
+`riskResolution(sys, risk)` in app.js returns {kind, summary, minVersion, workaround, applies} for any finding. Sources, best first: the NetApp
+advisory (server.py `adv_res_request` fetches every advisory a finding names from security.netapp.com's JSON API into
+`data/advisory_resolutions.json`; GET/POST `/api/advisory-resolutions`), Active IQ's own `fixedVersions` / `fixAction` / bug numbers / linked guidance,
+and the sentence in Active IQ's text that says what to change. `_applyAdvisoryApplicability` moves findings whose advisory lists no product matching the
+system's family to `system.risksNotApplicable` (and drops them from `securityBulletins`). Matching and wording are data: `resolution_rules.json`
+(`productClasses`, `appliesTo`, `firmwareLabels`, `guidanceVerbs`, `textRules`); a copy in `data/` overrides it. Printed by `_rrHtml` (interface),
+`_rrText` / `_rrGroupLines` (documents). Add a `textRules` entry for a new kind of finding instead of changing code.

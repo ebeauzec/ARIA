@@ -1,0 +1,66 @@
+{
+  "_readme": "Rules ARIA uses to decide what each finding needs, with no code change. The advisory data itself (affected products, fixed releases, workarounds) is fetched automatically from NetApp for every advisory a finding refers to; this file only says how to read it. Edit and reload the page (no restart). A copy in data/resolution_rules.json overrides this file. Patterns are JavaScript regular expressions, matched case-insensitively; the first class whose pattern matches a product name wins.",
+  "productClasses": [
+    {
+      "class": "aiqum",
+      "pattern": "unified manager|aiqum"
+    },
+    {
+      "class": "bmc",
+      "pattern": "baseboard management|service processor|\\bBMC\\b"
+    },
+    {
+      "class": "bios",
+      "pattern": "\\bBIOS\\b"
+    },
+    {
+      "class": "santricity",
+      "pattern": "santricity|e-series|ef-series"
+    },
+    {
+      "class": "storagegrid",
+      "pattern": "storagegrid"
+    },
+    {
+      "class": "other",
+      "pattern": "ontap (tools|select|mediator|metrocluster|deploy)|snap|trident|cloud|bluexp|hci|element|brocade|cisco|broadcom|vsc|virtual storage|oncommand|workflow|data classification|keystone|astra"
+    },
+    {
+      "class": "ontap",
+      "pattern": "ontap"
+    }
+  ],
+  "appliesTo": {
+    "_note": "Which product classes are software or firmware of a system in each family. A finding whose advisory lists none of them is not applicable to that system.",
+    "ontap": [
+      "ontap",
+      "bmc",
+      "bios"
+    ],
+    "eseries": [
+      "santricity"
+    ],
+    "storagegrid": [
+      "storagegrid"
+    ]
+  },
+  "firmwareLabels": {
+    "SP": "Service Processor / BMC firmware",
+    "BIOS": "BIOS",
+    "DISK": "disk firmware",
+    "SHELF": "shelf module firmware",
+    "CLUSTER_SWITCH": "cluster switch firmware",
+    "NONE": "firmware"
+  },
+  "guidanceVerbs": "enable|disable|set|configure|upgrade|update|replace|add|remove|create|modify|verify|check|ensure|move|rebalance|apply|install|reboot|review|run|migrate|convert|change|reduce|increase|use|avoid|consider|restrict|limit|rotate|contact|discover|plan|enroll|register|schedule|rename|assign|expand|extend|resize",
+  "bugPattern": "\\b(bug|burt)\\b\\s*#?\\s*(\\d{5,})",
+  "noWorkaround": "^(none|n/a|no workaround)",
+  "textRules": [
+    {
+      "_note": "When Active IQ and the advisory give no fix, the first rule whose pattern matches the finding's title or text decides the action. Add rules here for new kinds of finding.",
+      "pattern": "reached end[- ]of[- ](availability|support|sale)|\\bEOA\\b|\\bEOS\\b|end of (availability|support)",
+      "kind": "hardware",
+      "summary": "Plan a hardware refresh: this platform is past end of availability, so check its end-of-support date and keep a support contract in place until it is replaced"
+    }
+  ]
+}

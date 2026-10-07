@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.274";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.275";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.275",
+    date: "7 October 2026",
+    title: "What To Do About Every Finding",
+    sections: [
+      {
+        icon: "🎯",
+        label: "Added",
+        color: "#22c55e",
+        items: [
+          "Every risk, CVE and advisory now carries a one-line RESOLUTION for the system it was raised on, worked out by the engine and shown in the Risks view and its remediation dialog, the Security Posture Brief and CVE matrix, the Technical Risks and Security Advisories Word reports, the Top Corrective Actions, change tickets, implementation plans, success plans and the configuration and best-practice findings. Examples: 'Upgrade ONTAP to at least 9.12.1P19 (now 9.12.1P12)', 'Workaround: Disable remote login', 'Update disk firmware', 'Plan a hardware refresh'. It uses the minimum fixed release on the system's own branch, the NetApp advisory's published workaround for the product that system runs, and Active IQ's own fix data, in that order.",
+          "Advisory data is fetched automatically: the server reads each NetApp advisory a finding refers to (affected products, fixed releases per product, workaround) from NetApp's advisory service in the background, caches it (data/advisory_resolutions.json) and serves it at /api/advisory-resolutions, so a new advisory is handled the day Active IQ raises it. How products are matched and worded is in resolution_rules.json (a copy in data/ overrides it); edit it and reload the page, no restart and no code change.",
+          "Findings that do not apply are left out. Active IQ attaches advisories that list only Unified Manager, HCI or other products to ONTAP controllers (28% of the ONTAP findings in the largest fleet checked, and most StorageGRID ones). They move to a not-applicable list, stop counting in scores and documents, and each document that is affected says how many were left out and why.",
+          "Word reports: the Security Brief fix lines are separate labelled rows (Fixed In, Upgrade To, Workaround) instead of one paragraph, and the Word styles know the new Resolution and Workaround labels.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.274",
     date: "7 October 2026",
@@ -14619,7 +14637,8 @@ function _lazyBuildRiskGroup(groupId, drilldownEl) {
                  </a>`
               : (r.description || '')}
           </div>
-          <div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.45;">${r.recommendation || ''}</div>
+          ${_rrIsStockAdvice(r) ? '' : `<div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.45;">${r.recommendation || ''}</div>`}
+          ${_rrHtml(null, r)}
         </td>
         <td style="padding:10px 14px;vertical-align:top;white-space:nowrap;">
           <div style="display:flex;flex-direction:column;gap:6px;">
@@ -14798,6 +14817,7 @@ function openRemediationModal(riskId) {
   
   // Display safety tier in description
   document.getElementById("modalRiskDesc").innerHTML = `<span class="rk-tag rk-tag-finding">FINDING ON THIS SYSTEM</span> ${risk.description}
+    ${_rrHtml(null, risk)}
     <div style="margin-top: 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
       <span style="color: var(--text-muted); font-weight: 600;">Safety Tier:</span>
       <span style="background: ${safetyColor}; color: #fff; font-size: 0.68rem; padding: 2px 6px; border-radius: var(--radius-sm); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">${safetyTier}</span>
@@ -19348,10 +19368,10 @@ function _dfVerParse(v) {
   let s = String(v || '').trim();
   const fw = s.match(/_(\d+\.\d+)\.zip$/i); if (fw) s = fw[1];                       // firmware bundle URL -> "10.11"
   else if (/^https?:\/\//i.test(s)) { const seg = s.replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop(); s = seg; }   // download URL -> last segment
-  const m = s.replace(/^(netapp release|ontap|storagegrid|santricity os)\s*/i, '').match(/^v?(\d+(?:\.\d+){1,3})(?:P(\d+))?$/i);
+  const m = s.replace(/^(netapp release|ontap|storagegrid|santricity os)\s*/i, '').match(/^v?(\d+(?:\.\d+){1,3})(?:([PR])(\d+))?$/i);
   if (!m) return null;
   const n = m[1].split('.').map(Number); while (n.length < 4) n.push(0);
-  return { n, p: m[2] ? +m[2] : 0, text: m[1] + (m[2] ? 'P' + m[2] : ''), major: n[0] };
+  return { n, p: m[3] ? +m[3] : 0, text: m[1] + (m[3] ? m[2].toUpperCase() + m[3] : ''), major: n[0] };
 }
 function _dfVerCmp(a, b) { for (let i = 0; i < 4; i++) if (a.n[i] !== b.n[i]) return a.n[i] - b.n[i]; return a.p - b.p; }
 function _dfSameBranch(a, b) { const k = a.major === 9 ? 3 : 2; for (let i = 0; i < k; i++) if (a.n[i] !== b.n[i]) return false; return true; }
@@ -19421,6 +19441,10 @@ function _dfMinFixLines(cveId, advisoryUrl, systemNames, allSystems) {
     [...rec.entries()].forEach(([k, v]) => lines.push('Upgrade To:   ' + k + '  (Active IQ recommended release -- confirm it contains this fix in the advisory)  --  ' + _dfGroupNow(v)));
   }
   if (missing.length && !targets.size && fixedIn.length) lines.push('Upgrade To:   the advisory data on file lists no fixed release for ' + missing.join(', ') + ' -- see the linked advisory');
+  { const advId = (String(advisoryUrl || '').match(/ntap-\d{8}-\d{4}/i) || [''])[0].toLowerCase();   // NetApp's published workaround for the product this system runs
+    const rec = (advId && ADVISORY_RES[advId]) || Object.values(ADVISORY_RES).find(x => (x.cve || []).some(c => String(c).toUpperCase() === String(cveId || '').toUpperCase()));
+    const first = byName[systemNames[0]], w = rec ? _advWorkaroundSummary(rec.workaround, first ? _platformFamily(first) : 'ontap') : '';
+    if (w) lines.push('Workaround:   ' + w); }
   return lines;
 }
 
@@ -19727,6 +19751,276 @@ function _dfSgRec(title) {
 // Inject StorageGRID findings into the standard risk engine so they behave like every other Active IQ risk: they appear in
 // Technical Risks, severity counts, the health/ranking logic, every deliverable and the tracker import. Idempotent (id-keyed).
 // Attached to each grid's admin-node system. Info-level findings stay in the StorageGRID views only.
+// ══ Finding resolution: what to do about each risk, CVE and advisory, for the system it was raised on ══════════════
+// Active IQ says WHAT is wrong; engineers need to know what fixes it. Sources, best first:
+//   1. the NetApp advisory itself (products affected, fixed releases per product, published workaround) --
+//      fetched by the server (/api/advisory-resolutions) for EVERY advisory a finding refers to, so new advisories
+//      are handled the day Active IQ raises them, with no change to ARIA;
+//   2. Active IQ's own fix data on the risk (fixedVersions, fixAction / fixActionSub, bug numbers, linked guidance);
+//   3. the sentence in Active IQ's own text that says what to change.
+// riskResolution() turns them into ONE short line ("Upgrade ONTAP to at least 9.12.1P19 (now 9.12.1P12)",
+// "Enable X", "Update disk firmware") that the interface and every document print next to the finding.
+// The same advisory data decides whether a finding applies at all: Active IQ attaches advisories to ONTAP controllers
+// that list only Unified Manager (or another product) as affected -- nothing a controller change can fix.
+// How products are matched and worded is data, not code: resolution_rules.json (served with the advisory data).
+let ADVISORY_RES = {};              // advisory id (lower case) -> record from the server
+let _advResVersion = 0;             // bumped when ADVISORY_RES or the rules change, invalidates the memo
+let _advResLoading = false;
+let RESOLUTION_RULES = {
+  productClasses: [
+    { class: 'aiqum', pattern: 'unified manager|aiqum' }, { class: 'bmc', pattern: 'baseboard management|service processor|\\bBMC\\b' },
+    { class: 'bios', pattern: '\\bBIOS\\b' }, { class: 'santricity', pattern: 'santricity|e-series|ef-series' }, { class: 'storagegrid', pattern: 'storagegrid' },
+    { class: 'other', pattern: 'ontap (tools|select|mediator|metrocluster|deploy)|snap|trident|cloud|bluexp|hci|element|brocade|cisco|broadcom|vsc|virtual storage|oncommand|workflow|data classification|keystone|astra' },
+    { class: 'ontap', pattern: 'ontap' }],
+  appliesTo: { ontap: ['ontap', 'bmc', 'bios'], eseries: ['santricity'], storagegrid: ['storagegrid'] },
+  firmwareLabels: { SP: 'Service Processor / BMC firmware', BIOS: 'BIOS', DISK: 'disk firmware', SHELF: 'shelf module firmware', CLUSTER_SWITCH: 'cluster switch firmware', NONE: 'firmware' },
+  guidanceVerbs: 'enable|disable|set|configure|upgrade|update|replace|add|remove|create|modify|verify|check|ensure|move|rebalance|apply|install|reboot|review|run|migrate|convert|change|reduce|increase|use|avoid|consider|restrict|limit|rotate|contact|discover|plan|enroll|register|schedule|rename|assign|expand|extend|resize',
+  bugPattern: '\\b(bug|burt)\\b\\s*#?\\s*(\\d{5,})', noWorkaround: '^(none|n/a|no workaround)',
+  textRules: [{ pattern: 'reached end[- ]of[- ](availability|support|sale)|\\bEOA\\b|\\bEOS\\b|end of (availability|support)', kind: 'hardware', summary: 'Plan a hardware refresh: this platform is past end of availability, so check its end-of-support date and keep a support contract in place until it is replaced' }]
+};
+let _rrClassRx = null;
+const _rrRx = (p, f) => { try { return new RegExp(p, f || 'i'); } catch (_e) { return /(?!)/; } };
+let _advByCve = null, _advByCveV = -1;
+function _advIdFromCve(cve) {
+  if (_advByCveV !== _advResVersion) { _advByCve = {}; Object.values(ADVISORY_RES).forEach(rec => (rec.cve || []).forEach(c => { const k = String(c).toUpperCase(); if (!_advByCve[k] || String(rec.id) > String(_advByCve[k])) _advByCve[k] = rec.id; })); _advByCveV = _advResVersion; }
+  return _advByCve[String(cve || '').toUpperCase()] || '';
+}
+const _rrCveOf = r => { const d = (r && Array.isArray(r.cveDetails) && r.cveDetails[0] && r.cveDetails[0].id) || ((String((r && r.description) || '').match(/CVE-\d{4}-\d{4,}/i) || [''])[0]); return String(d || '').toUpperCase(); };
+const _advIdOf = r => { const m = String((r && (r.advisoryId || r.advisoryUrl || r.description || '')) || '').match(/ntap-\d{8}-\d{4}/i); return m ? m[0].toLowerCase() : ''; };
+function _advClass(p) {
+  if (!_rrClassRx) _rrClassRx = RESOLUTION_RULES.productClasses.map(c => ({ c: c.class, rx: _rrRx(c.pattern) }));
+  p = String(p || '');
+  const hit = _rrClassRx.find(x => x.rx.test(p));
+  return hit ? hit.c : 'other';
+}
+function _advModelTokens(product) { return (String(product || '').split(' - ')[1] || '').split('/').map(x => x.trim().toUpperCase().replace(/[\s-]/g, '')).filter(Boolean); }
+// does one product named in an advisory correspond to the software or firmware of this system?
+function _advProductApplies(sys, fam, product) {
+  const c = _advClass(product);
+  if (!((RESOLUTION_RULES.appliesTo || {})[fam] || []).includes(c)) return false;
+  if (c === 'bmc' || c === 'bios') {
+    if (/\bHCI\b/i.test(product)) return false;
+    const tokens = _advModelTokens(product); if (!tokens.length) return true;   // "Service Processor or BMC": no model list, so it can apply
+    const model = String(sys.model || sys.platform || '').toUpperCase().replace(/[\s-]/g, '');
+    return tokens.some(t => model.endsWith(t));
+  }
+  return true;
+}
+const _advProducts = rec => [...new Set([...(rec.affected || []), ...(rec.fixes || []).map(f => f.product)].filter(Boolean))];
+// {applies: true|false|null, products:[...]}: null = no advisory data (yet)
+function _advApplicability(sys, advId) {
+  const rec = ADVISORY_RES[advId]; if (!rec) return { applies: null, products: [] };
+  const products = _advProducts(rec); if (!products.length) return { applies: null, products: [] };
+  const fam = _platformFamily(sys);
+  return { applies: products.some(p => _advProductApplies(sys, fam, p)), products };
+}
+const _famLabel = f => f === 'storagegrid' ? 'StorageGRID node' : f === 'eseries' ? 'E-Series array' : 'controller';
+const _famProduct = f => f === 'storagegrid' ? 'StorageGRID' : f === 'eseries' ? 'SANtricity OS' : 'ONTAP';
+function _advShortProducts(products) {
+  const t = [...new Set(products.map(p => String(p).replace(/^NetApp\s+/i, '').replace(/ - .*$/, '').trim()))];
+  return t.length > 3 ? t.slice(0, 3).join(', ') + ` and ${t.length - 3} more` : t.join(', ');
+}
+const _rrClip = (t, n) => { t = String(t || '').trim(); return t.length > n ? t.slice(0, n - 3).trimEnd() + '...' : t; };
+// the part of an advisory's workaround text that concerns this system's product ("SANtricity OS: leave SSH disabled" ...)
+function _advWorkaroundSummary(text, fam) {
+  let t = String(text || '').replace(/\r/g, '').trim();
+  if (!t || _rrRx(RESOLUTION_RULES.noWorkaround).test(t) || (/no workarounds?\b/i.test(t) && t.length < 80)) return '';
+  const lines = t.split(/\n+/).map(x => x.replace(/^[-*•]\s*/, '').trim()).filter(Boolean);
+  const heads = lines.map((l, i) => (/:\s*$/.test(l) && l.length < 120) ? i : -1).filter(i => i >= 0);
+  if (heads.length) {   // one block per product: keep the block(s) for this system's family
+    const keep = [];
+    heads.forEach((h, k) => { const end = heads[k + 1] !== undefined ? heads[k + 1] : lines.length; if (((RESOLUTION_RULES.appliesTo || {})[fam] || []).includes(_advClass(lines[h]))) keep.push(...lines.slice(h + 1, end)); });
+    if (!keep.length) return '';
+    t = keep.join(' ');
+  } else t = lines.join(' ');
+  const first = t.split(/(?<=[.!?])\s+/).slice(0, 2).join(' ').replace(/\.$/, '');
+  return _rrClip(first, 220);
+}
+// the lowest fixed release this system can move to: on its own branch if one exists, else the next branch up
+function _advPickFix(cur, versions) {
+  const cands = []; const seen = new Set();
+  versions.forEach(v => { const p = _dfVerParse(v); if (p && !seen.has(p.text)) { seen.add(p.text); cands.push(p); } });
+  cands.sort(_dfVerCmp);
+  if (!cands.length) return { pick: null, already: false, none: true };
+  if (!cur) return { pick: cands[0], already: false, none: false };
+  const same = cands.filter(v => _dfSameBranch(v, cur)), later = cands.filter(v => _dfVerCmp(v, cur) > 0);
+  const pick = same.length ? same[0] : (later[0] || null);
+  if (!pick) return { pick: cands[cands.length - 1], already: true, newer: true, none: false };   // installed release is newer than every fixed release listed
+  if (_dfVerCmp(pick, cur) <= 0) return { pick, already: true, none: false };
+  return { pick, already: false, none: false };
+}
+function _rrCurrentVersion(sys, fam) { return _dfVerParse(fam === 'eseries' ? (sys.santricityVersion || sys.ontapVersion) : (fam === 'storagegrid' ? (sys.sgVersion || sys.ontapVersion || sys.osVersion) : (sys.ontapVersion || sys.osVersion))); }
+function _rrImperative(text) {
+  const sents = String(text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/);
+  const verb = _rrRx('^(' + RESOLUTION_RULES.guidanceVerbs + ')\\b');
+  // a requirement sentence ('... should be on the same layer 2 network') reads as an action; one that opens with a pronoun ('It must not include ...') does not
+  const s = sents.find(x => verb.test(x)) || sents.find(x => /\b(should|must|recommended?|need(s)? to|requires?)\b/i.test(x) && !/^(it|this|that|these|those|they|there|which|if|when)\b/i.test(x));
+  return s ? _rrClip(s.replace(/\.$/, ''), 200) : '';
+}
+const _rrMemo = new WeakMap();
+const _rrOwner = new WeakMap();   // risk -> the system it was raised on (set when advisory applicability is applied)
+// -> { kind, summary, minVersion, current, workaround, applies, advisoryId, link }
+//    kind: na | upgrade | firmware | workaround | config | hardware | review
+function riskResolution(sys, r) {
+  if (!r) return null;
+  if (!sys) sys = _rrOwner.get(r) || {};
+  const hit = _rrMemo.get(r); if (hit && hit._v === _advResVersion) return hit;
+  const out = _riskResolution(sys || {}, r); out._v = _advResVersion; _rrMemo.set(r, out); return out;
+}
+function _riskResolution(sys, r) {
+  const fam = _platformFamily(sys), advId = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)), rec = advId ? ADVISORY_RES[advId] : null;
+  const cur = _rrCurrentVersion(sys, fam), prod = _famProduct(fam), desc = String(r.description || '').replace(/\s+/g, ' ').trim();
+  const res = { kind: 'review', summary: '', minVersion: '', current: cur ? cur.text : '', workaround: '', applies: null, advisoryId: advId ? advId.toUpperCase() : '', link: r.advisoryUrl || '' };
+  const app = advId ? _advApplicability(sys, advId) : { applies: null, products: [] };
+  res.applies = app.applies;
+  if (app.applies === false) {
+    res.kind = 'na';
+    res.summary = `Not applicable to this ${_famLabel(fam)}: ${res.advisoryId} lists ${_advShortProducts(app.products)} as affected, not the ${prod} software here. Nothing to change on this system.`;
+    return res;
+  }
+  const fixVersions = [];
+  if (rec) (rec.fixes || []).forEach(f => { if (_advProductApplies(sys, fam, f.product) && !f.wontfix) (f.versions || []).forEach(v => fixVersions.push(v)); });
+  if (!fixVersions.length) (Array.isArray(r.fixedVersions) ? r.fixedVersions : []).forEach(f => { const v = f && (f.displayName || f.version || f); if (v) fixVersions.push(v); });
+  let dbMitigation = '';
+  if (!fixVersions.length && !rec) {
+    const cve = _rrCveOf(r);
+    if (cve || advId) {
+      const key = fam === 'storagegrid' ? 'storagegrid' : fam === 'eseries' ? 'eseries' : 'ontap';
+      const rel = _dfFixedReleases(cve, r.advisoryUrl || advId);
+      (rel[key] || []).forEach(x => fixVersions.push(x.v.text));
+      const b = (typeof NETAPP_SECURITY_BULLETIN_DB !== 'undefined' ? NETAPP_SECURITY_BULLETIN_DB : []).find(x => (cve && (x.cve || []).some(c => String(c).toUpperCase() === cve)) || (advId && String(x.id || '').toLowerCase() === advId));
+      if (b && b.mitigation && !/^(none at this time|refer to the netapp advisory|consult netapp)/i.test(String(b.mitigation).trim())) dbMitigation = _advWorkaroundSummary(String(b.mitigation).replace(/<[^>]+>/g, ' '), fam);
+    }
+  }
+  res.workaround = rec ? _advWorkaroundSummary(rec.workaround, fam) : dbMitigation;
+  const wontfix = rec && (rec.fixes || []).some(f => _advProductApplies(sys, fam, f.product) && f.wontfix && !(f.versions || []).length);
+  const isSecurity = !!advId || _spIsCve(r) || (r.cveDetails || []).length > 0;
+  const target = sys.upgrades && sys.upgrades.targetVersion && sys.upgrades.targetVersion !== 'Up to Date' ? sys.upgrades.targetVersion : '';
+  const bug = (String(r.description || '') + ' ' + String(r.riskDetail || '')).match(_rrRx(RESOLUTION_RULES.bugPattern));
+  const parts = [];
+  if (fixVersions.length) {
+    const f = _advPickFix(cur, fixVersions);
+    if (f.pick && f.already) { res.kind = 'review'; res.minVersion = `${prod} ${f.pick.text}`; parts.push(f.newer ? `The advisory lists fixes only up to ${prod} ${f.pick.text}; the installed ${cur.text} is newer, so this should no longer apply. Confirm in Active IQ, then acknowledge or close the finding` : `Installed ${prod} ${cur.text} is at or beyond the fixed release ${f.pick.text}; confirm Active IQ clears the finding on its next AutoSupport`); }
+    else if (f.pick) { res.kind = 'upgrade'; res.minVersion = `${prod} ${f.pick.text}`; parts.push(`Upgrade ${prod} to at least ${f.pick.text}${cur ? ` (now ${cur.text})` : ''}`); }
+  } else if (/FIRMWARE_UPGRADE/.test(r.fixAction || '')) {
+    res.kind = 'firmware'; parts.push(`Update ${(RESOLUTION_RULES.firmwareLabels || {})[r.fixActionSub] || (RESOLUTION_RULES.firmwareLabels || {}).NONE || 'firmware'} to the current release`);
+  } else if (r.fixAction === 'OS_UPGRADE' || (bug && !isSecurity)) {
+    res.kind = 'upgrade';
+    if (target) { res.minVersion = `${prod} ${target}`; parts.push(`Upgrade ${prod} to ${target}${cur ? ` (now ${cur.text})` : ''}, Active IQ's recommended release${bug ? `; check that it contains the fix for bug ${bug[2]}` : '; no fixed release is published for this finding'}`); }
+    else parts.push(`Upgrade ${prod} to a release that contains the fix${bug ? ' for bug ' + bug[2] : ''}`);
+  }
+  if (res.workaround) {
+    const hasFix = parts.some(p => /^(Upgrade|Update|Installed)/.test(p));
+    if (!hasFix) res.kind = 'workaround';
+    parts.push(`${hasFix ? 'Interim workaround' : 'Workaround'}: ${res.workaround}`);
+  } else if (isSecurity && !parts.length && wontfix) parts.push('NetApp will not fix this for the affected product; see the advisory for the end-of-support guidance');
+  if (!parts.length) {
+    const tr = (RESOLUTION_RULES.textRules || []).find(t => _rrRx(t.pattern).test(desc + ' ' + String(r.riskDetail || '')));
+    if (tr) { res.kind = tr.kind || 'review'; parts.push(tr.summary); }
+  }
+  if (!parts.length) {
+    const act = _rrImperative(r.riskDetail || '') || _rrImperative(r.recommendation || '') || (_rrRx('^(' + RESOLUTION_RULES.guidanceVerbs + ')\\b').test(desc) ? _rrClip(desc.replace(/\.$/, ''), 200) : '');
+    const g = (Array.isArray(r.guidance) ? r.guidance : []).map(x => x && x.displayName).filter(Boolean)[0];
+    const sub = r.fixActionSub && r.fixActionSub !== 'NONE' ? r.fixActionSub : '';
+    const via = g ? `; steps in NetApp guidance "${_rrClip(g, 90)}"` : '';
+    if (r.fixAction === 'SW_CONFIG_CHANGE') { res.kind = 'config'; parts.push((act || `Change the setting named in the finding: ${_rrClip(desc, 120)}`) + (act ? via : via)); }
+    else if (r.fixAction === 'HW_CONFIG_CHANGE') { res.kind = 'hardware'; parts.push((act || `Change the hardware configuration named in the finding: ${_rrClip(desc, 120)}`) + via); }
+    else if (r.fixAction === 'HW_REPLACEMENT') { res.kind = 'hardware'; parts.push((act || `Replace or retire the hardware named in the finding: ${_rrClip(desc, 120)}`) + via); }
+    else if (act) { res.kind = /^(upgrade|update)/i.test(act) ? 'upgrade' : 'config'; parts.push(act + via); }
+    else if (isSecurity) parts.push(`Review advisory${res.advisoryId ? ' ' + res.advisoryId : ''} for the fix; Active IQ lists no fixed release or workaround`);
+    else parts.push(g ? `Follow NetApp guidance "${_rrClip(g, 110)}"${sub ? ' (' + sub.toLowerCase() + ')' : ''}` : `No specific change is published for this finding; review it with NetApp support`);
+  }
+  res.summary = parts.join('. ').replace(/\.\.+/g, '.') + (r.fixCategory === 'DISRUPTIVE' ? ' (disruptive: needs an outage window)' : '');
+  return res;
+}
+// pairs: [{sys, r}] for one distinct finding -> the distinct actions, most systems first, "(now X)" folded into one "systems now on" note
+function _rrGroupLines(pairs) {
+  const g = new Map();
+  (pairs || []).forEach(({ sys, r }) => {
+    const x = riskResolution(sys, r); if (!x || !x.summary) return;
+    const text = x.summary.replace(/ \(now [^)]*\)/g, '');
+    let e = g.get(text); if (!e) { e = { text, n: 0, cur: new Set() }; g.set(text, e); }
+    e.n++; if (x.current) e.cur.add(x.current);
+  });
+  const arr = [...g.values()].sort((p, q) => q.n - p.n);
+  return arr.map(e => e.text + (arr.length > 1 ? ` (${e.n} system${e.n !== 1 ? 's' : ''})` : '') + (e.cur.size && /^Upgrade/.test(e.text) ? ` [now on ${[...e.cur].slice(0, 4).join(', ')}${e.cur.size > 4 ? ', ...' : ''}]` : ''));
+}
+// findings left out because their advisory affects other products only (Unified Manager ...): one sentence for the documents
+function _rrNaText(systems) {
+  let n = 0; const adv = new Set();
+  (systems || []).forEach(s => (s.risksNotApplicable || []).forEach(r => { n++; const id = _advIdOf(r); if (id) adv.add(id.toUpperCase()); }));
+  if (!n) return '';
+  const ex = [...adv].sort().slice(0, 3).join(', ');
+  return `${n} finding${n !== 1 ? 's' : ''} that Active IQ attached to these systems (${adv.size} advisor${adv.size !== 1 ? 'ies' : 'y'}${ex ? ', for example ' + ex : ''}) ${n !== 1 ? 'are' : 'is'} left out: NetApp's advisory lists only other products (for example Active IQ Unified Manager) as affected, so there is nothing to change on these systems.`;
+}
+// the sentences ARIA itself wrote when Active IQ gave no advice ("Upgrade to ONTAP x which includes the patch"): say less than the resolution, and can disagree with it
+const _rrIsStockAdvice = r => { const x = riskResolution(null, r); return !!(x && x.summary && x.kind !== 'review' && /^(Upgrade to .* which includes the patch|Upgrade to the latest recommended OS version|Apply the corrective action per NetApp|See (the )?Security Advisory)/i.test(String((r && r.recommendation) || ''))); };
+const _rrText = (sys, r) => { const x = riskResolution(sys, r); return x ? x.summary : ''; };
+const _rrKindLabel = k => ({ upgrade: 'UPGRADE', firmware: 'FIRMWARE', workaround: 'WORKAROUND', config: 'CONFIGURATION', hardware: 'HARDWARE', na: 'NOT APPLICABLE', review: 'REVIEW' }[k] || 'RESOLUTION');
+const _rrHtml = (sys, r) => {
+  const x = riskResolution(sys, r); if (!x || !x.summary) return '';
+  const col = x.kind === 'na' ? 'var(--text-muted)' : x.kind === 'upgrade' || x.kind === 'firmware' ? 'var(--accent-cyan)' : 'var(--status-normal)';
+  return `<div style="font-size:0.78rem;margin-top:5px;line-height:1.45;"><span style="font-size:0.6rem;font-weight:700;letter-spacing:0.06em;color:${col};border:1px solid ${col};border-radius:3px;padding:0 4px;margin-right:6px;">${_rrKindLabel(x.kind)}</span><span style="color:var(--text-primary);">${_esc(x.summary)}</span></div>`;
+};
+// Findings Active IQ attached to a system although the advisory affects other products only are moved to s.risksNotApplicable,
+// so every count, score and document stops treating them as work for this system. Idempotent: reruns whenever advisory data arrives.
+function _recomputeStatusFromRisks(s) {
+  const risks = s.risks || [];
+  const asupFailed = s.autosupport && (s.autosupport.status === 'failed' || s.autosupport.status === 'disabled' || (s.autosupport.lastReceivedDays != null && s.autosupport.lastReceivedDays > 7));
+  const contractExpired = s.contracts && (s.contracts.status === 'expired' || s.contracts.daysRemaining < 0);
+  s.status = (risks.some(r => r.severity === 'critical') || contractExpired) ? 'critical'
+    : (risks.some(r => r.severity === 'high') || asupFailed || (s.contracts && s.contracts.daysRemaining != null && s.contracts.daysRemaining <= 90)) ? 'warning' : 'normal';
+}
+function _applyAdvisoryApplicability(systems) {
+  let moved = 0;
+  (systems || []).forEach(s => {
+    if (!s) return;
+    const all = (s.risks || []).concat(s.risksNotApplicable || []);
+    all.forEach(r => _rrOwner.set(r, s));
+    const keep = [], na = [];
+    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; (ap && ap.applies === false ? na : keep).push(r); });
+    if (na.length !== (s.risksNotApplicable || []).length || keep.length !== (s.risks || []).length) { moved++; s.risks = keep; s.risksNotApplicable = na; _recomputeStatusFromRisks(s); }
+    // the system's advisory list (what the Security Advisories and CVE sections print) is built from the same advisories:
+    // drop the ones that do not apply here, and put the resolution (not the generic "see the advisory") on the rest
+    if (Array.isArray(s.securityBulletins) && s.securityBulletins.length) {
+      const keepB = [];
+      s.securityBulletins.forEach(b => {
+        const ntap = String(b.ntapId || b.advisoryId || '').toLowerCase() || ((String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i) || [''])[0].toLowerCase();
+        const pseudo = { advisoryId: ntap, advisoryUrl: b.link || '', description: b.title || '', cveDetails: b.cve ? [{ id: b.cve }] : [], fixAction: '', fixedVersions: [] };
+        const x = ntap ? riskResolution(s, pseudo) : null;
+        if (x && x.kind === 'na') return;
+        if (x && x.summary && x.kind !== 'review') { b.mitigation = x.summary; b.resolution = x.summary; if (x.minVersion) b.fixedIn = b.fixedIn || x.minVersion; }
+        keepB.push(b);
+      });
+      if (keepB.length !== s.securityBulletins.length) s.securityBulletins = keepB;
+    }
+  });
+  return moved;
+}
+// ask the server for the advisories this fleet's findings refer to (it fetches the missing ones in the background), then apply them
+async function loadAdvisoryResolutions(systems) {
+  if (_advResLoading || typeof fetch !== 'function') return;
+  _advResLoading = true;
+  try {
+    const ids = new Set();
+    const cveToId = {};   // findings that name a CVE but no advisory: look the advisory up through the local advisory database
+    (typeof NETAPP_SECURITY_BULLETIN_DB !== 'undefined' ? NETAPP_SECURITY_BULLETIN_DB : []).forEach(b => (b.cve || []).forEach(c => { cveToId[String(c).toUpperCase()] = String(b.id || '').toLowerCase(); }));
+    (systems || []).forEach(s => (s.risks || []).concat(s.risksNotApplicable || []).forEach(r => { const a = _advIdOf(r) || cveToId[_rrCveOf(r)] || ''; if (/^ntap-\d{8}-\d{4}$/i.test(a)) ids.add(a.toLowerCase()); }));
+    if (!ids.size) return;
+    for (let i = 0; i < 60; i++) {
+      const resp = await fetch('/api/advisory-resolutions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...ids] }), cache: 'no-store' });
+      if (!resp.ok) break;
+      const d = await resp.json();
+      if (d.rules && d.rules.productClasses) { RESOLUTION_RULES = { ...RESOLUTION_RULES, ...d.rules }; _rrClassRx = null; }
+      ADVISORY_RES = d.resolutions || {}; _advResVersion++;
+      const moved = _applyAdvisoryApplicability(state.systems);
+      if (!d.pending || i === 59) { if (moved || i > 0) { try { switchTab(state.currentTab); } catch (_e) { /* view refreshes on next navigation */ } } break; }
+      await new Promise(res => setTimeout(res, 4000));
+    }
+  } catch (e) { console.warn('[ADVISORY] resolution load failed', e); }
+  finally { _advResLoading = false; }
+}
+
 // Active IQ reports the storage controller inside a StorageGRID appliance as its own system (model 4000 / 2806 / 5700),
 // but the grid's node list knows the appliance (SG5860, SG5712, SGF6024, ...). Every deliverable prints s.model / s.platform,
 // so put the appliance model there once, after the topology is loaded; the controller model is kept in s.controllerModel.
@@ -19744,6 +20038,7 @@ function _sgApplyApplianceModels(list) {
 function applyStorageGridRisks(systems) {
   const list = systems || state.systems || [];
   try { _sgApplyApplianceModels(list); } catch (_e) { console.warn('[SG] appliance model labelling failed', _e); }
+  try { _applyAdvisoryApplicability(list); setTimeout(() => loadAdvisoryResolutions(list), 0); } catch (_e) { console.warn('[ADVISORY] applicability failed', _e); }
   let added = 0;
   _dfStorageGridView(list).grids.forEach(g => {
     const sys = g.system; sys.risks = Array.isArray(sys.risks) ? sys.risks : [];
@@ -20883,6 +21178,9 @@ function enrichSystemTelemetry(s) {
       description:    String(r.description || r.shortName || r.riskDetail || r.riskDescription || r.title || "Unknown risk identified.").replace(/\s*[\r\n]+\s*/g, ' ').trim(),
       recommendation: r.recommendation || r.potentialImpact || r.riskRecommendation || r.mitigationAction || "Review system telemetry and consult NetApp support.",
       advisoryUrl:    '',
+      advisoryId:     (String(r.riskDetail || r.systemRiskDetail || '').match(/NTAP-\d{8}-\d{4}/i) || [''])[0].toLowerCase(),
+      riskDetail:     String(r.systemRiskDetail || r.riskDetail || '').replace(/\s+/g, ' ').trim().slice(0, 600),
+      guidance:       (Array.isArray(r.correctiveAction) ? r.correctiveAction : []).filter(x => x && x.displayName).map(x => ({ url: x.url || '', displayName: String(x.displayName) })).slice(0, 4),
       remediationPlan: r.remediationPlan || null,
       // Native CVE data from Active IQ's Risk.cves — authoritative per-risk CVE
       // linkage (id, CVSS score, description) straight from NetApp, distinct from
@@ -23113,6 +23411,8 @@ function _filterAndDeduplicateRisks(risks, targetSystems) {
       fixLabel = r.recommendation || `Apply corrective action per NetApp guidelines`;
     }
 
+    { const _rx = riskResolution(sys, r);
+      if (_rx && _rx.summary && ['upgrade', 'firmware', 'workaround', 'config', 'hardware'].includes(_rx.kind)) { fixLabel = _rx.summary.replace(/ \(now [^)]*\)/g, ''); fixKey = 'res:' + fixLabel; } }
     if (fixGroups.has(fixKey)) {
       const group = fixGroups.get(fixKey);
       group.findings.push({
@@ -23226,12 +23526,12 @@ function _dfNonCveFindings(systems) {
   (systems || []).forEach(s => (s.risks || []).forEach(r => {
     if (_spIsCve(r)) return;
     const sev = String(r.severity || 'info').toLowerCase(), key = sev + '|' + (r.category || '') + '|' + (r.description || '');
-    let g = groups.get(key); if (!g) { g = { sev, cat: r.category || 'General', desc: String(r.description || '').replace(/\s+/g, ' ').trim(), fix: r.recommendation || '', systems: new Set() }; groups.set(key, g); }
-    g.systems.add(s.systemName || s.serialNumber);
+    let g = groups.get(key); if (!g) { g = { sev, cat: r.category || 'General', desc: String(r.description || '').replace(/\s+/g, ' ').trim(), fix: r.recommendation || '', systems: new Set(), pairs: [] }; groups.set(key, g); }
+    g.systems.add(s.systemName || s.serialNumber); g.pairs.push({ sys: s, r });
     if (!g.fix && r.recommendation) g.fix = r.recommendation;
   }));
   const list = [...groups.values()].sort((x, y) => ((rank[x.sev] ?? 6) - (rank[y.sev] ?? 6)) || (y.systems.size - x.systems.size) || x.desc.localeCompare(y.desc));
-  const bySev = {}; list.forEach(g => { bySev[g.sev] = (bySev[g.sev] || 0) + g.systems.size; });
+  const bySev = {}; list.forEach(g => { bySev[g.sev] = (bySev[g.sev] || 0) + g.systems.size; g.res = _rrGroupLines(g.pairs); });
   return { list, bySev, total: list.reduce((n, g) => n + g.systems.size, 0) };
 }
 function _dfNonCveFindingsText(systems, opts) {
@@ -23262,7 +23562,7 @@ ${top.map(g => `  - [${g.sev === 'best_practice' ? 'BEST PRACTICE' : g.sev.toUpp
   const more = rest > 0 ? `${rest} more issue${rest !== 1 ? 's' : ''} (lower severity or fewer systems) are not listed here; the complete list is in the Technical Risks report.` : '';
   if (md) {
     let o = `## ${pfx}Configuration & best-practice findings\n\n**Finding:** ${intro.split(' Each issue')[0]}.\n\n`;
-    shown.forEach((g, k) => { o += `### ${k + 1}. [${lab(g.sev)}] ${g.cat}: ${g.desc}\n\n**Finding:** ${g.systems.size} system${g.systems.size !== 1 ? 's' : ''}: ${names(g)}\n\n${g.fix && g.fix !== g.desc ? `**General guidance (Active IQ):** ${String(g.fix).replace(/\s+/g, ' ').trim()}\n\n` : ''}`; });
+    shown.forEach((g, k) => { o += `### ${k + 1}. [${lab(g.sev)}] ${g.cat}: ${g.desc}\n\n**Finding:** ${g.systems.size} system${g.systems.size !== 1 ? 's' : ''}: ${names(g)}\n\n${g.res && g.res.length ? `**Recommended action:** ${g.res.join(' | ')}\n\n` : ''}${g.fix && g.fix !== g.desc ? `**General guidance (Active IQ):** ${String(g.fix).replace(/\s+/g, ' ').trim()}\n\n` : ''}`; });
     return o + (more ? more + '\n\n' : '');
   }
   let o = `${pfx}CONFIGURATION & BEST-PRACTICE FINDINGS (NON-CVE) [FINDINGS + GUIDANCE]
@@ -23271,7 +23571,7 @@ FINDING: ${intro}
 `;
   shown.forEach((g, k) => {
     o += `\n► ${k + 1}. [${lab(g.sev)}] ${g.cat}: ${g.desc}
-   FINDING: ${g.systems.size} system${g.systems.size !== 1 ? 's' : ''}: ${names(g)}${g.fix && g.fix !== g.desc ? `\n   GUIDANCE: ${String(g.fix).replace(/\s+/g, ' ').trim()}` : ''}`;
+   FINDING: ${g.systems.size} system${g.systems.size !== 1 ? 's' : ''}: ${names(g)}${g.res && g.res.length ? `\n   ACTION: ${g.res.join(' | ')}` : ''}${g.fix && g.fix !== g.desc ? `\n   GUIDANCE: ${String(g.fix).replace(/\s+/g, ' ').trim()}` : ''}`;
   });
   return o + (more ? `\n\n${more}` : '') + '\n';
 }
@@ -26768,6 +27068,7 @@ ${_kevAckLines}
 `;
   }
 
+  { const _na = _rrNaText(targetSystems); if (_na) kevAckBlock += `\n  FINDINGS LEFT OUT AS NOT APPLICABLE\n  ${'-'.repeat(66)}\n    ${_na}\n`; }
   let critical = 0, high = 0, medium = 0, low = 0;
   let securityRisks = [];
   let cveExposures = new Set();
@@ -26905,10 +27206,10 @@ ${_kevAckLines}
       const scores = g.cves.map(x => x.cvss).filter(x => x != null);
       const cv = scores.length ? (Math.min(...scores) === Math.max(...scores) ? `CVSS ${Math.max(...scores)}` : `CVSS ${Math.min(...scores)}-${Math.max(...scores)}`) : '';
       const c = g.c;
-      const fix = (c.fixLines && c.fixLines.length) ? c.fixLines.map(f => String(f).replace(/^Fixed In:\s*/i, '')).join('; ') : c.recommended;
+      const fixBlock = (c.fixLines && c.fixLines.length) ? c.fixLines.map(f => String(f).replace(/\s+/g, ' ').trim()).join('\n      ') : 'Fix:       ' + c.recommended;
       return `    Priority ${n + 1}: ${g.cves.length} CVE${g.cves.length !== 1 ? 's' : ''}${cv ? ' (' + cv + ')' : ''}, ${c.severity}${commonSys ? '' : ', ' + g.sysList.length + ' system' + (g.sysList.length !== 1 ? 's' : '')}
       CVEs:      ${g.cves.map(x => x.title + (x.kev ? ' [CISA KEV -- confirmed active exploitation]' : '')).join(', ')}${commonSys ? '' : '\n      Systems:   ' + g.sysList.join(', ')}
-      Fix:       ${fix}
+      ${fixBlock}
       Advisory:  ${[...new Set(g.cves.map(x => x.advisory).filter(Boolean))].join(', ')}`;
     }).join('\n');
     return (commonSys ? `    Every CVE below affects the same ${all[0].sysList.length} system${all[0].sysList.length !== 1 ? 's' : ''}: ${all[0].sysList.join(', ')}\n` : '') + body;
@@ -29037,6 +29338,7 @@ ${_platformFamily(sys) !== 'ontap' ? _nonOntapVerifyLines(sys).map(l => '  ' + l
         const effort = estimateEffort(r.description + ' ' + (r.recommendation || ''));
         changeTickets += `  [${rIdx + 1}] [${(r.severity || '').toUpperCase()}] [${itilTier}] ${r.description}\n`;
         changeTickets += `      Effort:     ${effort}\n`;
+        { const _rt = _rrText(sys, r); if (_rt) changeTickets += `      Resolution: ${_rt}\n`; }
         if (plan.cause) changeTickets += `      Root Cause: ${_dfCleanCause(plan.cause)}\n`;
         if (plan.impact) changeTickets += `      Impact:     ${plan.impact}\n`;
         if (plan.steps && plan.steps.length > 0) {
@@ -29323,6 +29625,7 @@ SYSTEM ${_ipNo}: ${sys.systemName}
 ACTION ${rIdx + 1}: [${(r.severity||'').toUpperCase()}] [${itilTier}] ${r.description}
   Effort: ${effort}
 --------------------------------------------------------------------------------`;
+        { const _rt = _rrText(sys, r); if (_rt) implementationPlans += `\n  Resolution:   ${_rt}`; }
         if (plan.cause)    implementationPlans += `\n  Root Cause:   ${_dfCleanCause(plan.cause)}`;
         if (plan.impact)   implementationPlans += `\n  Impact:       ${plan.impact}`;
         implementationPlans += '\n';
@@ -35125,17 +35428,17 @@ function compileUpgradesWordMd(systems, scopeTitle) {
 }
 function compileRisksWordMd(systems, scopeTitle) {
   const rank = { critical: 0, high: 1, medium: 2, low: 3 }, sev = r => String(r.severity || 'low').toLowerCase();
-  const all = []; (systems || []).forEach(s => (s.risks || []).forEach(r => all.push({ sys: s.systemName || s.serialNumber, r })));
+  const all = []; (systems || []).forEach(s => (s.risks || []).forEach(r => all.push({ sys: s.systemName || s.serialNumber, r, sysObj: s })));
   const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0], cap = x => { const t = String(x).replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
   let o = `# ${cust} -- Technical Risks\n\nPrepared ${today} from NetApp Active IQ risk signatures.\n\n`;
   if (!all.length) return o + `No technical risk signatures were identified across the monitored scope.\n`;
   const nSys = new Set(all.map(x => x.sys)).size;
   const bySev = {}; all.forEach(x => { const k = sev(x.r); (bySev[k] = bySev[k] || { n: 0, s: new Set() }); bySev[k].n++; bySev[k].s.add(x.sys); });
-  o += `## 1. Summary\n\n- **${all.length}** open risk findings across **${nSys}** system${nSys !== 1 ? 's' : ''}.\n\n`;
+  o += `## 1. Summary\n\n- **${all.length}** open risk findings across **${nSys}** system${nSys !== 1 ? 's' : ''}.\n${_rrNaText(systems) ? '- ' + _rrNaText(systems) + '\n' : ''}\n`;
   o += _wdTable(['Severity', 'Findings', 'Systems affected'], Object.keys(bySev).sort((x, y) => (rank[x] ?? 4) - (rank[y] ?? 4)).map(k => [cap(k), bySev[k].n, bySev[k].s.size]));
   // distinct issues (same severity, category and description) with the systems they affect
   const issues = new Map();
-  all.forEach(({ sys, r }) => { const k = sev(r) + '|' + r.category + '|' + r.description; let g = issues.get(k); if (!g) { g = { r, sys: new Set() }; issues.set(k, g); } g.sys.add(sys); });
+  all.forEach(({ sys, r, sysObj }) => { const k = sev(r) + '|' + r.category + '|' + r.description; let g = issues.get(k); if (!g) { g = { r, sys: new Set(), pairs: [] }; issues.set(k, g); } g.sys.add(sys); g.pairs.push({ sys: sysObj, r }); });
   const list = [...issues.values()].sort((x, y) => ((rank[sev(x.r)] ?? 4) - (rank[sev(y.r)] ?? 4)) || (y.sys.size - x.sys.size) || String(x.r.description).localeCompare(String(y.r.description)));
   o += `### Most widespread issues\n\n` + _wdTable(['Severity', 'Category', 'Issue', 'Systems'], list.slice().sort((x, y) => y.sys.size - x.sys.size).slice(0, 15).map(g => [cap(sev(g.r)), g.r.category, g.r.description, g.sys.size]));
   // per-system table
@@ -35158,6 +35461,7 @@ function compileRisksWordMd(systems, scopeTitle) {
     o += `**Severity:** ${cap(sev(r))}  |  **Category:** ${r.category}  |  **Safety classification:** ${String(getRiskSafetyTier(r) || '').toUpperCase()}\n\n`;
     if (String(r.description).length > 110) o += `**Issue:** ${r.description}\n\n`;
     o += `**Affected systems (${names.length}):** ${names.join(', ')}\n\n`;
+    { const _rl = _rrGroupLines([...(g.pairs || [])]); if (_rl.length) o += `**Recommended action:** ${_rl.join(' | ')}\n\n`; }
     o += `**Finding (detected on the systems above)**\n\n**Root cause:** ${p && p.cause ? _wdClean(_dfCleanCause(p.cause)) : 'Undetermined'}\n\n**Operations impact:** ${p && p.impact ? _wdClean(p.impact) : 'Undetermined'}\n\n**General guidance (not specific to these systems; verify before applying)**\n\n`;
     const steps = p && p.steps && p.steps.length ? p.steps : ['Review standard operating guidelines.'];
     o += `**Remediation steps**\n\n` + steps.map((s, k) => `${k + 1}. ${_wdClean(String(s).replace(/^\d+\.\s*/, ''))}`).join('\n') + '\n\n';
@@ -35177,7 +35481,7 @@ function compileAdvisoriesWordMd(systems, scopeTitle) {
   const list = [...groups.values()].sort((x, y) => ((rank[sev(x.b)] ?? 4) - (rank[sev(y.b)] ?? 4)) || (y.sys.size - x.sys.size) || String(x.b.cve || x.b.id).localeCompare(String(y.b.cve || y.b.id)));
   const nSys = new Set(all.map(x => x.sys)).size;
   const bySev = {}; list.forEach(g => { const k = sev(g.b); bySev[k] = (bySev[k] || 0) + 1; });
-  o += `## 1. Summary\n\n- **${list.length}** distinct advisories affect **${nSys}** system${nSys !== 1 ? 's' : ''} (${all.length} system-advisory pairs).\n\n`;
+  o += `## 1. Summary\n\n- **${list.length}** distinct advisories affect **${nSys}** system${nSys !== 1 ? 's' : ''} (${all.length} system-advisory pairs).\n${_rrNaText(systems) ? '- ' + _rrNaText(systems) + '\n' : ''}\n`;
   o += _wdTable(['Severity', 'Advisories'], Object.keys(bySev).sort((x, y) => (rank[x] ?? 4) - (rank[y] ?? 4)).map(k => [cap(k), bySev[k]]));
   o += `## 2. Advisories\n\n` + _wdTable(['Advisory', 'Severity', 'Title', 'Systems affected'], list.map(g => [g.b.cve || g.b.id, cap(sev(g.b)), g.b.title, g.sys.size]));
   o += `## 3. Mitigation and affected systems\n\nAdvisories that share a mitigation and the same affected systems are listed together. The affected systems are findings; the mitigation is general NetApp guidance.\n\n`;
@@ -35186,11 +35490,11 @@ function compileAdvisoriesWordMd(systems, scopeTitle) {
     const names = [...g.sys].sort((x, y) => String(x).localeCompare(String(y), undefined, { numeric: true }));
     const text = _wdClean(g.b.mitigation || 'Upgrade to a fixed release; see the NetApp advisory.');
     const key = sev(g.b) + '\u0001' + text + '\u0001' + names.join(',');
-    let m = mit.get(key); if (!m) { m = { sev: sev(g.b), text, names, ids: [] }; mit.set(key, m); }
+    let m = mit.get(key); if (!m) { m = { sev: sev(g.b), text, names, ids: [], res: !!g.b.resolution }; mit.set(key, m); }
     m.ids.push(g.b.cve || g.b.id);
   });
   [...mit.values()].forEach((m, n) => {
-    o += `### ${n + 1}. ${cap(m.sev)}: ${m.ids.length} advisor${m.ids.length !== 1 ? 'ies' : 'y'}\n\n**Advisories:** ${m.ids.join(', ')}\n\n**Affected systems (${m.names.length}):** ${m.names.join(', ')}\n\n**General guidance, mitigation:** ${m.text}\n\n`;
+    o += `### ${n + 1}. ${cap(m.sev)}: ${m.ids.length} advisor${m.ids.length !== 1 ? 'ies' : 'y'}\n\n**Advisories:** ${m.ids.join(', ')}\n\n**Affected systems (${m.names.length}):** ${m.names.join(', ')}\n\n**${m.res ? 'Recommended action' : 'General guidance, mitigation'}:** ${m.text}\n\n`;
   });
   return o;
 }
@@ -36256,8 +36560,8 @@ function _dxSegRule(line) {   // "───── ───── ────�
 function _dxIsCli(l) { return /^\s{2,}(cluster|system|storage|network|event|vserver|security|snapmirror|volume|metrocluster|qos|statistics|version|lun|igroup|esxcli|aggr|node|set |run |debug)\b/.test(l) || /^\s{2,}[$#] /.test(l); }
 
 // ---- cards: an action / finding / CVE entry followed by its labelled detail lines becomes one card ----
-const _DX_CARD_LABELS = /^(Systems|Affected Systems|Effort|Root Cause|Impact|Fix|Next step|Business Risk|Finding|Remediation Options|Resolves|CLI Steps|Reference|Ref|Host\/3rd-Party|Severity|Affected|Advisory|Fixed In|Upgrade To|Firmware|Already Fixed|Remediation|Benefit|Note)\b/;
-const _DX_CARD_RANK = { 'Fixed In': 0, 'Upgrade To': 1, Firmware: 2, 'Already Fixed': 3, Effort: 4, Resolves: 5, 'Root Cause': 6, Impact: 7, 'Business Risk': 7, Finding: 7, 'Next step': 8, Fix: 8, 'CLI Steps': 9, 'Remediation Options': 9, Remediation: 9, 'Host/3rd-Party': 10, Exposure: 11, Systems: 12, 'Affected Systems': 12, Advisory: 13, Reference: 14 };
+const _DX_CARD_LABELS = /^(Systems|Affected Systems|Effort|Root Cause|Impact|Fix|Next step|Business Risk|Finding|Remediation Options|Resolves|CLI Steps|Reference|Ref|Host\/3rd-Party|Severity|Affected|Advisory|Fixed In|Upgrade To|Firmware|Workaround|Resolution|Already Fixed|Remediation|Benefit|Note)\b/;
+const _DX_CARD_RANK = { Resolution: 0, 'Fixed In': 0.2, 'Upgrade To': 1, Firmware: 2, Workaround: 2.5, 'Already Fixed': 3, Effort: 4, Resolves: 5, 'Root Cause': 6, Impact: 7, 'Business Risk': 7, Finding: 7, 'Next step': 8, Fix: 8, 'CLI Steps': 9, 'Remediation Options': 9, Remediation: 9, 'Host/3rd-Party': 10, Exposure: 11, Systems: 12, 'Affected Systems': 12, Advisory: 13, Reference: 14 };
 function _dxSplitTop(s) { const items = []; let depth = 0, cur = ''; for (const ch of s) { if (ch === '(') depth++; if (ch === ')') depth--; if (ch === ',' && depth === 0) { items.push(cur.trim()); cur = ''; } else cur += ch; } if (cur.trim()) items.push(cur.trim()); return items.filter(Boolean); }
 // returns { block, next } or null. m = the matched start line: {n, sev, cls, title, label}
 // long titles: the trailing parenthetical (counts / system lists) moves into a Scope row so the title bar stays one or two lines
@@ -39401,7 +39705,7 @@ const SUCCESS_PLAN_TEMPLATES = [
       const findings = [];
       systems.forEach(s => (s.risks || []).forEach(r => {
         if ((r.severity === 'critical' || r.severity === 'high') && !_spIsCve(r)) {
-          findings.push({ name: s.systemName, serial: s.serialNumber, severity: r.severity, detail: `[${r.severity.toUpperCase()}] ${r.description}`, fix: r.recommendation });
+          findings.push({ name: s.systemName, serial: s.serialNumber, severity: r.severity, detail: `[${r.severity.toUpperCase()}] ${r.description}`, fix: _rrText(s, r) || r.recommendation });
         }
       }));
       const crit = findings.filter(f => f.severity === 'critical').length;
@@ -39431,7 +39735,7 @@ const SUCCESS_PLAN_TEMPLATES = [
         const sev = String(r.severity || '').toLowerCase();
         if (_spIsCve(r) || sev === 'critical' || sev === 'high') return;
         if (String(r.category || '').toLowerCase() === 'security') return;
-        findings.push({ name: s.systemName, serial: s.serialNumber, sev, cat: r.category || 'General', detail: `[${_spSevLabel(r)}] ${r.category ? r.category + ': ' : ''}${r.description}`, fix: r.recommendation });
+        findings.push({ name: s.systemName, serial: s.serialNumber, sev, cat: r.category || 'General', detail: `[${_spSevLabel(r)}] ${r.category ? r.category + ': ' : ''}${r.description}`, fix: _rrText(s, r) || r.recommendation });
       }));
       if (findings.length < 3) return null;
       const bp = findings.filter(f => f.sev === 'best_practice').length, med = findings.filter(f => f.sev === 'medium').length, low = findings.length - bp - med;
@@ -39458,7 +39762,7 @@ const SUCCESS_PLAN_TEMPLATES = [
       const noArpSystems = systems.filter(s => s.isARPEnabled === false);
       const secFindings = [];
       systems.forEach(s => (s.risks || []).forEach(r => {
-        if ((r.category || '').toLowerCase() === 'security') secFindings.push({ name: s.systemName, serial: s.serialNumber, detail: r.description, fix: r.recommendation });
+        if ((r.category || '').toLowerCase() === 'security') secFindings.push({ name: s.systemName, serial: s.serialNumber, detail: r.description, fix: _rrText(s, r) || r.recommendation });
       }));
       const noArp = noArpSystems.length, secRisks = secFindings.length;
       if (noArp === 0 && secRisks === 0) return null;
@@ -39767,7 +40071,7 @@ const SUCCESS_PLAN_TEMPLATES = [
       mcSystems.forEach(s => (s.risks || []).forEach(r => {
         const desc = (r.description || '').toLowerCase();
         if (desc.includes('mediator unreachable') || desc.includes('mauso disabled')) {
-          findings.push({ name: s.systemName, serial: s.serialNumber, detail: r.description, fix: r.recommendation });
+          findings.push({ name: s.systemName, serial: s.serialNumber, detail: r.description, fix: _rrText(s, r) || r.recommendation });
         }
       }));
       if (findings.length === 0) return null;
