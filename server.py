@@ -5140,7 +5140,9 @@ def _adv_compact(adv_id, adv):
         fixes.append({'product': fx.get('product') or '', 'versions': vers, 'links': links[:3],
                       'wontfix': bool(fx.get('wontfix')), 'instructions': _adv_plain(fx.get('instructions'), 500),
                       'eos': fx.get('eos_link') or ''})
+    sc = (adv.get('kb_scoring_calc') or [{}])[0] or {}
     return {'id': adv_id, 'cve': adv.get('kb_cve') or [], 'title': adv.get('kb_title') or adv_id,
+            'score': sc.get('score'), 'severity': str(sc.get('range') or '').lower(),
             'published': (adv.get('published_date') or '')[:10],
             'workaround': _adv_plain(adv.get('kb_workarounds')), 'fixes': fixes,
             'affected': list(adv.get('kb_affected_list') or []),
@@ -5159,6 +5161,59 @@ def _resolution_rules():
         except Exception as e:
             print(f'  [ADVISORY] could not read {path.name}: {e}', flush=True)
     return {}
+
+
+ADV_INDEX_PATH = SCRIPT_DIR / "data" / "advisory_index.json"
+_ADV_INDEX = None            # {'fetched': iso, 'byCve': {CVE: [advisory ids]}, 'count': n}
+_ADV_INDEX_BUILDING = False
+
+
+def _adv_index_build():
+    """Download NetApp's complete advisory list once (it is one large response) and keep only the CVE -> advisory id map."""
+    global _ADV_INDEX, _ADV_INDEX_BUILDING
+    try:
+        text, err = _enrich_fetch('https://security.netapp.com/adv_api/advisory/?limit=10000', timeout=240)
+        if err or not text:
+            print(f'  [ADVISORY] index download failed: {err}', flush=True)
+            return
+        items = (json.loads(text).get('advisories')) or []
+        by = {}
+        for a in items:
+            aid = str(a.get('ntap_advisory_id') or a.get('adv_id') or '').lower()
+            for c in a.get('kb_cve') or []:
+                by.setdefault(str(c).upper(), []).append(aid)
+        idx = {'fetched': datetime.now(timezone.utc).isoformat()[:19], 'count': len(items), 'byCve': by}
+        ADV_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = ADV_INDEX_PATH.with_suffix('.tmp'); tmp.write_text(json.dumps(idx), encoding='utf-8'); tmp.replace(ADV_INDEX_PATH)
+        with _ADV_RES_LOCK:
+            _ADV_INDEX = idx
+        print(f'  [ADVISORY] index built: {len(items)} advisories, {len(by)} CVEs', flush=True)
+    except Exception as e:
+        print(f'  [ADVISORY] index build error: {e}', flush=True)
+    finally:
+        _ADV_INDEX_BUILDING = False
+
+
+def _adv_index_get():
+    """The CVE index when it is on disk and under a day old; otherwise start a background rebuild (and use the old copy meanwhile)."""
+    global _ADV_INDEX, _ADV_INDEX_BUILDING
+    with _ADV_RES_LOCK:
+        if _ADV_INDEX is None and ADV_INDEX_PATH.exists():
+            try:
+                _ADV_INDEX = json.loads(ADV_INDEX_PATH.read_text(encoding='utf-8'))
+            except Exception:
+                _ADV_INDEX = None
+        idx = _ADV_INDEX
+        stale = True
+        if idx:
+            try:
+                stale = datetime.now(timezone.utc) - datetime.fromisoformat(idx['fetched']).replace(tzinfo=timezone.utc) > timedelta(hours=24)
+            except Exception:
+                stale = True
+        if stale and not _ADV_INDEX_BUILDING:
+            _ADV_INDEX_BUILDING = True
+            threading.Thread(target=_adv_index_build, daemon=True).start()
+    return idx
 
 
 def _adv_res_load():
@@ -5213,7 +5268,7 @@ def adv_res_request(ids):
             rec = store.get(adv_id)
             if adv_id in _ADV_RES_INFLIGHT:
                 continue
-            if rec and not rec.get('error'):
+            if rec and not rec.get('error') and 'score' in rec:
                 continue
             if rec and rec.get('error'):
                 try:
@@ -7684,7 +7739,7 @@ class EnrichmentScheduler:
             if gap_signals:
                 for gap in gap_signals:
                     new_articles.append({
-                        'url': f'https://docs.netapp.com/us-en/ontap/{gap["type"]}-gap',
+                        'url': 'https://imt.netapp.com/matrix/',   # the real Interoperability Matrix Tool (a page of this name under docs.netapp.com does not exist)
                         'title': f'⚠ Gap Detected: {gap["message"][:80]}',
                         'source': 'gap-analysis',
                         'category': 'gap_analysis',
@@ -7857,7 +7912,8 @@ class EnrichmentScheduler:
                 features = ontap_feature_map.get(major_ver, [])
                 for feat_name, feat_cat, feat_guidance in features:
                     feat_url = f'https://docs.netapp.com/us-en/ontap/release-notes/ontap-{major_ver}-features'
-                    if feat_url not in existing_urls:
+                    _fp_text, _fp_err = _enrich_fetch(feat_url, timeout=15) if feat_url not in existing_urls else (None, 'known')
+                    if feat_url not in existing_urls and not _fp_err:   # the page exists (the address was guessed from the version number)
                         new_articles.append({
                             'url': feat_url,
                             'title': f'ONTAP {major_ver}: {feat_name}',
@@ -10183,13 +10239,21 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def handle_advisory_resolutions(self, post=False):
         """GET /api/advisory-resolutions  -> every cached advisory resolution + how many are still being fetched.
         POST /api/advisory-resolutions {ids:[...]} queues the advisories not yet cached, then returns the same."""
+        idx = None
+        cves = []
         if post:
             try:
-                n = min(int(self.headers.get('Content-Length') or 0), 400000)
+                n = min(int(self.headers.get('Content-Length') or 0), 900000)
                 body = json.loads(self.rfile.read(n).decode('utf-8', errors='replace') or '{}') if n else {}
             except Exception:
                 body = {}
-            pending = adv_res_request(body.get('ids') or [])
+            ids = list(body.get('ids') or [])
+            cves = [str(c).upper() for c in (body.get('cves') or [])][:5000]
+            idx = _adv_index_get()
+            if idx:
+                for c in cves:
+                    ids.extend(idx['byCve'].get(c, [])[-3:])
+            pending = adv_res_request(ids)
         else:
             with _ADV_RES_LOCK:
                 pending = len(_ADV_RES_INFLIGHT)
@@ -10199,7 +10263,13 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             missing = sorted(k for k, v in store.items() if v.get('error') == 'not found')
         if post and pending == 0:
             _adv_res_save()
-        self._send_json(200, {'resolutions': out, 'pending': pending, 'notFound': missing, 'rules': _resolution_rules()})
+        by_cve, no_adv = {}, []
+        if post and idx:
+            for c in cves:
+                if c in idx['byCve']: by_cve[c] = idx['byCve'][c]
+                else: no_adv.append(c)
+        self._send_json(200, {'resolutions': out, 'pending': pending, 'notFound': missing, 'rules': _resolution_rules(),
+                              'byCve': by_cve, 'cveNotAtNetApp': no_adv, 'indexReady': bool(idx) if post else None})
 
     def handle_knowledge_base_get(self):
         """GET /api/knowledge-base — Return the full knowledge base for enrichment mapping."""

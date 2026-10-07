@@ -45,9 +45,29 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.281";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.282";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.282",
+    date: "7 October 2026",
+    title: "Reference Data Checked Against NetApp",
+    sections: [
+      {
+        icon: "🛡️",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Data audit against NetApp's own sources. ARIA now downloads NetApp's complete advisory index each day (about 4,500 advisories, mapped CVE to advisory) and every advisory a finding names, so any finding or advisory entry that names a CVE is checked against the real advisory, whatever its source. Hand-entered rows are replaced by the real advisory's title, severity and CVSS score, or dropped when no NetApp advisory backs them: 9 advisory IDs in the local database do not exist, 6 rows paired a CVE with the wrong advisory, 15 rows had invented IDs and a generic link, and the reference library's own advisories included three CVEs NetApp has no advisory for (CVE-2025-27082, CVE-2025-22399 and a Microsoft CVE, CVE-2026-20833) and one (CVE-2024-50379) whose real advisory affects only the HCI compute node, not ONTAP.",
+          "Findings ARIA builds itself from its reference library are kept only when NetApp's advisory names ONTAP (or the system's own software) as affected, so an advisory that names no product yet no longer produces a finding on every system (852 systems for CVE-2026-4747).",
+          "End of availability: the finding named the platform 'ONTAP' instead of the model and fired for dates still in the future. It now names the model (for example 'Platform AFF-A800'), and the checklist's hardware row uses Active IQ's own date for each system first; the hand-compiled table disagreed with Active IQ on most models and omitted several.",
+          "Active IQ Talking Points are a table, one row per system (age, highest-use aggregate, cluster capacity, system capacity, next best action) instead of one long stream of sentences. Active IQ quotes a system's age in two places and the figures can differ (0.93 and 1.13 years for one system): when they differ the age shows as Active IQ's rounded age with both figures, so one system no longer has two ages.",
+          "Knowledge-base links: 277 of 854 were pages NetApp does not serve (205 'gap analysis' links and 9 'feature' links were addresses the scanner guessed). They are removed, gap-analysis entries point at the real Interoperability Matrix Tool, and a feature page is added only when NetApp serves it.",
+          "Remediation Tracker: open, untouched items for findings Active IQ no longer reports (the tracker held 6,653 from one import in August, 220 citing advisories NetApp does not publish) are left out of the list and figures, with a 'No Longer Reported' count.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.281",
     date: "7 October 2026",
@@ -13498,6 +13518,14 @@ const REFERENCE_LIBRARY_EOA_DATES = (window.ARIA_REF && window.ARIA_REF.REFERENC
 const REFERENCE_LIBRARY_EOA_SWITCHES = (window.ARIA_REF && window.ARIA_REF.REFERENCE_LIBRARY_EOA_SWITCHES) || [];   // reference data: loaded from the local data/reference_library.js, not stored in the repository
 
 // Dynamic accessor: merges server-provided EOA data with hardcoded fallbacks.
+// End of availability for one system: Active IQ's own date for that system when it has one (it differs from the hand-compiled table for most models),
+// the table only for systems Active IQ gives no date for.
+function _hwIsEoa(s) {
+  const t = Date.parse((s && s.hwEndOfAvailability) || '');
+  if (!isNaN(t)) return t <= Date.now();
+  const m = String((s && (s.platform || s.model)) || '').toUpperCase();
+  return _getEoaPlatforms().some(p => m.includes(p.toUpperCase()));
+}
 function _getEoaPlatforms() {
   const db = (typeof state !== 'undefined' && state.eoa_database) || null;
   if (!db || !db.platforms || !db.platforms.length) return REFERENCE_LIBRARY_EOA_PLATFORMS;
@@ -17469,7 +17497,7 @@ function renderCSMTab() {
 
       // 4. Hardware non-EOA
       const _modelStr = (s.platform || s.model || '').toUpperCase();
-      if (!_getEoaPlatforms().some(p => _modelStr.includes(p.toUpperCase()))) _hwPass++;
+      if (!_hwIsEoa(s)) _hwPass++;
       else _fail('hw', s, `${s.platform || s.model} is past end of availability`);
 
       // 5. No active CVEs (PSIRT)
@@ -18064,7 +18092,7 @@ function renderCSMTab() {
   const _sCurVer     = sys.ontapVersion || sys.santricityVersion || sys.osVersion || 'N/A';
   const _sHasUpgrade = !!(sys.upgrades && sys.upgrades.targetVersion && sys.upgrades.targetVersion !== 'Up to Date');
   const _sAsup       = sys.autosupport || {};
-  const _sIsEOA      = _getEoaPlatforms().some(p => (sys.platform || sys.model || '').toUpperCase().includes(p.toUpperCase()));
+  const _sIsEOA      = _hwIsEoa(sys);
   const _sCVEs       = getApplicableSecurityBulletins(sys.ontapVersion, sys.platform).filter(b => b.status !== 'resolved');
   const _sCritH      = (sys.risks || []).filter(r => r.severity === 'critical' || r.severity === 'high');
   const _sCrit       = _sCritH.filter(r => r.severity === 'critical').length;
@@ -19912,6 +19940,7 @@ function _dfSgRec(title) {
 // that list only Unified Manager (or another product) as affected -- nothing a controller change can fix.
 // How products are matched and worded is data, not code: resolution_rules.json (served with the advisory data).
 let ADVISORY_RES = {};              // advisory id (lower case) -> record from the server
+let ADVISORY_BY_CVE = {}, ADVISORY_INDEX_READY = false;   // NetApp's CVE -> advisory ids, and whether the server has downloaded that index yet
 let ADVISORY_NOT_FOUND = new Set();   // advisory ids in the local database that NetApp does not publish (they were typed in by hand)
 let _advResVersion = 0;             // bumped when ADVISORY_RES or the rules change, invalidates the memo
 let _advResLoading = false;
@@ -19931,11 +19960,13 @@ let _rrClassRx = null;
 const _rrRx = (p, f) => { try { return new RegExp(p, f || 'i'); } catch (_e) { return /(?!)/; } };
 let _advByCve = null, _advByCveV = -1;
 function _advIdFromCve(cve) {
+  { const ids = ADVISORY_BY_CVE[String(cve || '').toUpperCase()];
+    if (ids && ids.length) { const have = ids.filter(i => ADVISORY_RES[i]), pool = have.length ? have : ids; return pool[pool.length - 1]; } }
   if (_advByCveV !== _advResVersion) { _advByCve = {}; Object.values(ADVISORY_RES).forEach(rec => (rec.cve || []).forEach(c => { const k = String(c).toUpperCase(); if (!_advByCve[k] || String(rec.id) > String(_advByCve[k])) _advByCve[k] = rec.id; })); _advByCveV = _advResVersion; }
   return _advByCve[String(cve || '').toUpperCase()] || '';
 }
 const _rrCveOf = r => { const d = (r && Array.isArray(r.cveDetails) && r.cveDetails[0] && r.cveDetails[0].id) || ((String((r && r.description) || '').match(/CVE-\d{4}-\d{4,}/i) || [''])[0]); return String(d || '').toUpperCase(); };
-const _advIdOf = r => { const m = String((r && (r.advisoryId || r.advisoryUrl || r.description || '')) || '').match(/ntap-\d{8}-\d{4}/i); return m ? m[0].toLowerCase() : ''; };
+const _advIdOf = r => { const m = String((r && (r.advisoryId || r.advisoryUrl || r.description || '')) || '').match(/ntap-\d{8}-\d{4}/i); const id = m ? m[0].toLowerCase() : ''; if (id && ADVISORY_NOT_FOUND.has(id)) return _advIdFromCve(_rrCveOf(r)) || id; return id; };   // an id NetApp does not publish is replaced by the advisory that really covers the CVE
 function _advClass(p) {
   if (!_rrClassRx) _rrClassRx = RESOLUTION_RULES.productClasses.map(c => ({ c: c.class, rx: _rrRx(c.pattern) }));
   p = String(p || '');
@@ -20199,6 +20230,22 @@ function _rrIsStale(s, r) {
   const t = Date.parse((r && r.lastSeen) || ''); if (isNaN(t) || (Date.now() - t) <= _RR_STALE_DAYS * 864e5) return false;
   const x = _rrBase(s, r); return !!(x && x.cleared);
 }
+// Title, severity and score of an advisory entry or ARIA-built finding are NetApp's own (a hand-typed copy had 'critical 9.9' where NetApp says high 8.8).
+const _rrSevOf = rec => ({ critical: 'critical', high: 'high', medium: 'medium', low: 'low' })[String((rec && rec.severity) || '').toLowerCase()] || '';
+function _rrAlignRisk(r) {
+  const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)), rec = a && ADVISORY_RES[a]; if (!rec) return;
+  const cve = _rrCveOf(r); if (cve && !(r.cveDetails || []).length) r.cveDetails = [{ id: cve }];
+  const sev = _rrSevOf(rec); if (sev) r.severity = sev;
+  if (rec.title) r.description = rec.title + (rec.score != null ? ` (CVSS ${rec.score})` : '');
+  r.advisoryId = a; r.advisoryUrl = `https://security.netapp.com/advisory/${a}/`;
+}
+function _rrAlignBulletin(b, rec, a) {
+  b.ntapId = a.toUpperCase(); b.link = `https://security.netapp.com/advisory/${a}/`;
+  if (rec.title) b.title = rec.title;
+  if (rec.cve && rec.cve.length) b.cve = rec.cve.join(', ');
+  const sev = _rrSevOf(rec); if (sev) b.severity = sev;
+  if (rec.score != null) b.cvss = rec.score;
+}
 // A finding Active IQ never raised: ARIA built it from its own reference library (a security advisory matched by version range, or a platform lifecycle note)
 const _rrIsOwn = r => !!r && !('fixAction' in r) && typeof r.id === 'number' && (r.category === 'Security' || r.category === 'Lifecycle');
 function _rrOwnRejected(s, r, hasAiqEol) {
@@ -20206,6 +20253,7 @@ function _rrOwnRejected(s, r, hasAiqEol) {
   const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r));
   if (!a || ADVISORY_NOT_FOUND.has(a)) return true;   // NetApp publishes no such advisory
   if (!ADVISORY_RES[a]) return true;                   // nothing at NetApp confirms it
+  if (_advApplicability(s, a).applies !== true) return true;   // the advisory does not name this system's software as affected (or names no product yet)
   const x = _rrBase(s, r); return !!(x && x.cleared);  // the installed release already has the fix
 }
 function _applyAdvisoryApplicability(systems) {
@@ -20216,7 +20264,7 @@ function _applyAdvisoryApplicability(systems) {
     all.forEach(r => _rrOwner.set(r, s));
     const keep = [], na = [], stale = [], unv = [];
     const _aiqEol = all.some(r => 'fixAction' in r && /end[- ]of[- ](availability|support)|\bEOA\b|\bEOS\b/i.test(String(r.description || '')));
-    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; if (ap && ap.applies === false) na.push(r); else if (_rrIsOwn(r) && _rrOwnRejected(s, r, _aiqEol)) unv.push(r); else if (_rrIsStale(s, r)) stale.push(r); else keep.push(r); });
+    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; if (ap && ap.applies === false) na.push(r); else if (_rrIsOwn(r) && _rrOwnRejected(s, r, _aiqEol)) unv.push(r); else if (_rrIsStale(s, r)) stale.push(r); else { if (_rrIsOwn(r) && r.category === 'Security') _rrAlignRisk(r); keep.push(r); } });
     if (na.length !== (s.risksNotApplicable || []).length || stale.length !== (s.risksStale || []).length || unv.length !== (s.risksUnverified || []).length || keep.length !== (s.risks || []).length) { moved++; s.risks = keep; s.risksNotApplicable = na; s.risksStale = stale; s.risksUnverified = unv; _recomputeStatusFromRisks(s); }
     // the system's advisory list (what the Security Advisories and CVE sections print) is built from the same advisories:
     // drop the ones that do not apply here, and put the resolution (not the generic "see the advisory") on the rest
@@ -20227,7 +20275,14 @@ function _applyAdvisoryApplicability(systems) {
       s.bulletinsCleared = []; s.bulletinsUnverified = [];
       const keepB = [], dropB = [];
       _allB.forEach(b => {
-        const ntap = String(b.ntapId || b.advisoryId || '').toLowerCase() || ((String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i) || [''])[0].toLowerCase();
+        let ntap = ((String(b.ntapId || b.advisoryId || '').match(/^ntap-\d{8}-\d{4}$/i) || [''])[0] || ((String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i) || [''])[0]).toLowerCase();
+        if (ntap && ADVISORY_NOT_FOUND.has(ntap) && b.source === 'db') { const via = _advCves(b).map(_advIdFromCve).find(Boolean); ntap = via || ntap; }   // a hand-typed id: use the advisory that really covers the CVE, if any
+        if (b.source === 'db' && (!ntap || ADVISORY_NOT_FOUND.has(ntap))) {
+          const via = _advCves(b).map(_advIdFromCve).find(i => i && ADVISORY_RES[i]);
+          if (via) ntap = via;
+          else if (!_advCves(b).length || ADVISORY_INDEX_READY) { s.bulletinsUnverified.push(b.id); dropB.push(b); return; }   // no NetApp advisory or article behind it
+        }
+        if (b.source === 'db' && ntap && ADVISORY_RES[ntap]) _rrAlignBulletin(b, ADVISORY_RES[ntap], ntap);
         const pseudo = { advisoryId: ntap, advisoryUrl: b.link || '', description: b.title || '', cveDetails: b.cve ? [{ id: b.cve }] : [], fixAction: '', fixedVersions: [] };
         const x = (ntap || b.cve) ? riskResolution(s, pseudo) : null;
         if (ntap && ADVISORY_NOT_FOUND.has(ntap) && (b.source === 'db' || b.source === 'risk')) { s.bulletinsUnverified.push(ntap); dropB.push(b); return; }
@@ -20251,19 +20306,19 @@ async function loadAdvisoryResolutions(systems) {
   _advResLoading = true;
   try {
     const ids = new Set();
-    const cveToId = {};   // findings that name a CVE but no advisory: look the advisory up through the local advisory database
-    (typeof NETAPP_SECURITY_BULLETIN_DB !== 'undefined' ? NETAPP_SECURITY_BULLETIN_DB : []).forEach(b => (b.cve || []).forEach(c => { cveToId[String(c).toUpperCase()] = String(b.id || '').toLowerCase(); }));
-    (systems || []).forEach(s => (s.risks || []).concat(s.risksNotApplicable || []).forEach(r => { const a = _advIdOf(r) || cveToId[_rrCveOf(r)] || ''; if (/^ntap-\d{8}-\d{4}$/i.test(a)) ids.add(a.toLowerCase()); }));
+    const cves = new Set();   // every CVE a finding or advisory entry names: the server looks each up in NetApp's own index
+    (systems || []).forEach(s => (s.risks || []).concat(s.risksNotApplicable || [], s.risksStale || [], s.risksUnverified || []).forEach(r => { const a = _advIdOf(r); if (a) ids.add(a); const c = _rrCveOf(r); if (c) cves.add(c); }));
+    (systems || []).forEach(s => (s.securityBulletins || []).concat(s._bulletinsDropped || []).forEach(b => _advCves(b).forEach(c => cves.add(c.toUpperCase()))));
     (systems || []).forEach(s => (s.securityBulletins || []).forEach(b => { const m = (String(b.ntapId || '') + ' ' + String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i); if (m) ids.add(m[0].toLowerCase()); }));
-    if (!ids.size) return;
+    if (!ids.size && !cves.size) return;
     for (let i = 0; i < 60; i++) {
-      const resp = await fetch('/api/advisory-resolutions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...ids] }), cache: 'no-store' });
+      const resp = await fetch('/api/advisory-resolutions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...ids], cves: [...cves] }), cache: 'no-store' });
       if (!resp.ok) break;
       const d = await resp.json();
       if (d.rules && d.rules.productClasses) { RESOLUTION_RULES = { ...RESOLUTION_RULES, ...d.rules }; _rrClassRx = null; }
-      ADVISORY_RES = d.resolutions || {}; ADVISORY_NOT_FOUND = new Set((d.notFound || []).map(x => String(x).toLowerCase())); _advResVersion++;
+      ADVISORY_RES = d.resolutions || {}; ADVISORY_NOT_FOUND = new Set((d.notFound || []).map(x => String(x).toLowerCase())); ADVISORY_BY_CVE = d.byCve || {}; ADVISORY_INDEX_READY = !!d.indexReady; _advResVersion++;
       const moved = _applyAdvisoryApplicability(state.systems);
-      if (!d.pending || i === 59) { if (moved || i > 0) { try { switchTab(state.currentTab); } catch (_e) { /* view refreshes on next navigation */ } } break; }
+      if ((!d.pending && (d.indexReady || !cves.size)) || i === 59) { if (moved || i > 0) { try { switchTab(state.currentTab); } catch (_e) { /* view refreshes on next navigation */ } } break; }
       await new Promise(res => setTimeout(res, 4000));
     }
   } catch (e) { console.warn('[ADVISORY] resolution load failed', e); }
@@ -20561,7 +20616,7 @@ function _dfPlatformInsights(systems) {
     const x = s.platformExtras; if (!x) return; const name = s.systemName || s.serialNumber, cust = s.customerName || '';
     (x.adapters || []).forEach(a => { const fc = a.fc || []; adapterRows.push({ system: name, customer: cust, slot: a.slot, name: a.name, type: a.type, fw: a.fw || '', ports: a.ports, fcOnline: fc.filter(f => f.state === 'ONLINE').length, fcTotal: fc.length, wwnn: fc[0] ? fc[0].wwnn : '' }); });
     (x.ciHosts || []).forEach(h => ciRows.push({ system: name, customer: cust, host: h.name, os: h.os, hypervisor: h.hypervisor, active: h.active, vms: h.vms }));
-    if ((x.talkingPoints && x.talkingPoints.length) || (x.nextBestActions && x.nextBestActions.length)) talkRows.push({ system: name, customer: cust, points: x.talkingPoints || [], actions: x.nextBestActions || [] });
+    if ((x.talkingPoints && x.talkingPoints.length) || (x.nextBestActions && x.nextBestActions.length)) talkRows.push({ system: name, customer: cust, age: s.ageInYears, points: x.talkingPoints || [], actions: x.nextBestActions || [] });
   });
   const sum = (a, k) => a.reduce((t, r) => t + (r[k] || 0), 0);
   const order = { high: 0, medium: 1, info: 2 }; findings.sort((a, b) => order[a.severity] - order[b.severity]);
@@ -20614,7 +20669,7 @@ function _dfPlatformInsightsText(v, which, opts) {
     o += `\n  Cloud Insights Hosts Using This Storage\n` + _dfTable(['System', 'Host', 'OS', 'Hypervisor', 'Active', 'VMs'], v.ciRows.slice(0, lim).map(r => [r.system, r.host, r.os || '—', r.hypervisor ? 'Yes' : 'No', r.active ? 'Yes' : 'No', r.vms])) + more(v.ciRows.length, 'hosts') + '\n';
   }
   if (which.includes('talking') && v.talkRows.length) {
-    o += `\n  Active IQ Talking Points (capacity and next-best-action)\n` + _dfTable(['System', 'Talking Point'], [].concat(...v.talkRows.slice(0, lim).map(t => t.actions.concat(t.points).map(p => [t.system, p])))) + more(v.talkRows.length, 'systems') + '\n';
+    o += `\n  Active IQ Talking Points (capacity and next-best-action)\n` + (() => { const _tt = _dfTalkingTable(v.talkRows.slice(0, lim)); return _dfTable(_tt.head, _tt.rows); })() + more(v.talkRows.length, 'systems') + '\n';
   }
   if (which.includes('findings')) {
     const fs = v.findings;
@@ -20641,7 +20696,7 @@ function _platformInsightsHtml(v) {
   html += h('Hardware expansion headroom') + table(['System', 'Platform', 'Raw (TB)', 'Max (TB)', 'Used of max %'], v.hwRows.slice().sort((a, b) => b.pct - a.pct).map(r => [r.system, r.family, r.capTB, r.maxTB, r.pct]));
   html += h('Adapter &amp; FC port inventory (ONTAP)') + table(['System', 'Slot', 'Adapter', 'Type', 'Firmware', 'Ports', 'FC online', 'WWNN'], v.adapterRows.slice().sort((a, b) => b.fcTotal - a.fcTotal).map(r => [r.system, r.slot, r.name, r.type, r.fw || '—', r.ports, r.fcTotal ? r.fcOnline + '/' + r.fcTotal : '—', r.wwnn || '—']), 30);
   html += h('Cloud Insights hosts') + table(['System', 'Host', 'OS', 'Hypervisor', 'Active', 'VMs'], v.ciRows.map(r => [r.system, r.host, r.os || '—', r.hypervisor ? 'Yes' : 'No', r.active ? 'Yes' : 'No', r.vms]));
-  html += h('Active IQ talking points') + table(['System', 'Talking point'], [].concat(...v.talkRows.map(t => t.actions.concat(t.points.slice(0, 2)).slice(0, 3).map(p => [t.system, p]))), 30);
+  html += h('Active IQ talking points') + (() => { const _tt = _dfTalkingTable(v.talkRows); return table(_tt.head, _tt.rows, 30); })();
   if (v.fileRows.length) html += h('ARP/AI &amp; timezone files behind recommended') + table(['System', 'File', 'Current', 'Recommended', 'Auto-update'], v.fileRows.map(r => [r.system, r.type, r.cur, r.rec, r.auto ? 'Yes' : 'No']));
   if (v.findings.length) html += h('Findings') + table(['Severity', 'System', 'Platform', 'Finding', 'Detail'], v.findings.map(f => [f.severity, f.system, f.family, f.title, f.detail]), 40);
   return html + `<div style="font-size:0.72rem;color:var(--text-muted);">Source: Active IQ AutoSupport telemetry. Power is a measured average where reported, otherwise NetApp's projected or published typical figure; E-Series typically reports projected only.</div>`;
@@ -21712,7 +21767,8 @@ function enrichSystemTelemetry(s) {
   // falls back to the static snapshot (with its honest caveat) for the
   // remaining systems Active IQ doesn't report a date for.
   if (!isStorageGrid && !isEseries) {
-    const _hasRealEoa = !!s.hwEndOfAvailability;
+    const _eoaMs = Date.parse(s.hwEndOfAvailability || '');
+    const _hasRealEoa = !isNaN(_eoaMs) && _eoaMs <= Date.now();   // a date still ahead is not a platform that has reached end of availability
     const platformStr = (s.platform || s.model || s.platformModel || name || "").toUpperCase();
     const matchedEOA = !_hasRealEoa && _getEoaPlatforms().find(eoa => {
       const eoaUpper = eoa.toUpperCase();
@@ -21720,7 +21776,7 @@ function enrichSystemTelemetry(s) {
       return platformStr.includes(eoaUpper) || (name || "").toUpperCase().includes(eoaUpper);
     });
     if ((_hasRealEoa || matchedEOA) && !risks.some(r => r.id === 504)) {
-      const platformLabel = s.platform || s.model || matchedEOA || 'this platform';
+      const platformLabel = (model && model !== 'unknown' ? model : '') || s.model || s.platform || matchedEOA || 'this platform';
       const eoaDateStr = _hasRealEoa ? new Date(s.hwEndOfAvailability).toISOString().split('T')[0] : null;
       const eosDateStr = (_hasRealEoa && s.hwEndOfSupport) ? new Date(s.hwEndOfSupport).toISOString().split('T')[0] : null;
       risks.push({
@@ -28317,6 +28373,29 @@ function _dfPlural(n, w, w2) { return `${n} ${n === 1 ? w : (w2 || w + 's')}`; }
 // bug class instead of relying on getting the arithmetic right by hand each time.
 // `rows` is an array of value-rows, each the same length as `headers`; every cell
 // is coerced to a string. Returns the 2+ line block (no leading/trailing blank).
+// Active IQ's talking points and next-best-actions are sentences. One row per system, one column per kind of statement, and the system's age said once:
+// Active IQ quotes the age in two places and the figures differ (for example 0.93 and 1.13 years for the same system), so when they disagree the age
+// is shown as Active IQ's own rounded age with both figures in brackets rather than as two different ages.
+function _dfTalkingTable(talkRows) {
+  const head = ['System', 'Age', 'Highest-use aggregate', 'Cluster capacity', 'System capacity', 'Next best action'];
+  const up = t => t.replace(/^./, c => c.toUpperCase());
+  const rows = (talkRows || []).map(t => {
+    const ages = [], nba = []; let aggr = '', clu = '', sys = '';
+    t.actions.concat(t.points).map(String).forEach(p => {
+      let m; const am = p.match(/(\d+(?:\.\d+)?) years? old/i); if (am && !ages.includes(am[1])) ages.push(am[1]);
+      if (/^The system is [\d.]+ years? old\.?$/i.test(p.trim())) return;
+      if ((m = p.match(/the aggregate with the highest utili[sz]ation is (\S+), which is ([\d.]+)% full(?:, and is expected to be full ([^.]*))?/i))) { aggr = `${m[1].replace(new RegExp('^' + String(t.system).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '_', 'i'), '')}: ${m[2]}% full${m[3] ? ', expected full ' + m[3].trim() : ''}`; return; }
+      if ((m = p.match(/the cluster capacity utili[sz]ation is ([\d.]+)%, and in (\d+) months? will be ([\d.]+)% full/i))) { clu = `${m[1]}% now, ${m[3]}% in ${m[2]} months`; return; }
+      if ((m = p.match(/the system capacity utili[sz]ation is ([\d.]+)%, and in (\d+) months? will be ([\d.]+)% full/i))) { sys = `${m[1]}% now, ${m[3]}% in ${m[2]} months`; return; }
+      nba.push(up(p.replace(/^The system is [\d.]+ years? old, so /i, '').trim()));
+    });
+    const nAge = t.age != null && t.age !== '' && Number(t.age) >= 0 && Number(t.age) <= 30 ? Number(t.age) : (ages.length ? Math.round(ages.reduce((x, y) => x + parseFloat(y), 0) / ages.length * 10) / 10 : null);
+    const _av = ages.map(parseFloat), _spread = _av.length ? Math.max(..._av) - Math.min(..._av) : 0;
+    const ageCell = !ages.length ? (nAge != null ? `about ${nAge} yr` : '') : (_spread <= 0.15 ? `${Math.round(_av.reduce((x, y) => x + y, 0) / _av.length * 100) / 100} yr` : `about ${nAge} yr (${ages.join(' / ')})`);
+    return [String(t.system).padEnd(16, ' '), ageCell, aggr, clu, sys, nba.join(' ')];   // padded so the Word table gives the system name room to stay on one line
+  });
+  return { head, rows };
+}
 function _dfTable(headers, rows) {
   const cells = rows.map(r => r.map(v => String(v == null ? '' : v)));
   const widths = headers.map((h, i) => Math.max(String(h).length, ...cells.map(r => r[i].length), 3) + 2);
@@ -41450,6 +41529,13 @@ function renderTrackerRecentActivity(scopedItems) {
 // choice made without touching the sidebar.
 let _trackerLastSyncedFilter = null;
 
+// The tracker keeps every finding anyone tracked, for good. One that nobody has touched (open, no owner, no notes) and that Active IQ no longer reports
+// is not work: leave it out of the list and the figures, and say how many were left out.
+function _trackerCurrentKeys() {
+  const keys = new Set();
+  (state.systems || []).forEach(s => (s.risks || []).forEach(r => keys.add(_trackerItemKey('risk', s.serialNumber, r.description))));
+  return keys;
+}
 function renderTrackerTab() {
   const body = document.getElementById('trackerTableBody');
   const kpiRow = document.getElementById('trackerKpiRow');
@@ -41481,9 +41567,12 @@ function renderTrackerTab() {
   }
   const customerFilter = custSelect ? custSelect.value : '';
 
+  const _curKeys = _trackerCurrentKeys(), _haveFindings = (state.systems || []).some(s => (s.risks || []).length);
+  const _gone = i => _haveFindings && i.sourceType === 'risk' && i.status === 'open' && !i.owner && !i.notes && !_curKeys.has(_trackerItemKey('risk', i.systemSerial, i.title));
   let items = state.trackerItems.filter(i => {
     if (statusFilter && i.status !== statusFilter) return false;
     if (customerFilter && i.customerName !== customerFilter) return false;
+    if (_gone(i)) return false;
     return true;
   });
 
@@ -41491,7 +41580,8 @@ function renderTrackerTab() {
   // customers actually changes what's shown) but NOT the status filter --
   // status breakdown wouldn't mean anything if it were itself filtered by
   // status.
-  const scopedItems = customerFilter ? state.trackerItems.filter(i => i.customerName === customerFilter) : state.trackerItems;
+  const _scopedAll = customerFilter ? state.trackerItems.filter(i => i.customerName === customerFilter) : state.trackerItems;
+  const scopedItems = _scopedAll.filter(i => !_gone(i)), _goneCount = _scopedAll.length - scopedItems.length;
 
   // ── Recent Activity (last 7 days) ──────────────────────────────────────
   // QBR's "Prior Quarter Action Review" already answers "did last quarter's
@@ -41517,6 +41607,7 @@ function renderTrackerTab() {
       <div class="card kpi-card" data-tooltip="Percentage of open/in-progress items still within their due date or SLA policy default."><div class="card-title">SLA Compliance</div><div class="card-value" style="color:${slaColor};">${slaCompliancePct}%</div></div>
       <div class="card kpi-card"><div class="card-title">Resolved</div><div class="card-value" style="color:${TRACKER_STATUS_COLORS.resolved};">${resolvedCount}</div></div>
       <div class="card kpi-card"><div class="card-title">Total Tracked</div><div class="card-value">${scopedItems.length}</div></div>
+      ${_goneCount ? `<div class="card kpi-card" data-tooltip="Open items nobody has touched (no owner, no notes) for findings Active IQ no longer reports. They are left out of the list and the figures."><div class="card-title">No Longer Reported</div><div class="card-value" style="color:var(--text-muted);">${_goneCount}</div></div>` : ''}
     `;
   }
 
