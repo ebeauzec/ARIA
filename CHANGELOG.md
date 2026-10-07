@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.281 (2026-10-07)
+
+### Fixed
+- Findings ARIA made up are no longer listed. ARIA's reference library produced its own 'Security' findings (a version range matched against hand-written advisories) and its own platform end-of-availability finding, and added them to every system in range alongside what Active IQ reported: about 4,100 security findings on 898 systems in the largest fleet. 513 cited advisories NetApp does not publish, 465 were for releases that already have the fix, and the end-of-availability note duplicated Active IQ's own on systems where Active IQ reports it. A finding Active IQ did not raise is now kept only when a real NetApp advisory confirms it for the installed release; the documents say how many were left out.
+- Advisory entries built from a finding that is no longer listed go with it (Breede Valley, for example, still cited three advisory IDs NetApp does not publish).
+- A finding with no published fix names the system's single upgrade target even when Active IQ reports no recommended release. One report said 'upgrade to a release that contains the fix' for a system whose other documents said 9.15.1P20.
+- 'Total Risks' in the Handover Brief and Security Brief now says how many best-practice findings it leaves out, so it no longer reads as a different total from the best-practice count elsewhere.
+
 ## 5.6.280 (2026-10-07)
 
 ### Fixed
