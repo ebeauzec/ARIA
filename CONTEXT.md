@@ -946,3 +946,5 @@ and the sentence in Active IQ's text that says what to change. `_applyAdvisoryAp
 system's family to `system.risksNotApplicable` (and drops them from `securityBulletins`). Matching and wording are data: `resolution_rules.json`
 (`productClasses`, `appliesTo`, `firmwareLabels`, `guidanceVerbs`, `textRules`); a copy in `data/` overrides it. Printed by `_rrHtml` (interface),
 `_rrText` / `_rrGroupLines` (documents). Add a `textRules` entry for a new kind of finding instead of changing code.
+
+`_sysFixTarget(sys)` is the one upgrade target per system (highest per-finding minimum, branch-aware); `riskResolution`, `_dfCriticalHighFixFloor`, the corrective-action grouping, `_dfSystemTargetsText` and the OS Upgrade Roadmap all read it. "Systems" = Active IQ systems everywhere (`_dfEffectiveSystemCount`); StorageGRID nodes from a grid's node list are stated beside it. Audit recipe: generate every deliverable for one multi-platform customer (hook `HTMLAnchorElement.click` to capture `downloadDeliverable` / `downloadPlanSection` blobs) and compare version targets, system counts, severity totals and stray generic fix text across documents.
