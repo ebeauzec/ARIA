@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.270";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.271";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.271",
+    date: "7 October 2026",
+    title: "StorageGRID Storage Nodes Show Their Appliance",
+    sections: [
+      {
+        icon: "🐛",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "A StorageGRID storage node was drawn as a bare E4000 (or E2800) controller canister, because Active IQ reports the appliance's storage controller as its own system with model 4000 / 2806. The node's rear panel and port view now use the appliance model from the grid's node list (SG5712, SG5760, SG5860, SG6060, ...), so they show the compute controller, the storage controller and the interconnect between them.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.270",
     date: "7 October 2026",
@@ -41352,6 +41367,21 @@ async function runSandboxGraphQLQuery() {
   }
 }
 
+// Active IQ reports a StorageGRID appliance's storage controller as its own system (model "4000" = the E4000 canister,
+// platform STORAGEGRID or E-SERIES). The grid's node list carries the real appliance model (SG5860, SG6160, ...).
+function _sgApplianceModel(sys) {
+  if (!sys) return '';
+  const ser = String(sys.serialNumber || ''), nm = String(sys.systemName || sys.hostName || '').toLowerCase();
+  for (const gs of (state.systems || [])) {
+    const t = gs.storagegridTopology; if (!t) continue;
+    for (const st of (t.sites || [])) for (const n of (st.nodes || [])) {
+      if (!n.applianceModel) continue;
+      if ((ser && String(n.serialNumber || '') === ser) || (nm && String(n.hostName || '').toLowerCase() === nm)) return String(n.applianceModel);
+    }
+  }
+  return '';
+}
+
 function _isPlatformStorageGRID(sys) {
   if (!sys) return false;
   const p = (sys.platform || sys.platformModel || sys.model || '').toLowerCase();
@@ -42443,8 +42473,9 @@ function renderNodeVisualLayout(selectedSystems, sys) {
   }
 
   // ── Build accurate per-platform rear-panel backplate ──────────────────────
-  const _plat = (sys.platform || '').toLowerCase();
-  const isEseries = _platformFamily(sys) === "eseries" || !!sys.santricityVersion || _plat.includes("e-series") || _plat.includes("ef600") || _plat.includes("ef300") || _plat.includes("e5700") || _plat.includes("e2800") || _plat.includes("ef50") || _plat.includes("ef80") || _plat.includes("e4000");
+  const _sgAppl = _sgApplianceModel(sys);
+  const _plat = (_sgAppl || sys.platform || '').toLowerCase();
+  const isEseries = !_sgAppl && (_platformFamily(sys) === "eseries" || !!sys.santricityVersion || _plat.includes("e-series") || _plat.includes("ef600") || _plat.includes("ef300") || _plat.includes("e5700") || _plat.includes("e2800") || _plat.includes("ef50") || _plat.includes("ef80") || _plat.includes("e4000"));
   // "Cloud" here really means "software-defined ONTAP with no physical chassis at all" --
   // Cloud Volumes ONTAP (AWS/Azure/GCP) was the only case originally handled, but ONTAP
   // Select (on-prem ONTAP running as a VM under VMware/KVM, reported as platformType
@@ -42456,7 +42487,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
   const isCloud = _plat.includes("cloud") || (sys.platformType || '').toLowerCase().includes("cloud")
     || (sys.platformType || '').toUpperCase().includes("ONTAP-SELECT") || _plat.includes("ontap select") || _plat.includes("ontap-select")
     || (sys.platformType || '').toUpperCase() === "ASTRA" || _plat === "astra";
-  const isStorageGrid = _isPlatformStorageGRID(sys);
+  const isStorageGrid = _isPlatformStorageGRID(sys) || !!_sgAppl;
 
   // Update the card title to be platform-appropriate
   const _cardTitleEl = document.getElementById('tamNodeVisualCardTitle');
