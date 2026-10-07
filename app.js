@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.289";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.290";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.290",
+    date: "7 October 2026",
+    title: "Fixes Default To A P-Release On The Same Line",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "Every fix for a bug, vulnerability or other finding now defaults to a P-release on the release line the system runs. Findings with no published fixed release name the newest known release on that line and say so, instead of Active IQ's recommended release on a new line.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.289",
     date: "7 October 2026",
@@ -19706,7 +19721,7 @@ function _dfMinFixLines(cveId, advisoryUrl, systemNames, allSystems) {
     if (rel.notes.length) lines.push('Fixed In:     ' + rel.notes.slice(0, 2).join('; ') + '  (no release number published in the advisory data on file)');
     const rec = new Map();
     systemNames.forEach(name => { const s = byName[name], t = s && s.upgrades && s.upgrades.targetVersion; if (t && t !== 'Up to Date') { const k = (_platformFamily(s) === 'storagegrid' ? 'StorageGRID ' : _platformFamily(s) === 'eseries' ? 'SANtricity OS ' : 'ONTAP ') + String(t).replace(/^(ontap|storagegrid|santricity os)\s*/i, ''); if (!rec.has(k)) rec.set(k, []); rec.get(k).push({ name, cur: String(s.santricityVersion || s.ontapVersion || '?') }); } });
-    [...rec.entries()].forEach(([k, v]) => lines.push('Upgrade To:   ' + k + '  (Active IQ recommended release -- confirm it contains this fix in the advisory)  --  ' + _dfGroupNow(v)));
+    [...rec.entries()].forEach(([k, v]) => lines.push('Upgrade To:   ' + k + '  (target release for the line the system runs -- confirm it contains this fix in the advisory)  --  ' + _dfGroupNow(v)));
   }
   if (missing.length && !targets.size && fixedIn.length) lines.push('Upgrade To:   the advisory data on file lists no fixed release for ' + missing.join(', ') + ' -- see the linked advisory');
   { const advId = (String(advisoryUrl || '').match(/ntap-\d{8}-\d{4}/i) || [''])[0].toLowerCase();   // NetApp's published workaround for the product this system runs
@@ -20214,7 +20229,7 @@ function _riskResolution(sys, r) {
     res.kind = 'firmware'; parts.push(`Update ${(RESOLUTION_RULES.firmwareLabels || {})[r.fixActionSub] || (RESOLUTION_RULES.firmwareLabels || {}).NONE || 'firmware'} to the current release`);
   } else if (r.fixAction === 'OS_UPGRADE' || (bug && !isSecurity)) {
     res.kind = 'upgrade';
-    if (target) { res.minVersion = `${prod} ${target}`; parts.push(`Upgrade ${prod} to ${target}${cur ? ` (now ${cur.text})` : ''}, Active IQ's recommended release${bug ? `; check that it contains the fix for bug ${bug[2]}` : '; no fixed release is published for this finding'}`); }
+    if (target) { res.minVersion = `${prod} ${target}`; parts.push(`Upgrade ${prod} to ${target}${cur ? ` (now ${cur.text})` : ''}, ${sys.upgrades && sys.upgrades.crossLine ? 'the newest release ARIA knows on the line this system runs (a P-release, not a new release line)' : "Active IQ's recommended release"}${bug ? `; check that it contains the fix for bug ${bug[2]}` : '; no fixed release is published for this finding'}`); }
     else parts.push(`Upgrade ${prod} to a release that contains the fix${bug ? ' for bug ' + bug[2] : ''}`);
   }
   if (res.workaround && !parts.length && /^(upgrade|update|apply|install)\b/i.test(res.workaround)) { res.kind = 'upgrade'; parts.push(res.workaround.replace(/\.$/, '')); res.workaround = ''; }
