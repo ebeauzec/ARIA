@@ -38,6 +38,7 @@ web_datas = [
     (os.path.join(SPECPATH, '..', 'version.json'), '.'),
     # Every Active IQ endpoint and query (edit by hand; a copy next to the exe overrides this one)
     (os.path.join(SPECPATH, '..', 'api_queries.json'), '.'),
+    (os.path.join(SPECPATH, '..', 'resolution_rules.json'), '.'),
     # Demo (mock) mode overlay -- anonymized, real-shaped telemetry (see tools/build_demo_dataset.py)
     (os.path.join(SPECPATH, '..', 'data', 'demo_dataset.json'), 'data'),
     (os.path.join(SPECPATH, '..', 'data', 'demo_storageperf.json'), 'data'),

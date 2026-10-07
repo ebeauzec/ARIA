@@ -5098,6 +5098,132 @@ def fetch_netapp_psirt(advisory_id):
         return {'id': advisory_id, 'error': str(e)}
 
 
+
+# ── Advisory resolutions ─────────────────────────────────────────────────────
+# For every NetApp advisory a finding refers to, keep what an engineer needs to fix it: the products it affects, the
+# published workaround and the fixed releases per product. Filled in the background from NetApp's advisory JSON API,
+# cached on disk, and read by the browser (GET /api/advisory-resolutions) so each finding can say "upgrade to at least X",
+# "do Y" or "this advisory does not apply to this system" without a manual lookup.
+ADV_RES_PATH = SCRIPT_DIR / "data" / "advisory_resolutions.json"
+_ADV_RES = None
+_ADV_RES_LOCK = threading.Lock()
+_ADV_RES_INFLIGHT = set()
+_ADV_RES_POOL = ThreadPoolExecutor(max_workers=4)
+
+
+def _adv_plain(t, limit=1500):
+    """HTML fragment from an advisory -> plain text (line breaks kept, tags and entities removed)."""
+    t = str(t or '')
+    t = re.sub(r'(?i)<\s*(br|/p|/li|/div|/tr)\s*/?>', '\n', t)
+    t = re.sub(r'(?i)<\s*li[^>]*>', '- ', t)
+    t = re.sub(r'<[^>]+>', '', t)
+    t = html.unescape(t)
+    t = re.sub(r'[ \t\r\f\v]+', ' ', t)
+    t = re.sub(r'\n\s*\n+', '\n', t).strip()
+    return t[:limit]
+
+
+def _adv_compact(adv_id, adv):
+    fixes = []
+    for fx in (adv.get('kb_fixes') or []):
+        vers, links = [], []
+        for f in (fx.get('fixes') or []):
+            lk = f.get('link') or ''
+            if not lk:
+                continue
+            links.append(lk)
+            tail = lk.rstrip('/').rsplit('/', 1)[-1]
+            if re.match(r'^\d', tail) and tail not in vers:
+                vers.append(tail)
+        fixes.append({'product': fx.get('product') or '', 'versions': vers, 'links': links[:3],
+                      'wontfix': bool(fx.get('wontfix')), 'instructions': _adv_plain(fx.get('instructions'), 500),
+                      'eos': fx.get('eos_link') or ''})
+    return {'id': adv_id, 'cve': adv.get('kb_cve') or [], 'title': adv.get('kb_title') or adv_id,
+            'published': (adv.get('published_date') or '')[:10],
+            'workaround': _adv_plain(adv.get('kb_workarounds')), 'fixes': fixes,
+            'affected': list(adv.get('kb_affected_list') or []),
+            'unaffected': list(adv.get('kb_unaffected_list') or []),
+            'investigating': list(adv.get('kb_investigating_list') or []),
+            'fetched': datetime.now(timezone.utc).isoformat()[:19]}
+
+
+def _resolution_rules():
+    """resolution_rules.json (a copy in data/ overrides it): how findings are matched to advisory products and worded. Read on every
+    request so an edit takes effect on the next page load, with no restart."""
+    for path in (SCRIPT_DIR / "data" / "resolution_rules.json", SCRIPT_DIR / "resolution_rules.json"):
+        try:
+            if path.exists():
+                return json.loads(path.read_text(encoding='utf-8'))
+        except Exception as e:
+            print(f'  [ADVISORY] could not read {path.name}: {e}', flush=True)
+    return {}
+
+
+def _adv_res_load():
+    global _ADV_RES
+    with _ADV_RES_LOCK:
+        if _ADV_RES is None:
+            try:
+                _ADV_RES = json.loads(ADV_RES_PATH.read_text(encoding='utf-8')) if ADV_RES_PATH.exists() else {}
+            except Exception:
+                _ADV_RES = {}
+        return _ADV_RES
+
+
+def _adv_res_save():
+    with _ADV_RES_LOCK:
+        try:
+            ADV_RES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp = ADV_RES_PATH.with_suffix('.tmp')
+            tmp.write_text(json.dumps(_ADV_RES or {}, ensure_ascii=False), encoding='utf-8')
+            tmp.replace(ADV_RES_PATH)
+        except Exception as e:
+            print(f'  [ADVISORY] could not save resolutions: {e}', flush=True)
+
+
+def _adv_res_worker(adv_id):
+    try:
+        res = fetch_netapp_psirt(adv_id)
+        store = _adv_res_load()
+        if res and res.get('_raw'):
+            rec = _adv_compact(adv_id, res['_raw'])
+        else:   # not found or unreachable: remember, retry after a day
+            rec = {'id': adv_id, 'error': (res or {}).get('error') or 'unreachable', 'fetched': datetime.now(timezone.utc).isoformat()[:19]}
+        with _ADV_RES_LOCK:
+            store[adv_id] = rec
+    finally:
+        with _ADV_RES_LOCK:
+            _ADV_RES_INFLIGHT.discard(adv_id)
+            left = len(_ADV_RES_INFLIGHT)
+        if left % 25 == 0:
+            _adv_res_save()
+
+
+def adv_res_request(ids):
+    """Queue advisories not yet resolved (or failed more than a day ago). Returns the number still pending."""
+    store = _adv_res_load()
+    now = datetime.now(timezone.utc)
+    for raw in ids or []:
+        adv_id = str(raw or '').strip().lower()
+        if not re.match(r'^ntap-\d{8}-\d{4}$', adv_id):
+            continue
+        with _ADV_RES_LOCK:
+            rec = store.get(adv_id)
+            if adv_id in _ADV_RES_INFLIGHT:
+                continue
+            if rec and not rec.get('error'):
+                continue
+            if rec and rec.get('error'):
+                try:
+                    if now - datetime.fromisoformat(rec.get('fetched', '2000-01-01T00:00:00')).replace(tzinfo=timezone.utc) < timedelta(days=1):
+                        continue
+                except Exception:
+                    pass
+            _ADV_RES_INFLIGHT.add(adv_id)
+        _ADV_RES_POOL.submit(_adv_res_worker, adv_id)
+    with _ADV_RES_LOCK:
+        return len(_ADV_RES_INFLIGHT)
+
 def scan_and_persist_advisories(nvd_api_key=None):
     """
     Full advisory scan pipeline:
@@ -9208,6 +9334,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_reference_status_get()
         elif self.path == '/api/knowledge-base':
             self.handle_knowledge_base_get()
+        elif self.path == '/api/advisory-resolutions':
+            self.handle_advisory_resolutions()
         elif self.path == '/api/enrich/status':
             self.handle_enrich_status()
         elif self.path.startswith('/api/enrich'):
@@ -9572,6 +9700,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_harvest()
         elif self.path == '/api/config':
             self.handle_config_post()
+        elif self.path == '/api/advisory-resolutions':
+            self.handle_advisory_resolutions(post=True)
         elif self.path.startswith('/api/bulletins'):
             self.handle_bulletins_post()
         elif self.path == '/api/enrich/scan':
@@ -10047,6 +10177,26 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             })
         except Exception as e:
             self._json_response(500, {"ok": False, "error": str(e), "customers": [], "sites": []})
+
+    def handle_advisory_resolutions(self, post=False):
+        """GET /api/advisory-resolutions  -> every cached advisory resolution + how many are still being fetched.
+        POST /api/advisory-resolutions {ids:[...]} queues the advisories not yet cached, then returns the same."""
+        if post:
+            try:
+                n = min(int(self.headers.get('Content-Length') or 0), 400000)
+                body = json.loads(self.rfile.read(n).decode('utf-8', errors='replace') or '{}') if n else {}
+            except Exception:
+                body = {}
+            pending = adv_res_request(body.get('ids') or [])
+        else:
+            with _ADV_RES_LOCK:
+                pending = len(_ADV_RES_INFLIGHT)
+        store = _adv_res_load()
+        with _ADV_RES_LOCK:
+            out = {k: v for k, v in store.items() if not v.get('error')}
+        if post and pending == 0:
+            _adv_res_save()
+        self._send_json(200, {'resolutions': out, 'pending': pending, 'rules': _resolution_rules()})
 
     def handle_knowledge_base_get(self):
         """GET /api/knowledge-base — Return the full knowledge base for enrichment mapping."""
