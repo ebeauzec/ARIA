@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.290";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.291";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.291",
+    date: "7 October 2026",
+    title: "Same-Line Targets In Every Document",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "Regenerated the customer documents and checked them in Word. The Customer Report's lifecycle table now shows the same same-line target as the upgrade roadmap (it still showed Active IQ's cross-line release). The long explanation that repeated on every system row is now one sentence under the heading plus a short note per row.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.290",
     date: "7 October 2026",
@@ -20385,8 +20400,8 @@ function _applyUpgradeLineTargets(systems) {
     if (!isNaN(eos) && eos < Date.now()) return;
     u.crossLine = true;
     const b = best.get(key(cur));
-    if (b && _dfVerCmp(b.v, cur) > 0) { u.targetVersion = b.v.text; u.benefits = `Stay on ${key(cur)}: ${b.v.text} is the newest ${key(cur)} release named in NetApp advisories or running in this fleet, the best target ARIA can name without leaving the line. Where a finding is a bug with no published fixed release, confirm its fixed-in release on the NetApp support site (sign-in needed). Active IQ's own recommendation is ${u.aiqTarget}, a move to a different release line; it is an option, not a requirement.`; }
-    else u.benefits = `Active IQ recommends ${u.aiqTarget}, a different release line. No newer ${key(cur)} release is known to ARIA, so this is the only target Active IQ gives.`;
+    if (b && _dfVerCmp(b.v, cur) > 0) { u.targetVersion = b.v.text; u.benefits = `Newest ${key(cur)} release ARIA knows of (same line). Active IQ suggests ${u.aiqTarget}, a new release line: optional.`; }
+    else u.benefits = `Active IQ recommends ${u.aiqTarget}, a new release line; no newer ${key(cur)} release is known to ARIA.`;
   });
 }
 function _applyAdvisoryApplicability(systems) {
@@ -29116,7 +29131,8 @@ function compileCustomerReport(targetSystems, allRisks, expiringContracts, openC
   if (warrEnd) o += `${plural(warrEnd, 'system')} ${warrEnd === 1 ? 'is' : 'are'} past the original hardware warranty date (this is separate from any support contract in place).\n\n`;
   // software support by version
   const verGroups = {};
-  targetSystems.forEach(s => { const v = verOf(s); if (v === 'not reported') return; const g = verGroups[v] = verGroups[v] || { n: 0, full: s.swEndOfFullSupport, lim: s.swEndOfLimitedSupport, rec: s.recommendedOSVersion }; g.n++; g.full = g.full || s.swEndOfFullSupport; g.lim = g.lim || s.swEndOfLimitedSupport; g.rec = g.rec || s.recommendedOSVersion; });
+  const _tgtOf = s => (s.upgrades && s.upgrades.targetVersion && s.upgrades.targetVersion !== 'Up to Date') ? s.upgrades.targetVersion : s.recommendedOSVersion;
+  targetSystems.forEach(s => { const v = verOf(s); if (v === 'not reported') return; const g = verGroups[v] = verGroups[v] || { n: 0, full: s.swEndOfFullSupport, lim: s.swEndOfLimitedSupport, rec: _tgtOf(s) }; g.n++; g.full = g.full || s.swEndOfFullSupport; g.lim = g.lim || s.swEndOfLimitedSupport; g.rec = g.rec || _tgtOf(s); });
   const vKeys = Object.keys(verGroups);
   if (vKeys.length) {
     o += `**Software versions and support windows**\n\n| Version | Systems | End of full support | End of limited support | Recommended target | Status |\n|---|---|---|---|---|---|\n`;
@@ -35867,12 +35883,12 @@ function compileUpgradesWordMd(systems, scopeTitle) {
     parity.results.forEach(r => { o += `- All ${r.label} systems should match at **${r.version}** (highest of Active IQ's recommended releases, driven by: ${r.driverSystems.slice(0, 3).join(', ')}${r.driverSystems.length > 3 ? ` and ${r.driverSystems.length - 3} more` : ''}).\n`; });
     o += `\n`;
   }
-  o += `## 2. Upgrades by system\n\n` + _wdTable(['System', 'Platform', 'Current', 'Recommended target', 'Latest supported', 'Path', 'Security fix floor', 'Non-CVE critical/high', 'Urgency'],
+  o += `## 2. Upgrades by system\n\n` + _wdTable(['System', 'Platform', 'Current', 'Target', 'Latest supported', 'Path', 'Security fix floor', 'Non-CVE critical/high', 'Urgency'],
     rows.slice().sort((x, y) => String(x.u.systemName).localeCompare(String(y.u.systemName), undefined, { numeric: true })).map(r => [r.u.systemName, r.u.platform, r.cur, r.min, r.latest, r.hops.length > 1 ? `${r.hops.length} hops` : (r.hops.length === 1 ? 'Direct' : 'n/a'), r.floor ? r.floor.version : '', r.nonCve ? r.nonCve.count : '', r.u.urgency]));
   // distinct upgrade paths
   const paths = new Map();
   rows.forEach(r => { const k = [r.u.platform, r.cur, r.min, r.hops.map(h => h.from + '>' + h.to).join(',')].join('|'); let g = paths.get(k); if (!g) { g = { r, systems: [] }; paths.set(k, g); } g.systems.push(r.u.systemName); });
-  o += `## 3. Upgrade paths\n\nSystems that follow the same path are listed together.\n\n`;
+  o += `## 3. Upgrade paths\n\nSystems that follow the same path are listed together. Targets stay on the release line each system runs (a P-release); Active IQ's own recommendation, where it is a different line, is noted as optional. For a bug with no published fixed release, confirm the fixed-in release on the NetApp support site (sign-in needed).\n\n`;
   [...paths.values()].sort((x, y) => (y.r.hops.length - x.r.hops.length) || (y.systems.length - x.systems.length)).forEach(g => {
     const r = g.r;
     o += `### ${r.cur} to ${r.min}${r.u.platform ? ` (${[...new Set(rows.filter(x => g.systems.includes(x.u.systemName)).map(x => x.u.platform))].join(', ')})` : ''}\n\n`;
