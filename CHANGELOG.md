@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.291 (2026-10-07)
+
+### Changed
+- The Customer Report lifecycle table uses the same-line upgrade target like every other document; the per-row upgrade note is short, with one explanation under the roadmap heading.
+
 ## 5.6.290 (2026-10-07)
 
 ### Changed
