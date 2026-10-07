@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.288";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.289";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.289",
+    date: "7 October 2026",
+    title: "Upgrade Targets Stay On The Customer's Release Line",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "The upgrade target no longer jumps release lines by default. Active IQ often recommends a different line (9.16.1 to 9.19.1) even when the findings do not need it. ARIA now targets the newest release on the line the system runs (from NetApp advisories, Active IQ figures and the fleet), and prints Active IQ's own recommendation as an option. Lines that are out of support still go to Active IQ's target. The OS Upgrade Roadmap column is now called Recommended target.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.288",
     date: "7 October 2026",
@@ -20336,8 +20351,32 @@ function _rrOwnRejected(s, r, hasAiqEol) {
   if (_advApplicability(s, a).applies !== true) return true;   // the advisory does not name this system's software as affected (or names no product yet)
   const x = _rrBase(s, r); return !!(x && x.cleared);  // the installed release already has the fix
 }
+// Active IQ's recommended ONTAP release is often a different release line from the one a customer runs (9.16.1 -> 9.19.1). A new line is a project of its own
+// and customers rarely take it, while P-releases on the line they run carry the fixes NetApp ships there. So the upgrade target stays on the installed line
+// whenever ARIA knows a newer release on it (from the releases named in NetApp advisories, Active IQ's own figures and what the fleet runs);
+// Active IQ's recommendation is kept as u.aiqTarget and printed as an option, never as the minimum.
+function _applyUpgradeLineTargets(systems) {
+  const key = v => v.n.slice(0, v.major === 9 ? 3 : 2).join('.'), best = new Map();
+  const see = txt => { const v = _dfVerParse(txt); if (!v || v.major !== 9) return; const k = key(v), b = best.get(k); if (!b || _dfVerCmp(v, b.v) > 0) best.set(k, { v, why: '' }); };
+  (systems || []).forEach(s => { if (s && _platformFamily(s) === 'ontap') { see(s.ontapVersion || s.osVersion); see(s.upgrades && s.upgrades.aiqTarget); see(s.recommendedOSVersion); } });
+  Object.values(ADVISORY_RES || {}).forEach(rec => (rec.fixes || []).forEach(f => { if (_advClass(f.product) === 'ontap' && !f.wontfix) (f.versions || []).forEach(see); }));
+  (systems || []).forEach(s => {
+    const u = s && s.upgrades; if (!u || u.source !== 'active-iq' || _platformFamily(s) !== 'ontap') return;
+    if (u.aiqTarget === undefined) { if (u.targetVersion === 'Up to Date') return; u.aiqTarget = u.targetVersion; u.aiqBenefits = u.benefits; }
+    const cur = _dfVerParse(s.ontapVersion || s.osVersion), aiq = _dfVerParse(u.aiqTarget);
+    u.targetVersion = u.aiqTarget; u.benefits = u.aiqBenefits; delete u.crossLine;
+    if (!cur || !aiq || _dfSameBranch(aiq, cur)) return;
+    const eos = Date.parse(s.swEndOfLimitedSupport || '');   // a line that is out of support has to be left: Active IQ's target stands
+    if (!isNaN(eos) && eos < Date.now()) return;
+    u.crossLine = true;
+    const b = best.get(key(cur));
+    if (b && _dfVerCmp(b.v, cur) > 0) { u.targetVersion = b.v.text; u.benefits = `Stay on ${key(cur)}: ${b.v.text} is the newest ${key(cur)} release named in NetApp advisories or running in this fleet, the best target ARIA can name without leaving the line. Where a finding is a bug with no published fixed release, confirm its fixed-in release on the NetApp support site (sign-in needed). Active IQ's own recommendation is ${u.aiqTarget}, a move to a different release line; it is an option, not a requirement.`; }
+    else u.benefits = `Active IQ recommends ${u.aiqTarget}, a different release line. No newer ${key(cur)} release is known to ARIA, so this is the only target Active IQ gives.`;
+  });
+}
 function _applyAdvisoryApplicability(systems) {
   let moved = 0;
+  try { _applyUpgradeLineTargets(systems); } catch (_e) { console.warn('[UPGRADE] line targets failed', _e); }
   (systems || []).forEach(s => {
     if (!s) return;
     const all = (s.risks || []).concat(s.risksNotApplicable || [], s.risksStale || [], s.risksUnverified || []);
@@ -35813,7 +35852,7 @@ function compileUpgradesWordMd(systems, scopeTitle) {
     parity.results.forEach(r => { o += `- All ${r.label} systems should match at **${r.version}** (highest of Active IQ's recommended releases, driven by: ${r.driverSystems.slice(0, 3).join(', ')}${r.driverSystems.length > 3 ? ` and ${r.driverSystems.length - 3} more` : ''}).\n`; });
     o += `\n`;
   }
-  o += `## 2. Upgrades by system\n\n` + _wdTable(['System', 'Platform', 'Current', 'Minimum required', 'Latest supported', 'Path', 'Security fix floor', 'Non-CVE critical/high', 'Urgency'],
+  o += `## 2. Upgrades by system\n\n` + _wdTable(['System', 'Platform', 'Current', 'Recommended target', 'Latest supported', 'Path', 'Security fix floor', 'Non-CVE critical/high', 'Urgency'],
     rows.slice().sort((x, y) => String(x.u.systemName).localeCompare(String(y.u.systemName), undefined, { numeric: true })).map(r => [r.u.systemName, r.u.platform, r.cur, r.min, r.latest, r.hops.length > 1 ? `${r.hops.length} hops` : (r.hops.length === 1 ? 'Direct' : 'n/a'), r.floor ? r.floor.version : '', r.nonCve ? r.nonCve.count : '', r.u.urgency]));
   // distinct upgrade paths
   const paths = new Map();
