@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.270 (2026-10-07)
+
+### Changed
+- The sidebar footer is one horizontal line: ARIA, version, signed-in user and Sign out side by side (wrapping only when the sidebar is too narrow).
+
 ## 5.6.269 (2026-10-07)
 
 ### Fixed

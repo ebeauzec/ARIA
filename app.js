@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.269";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.270";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.270",
+    date: "7 October 2026",
+    title: "Compact Sidebar Footer",
+    sections: [
+      {
+        icon: "🐛",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "The sidebar footer is one horizontal line: ARIA, the version, the signed-in user and Sign out sit side by side (wrapping only when the sidebar is too narrow), saving vertical space.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.269",
     date: "7 October 2026",
@@ -44090,13 +44105,13 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!me || me.mode === 'none') return;
       const d = document.createElement('div');
       d.id = 'ariaSessionBadge';
-      d.style.cssText = 'margin-top:8px;font-size:0.7rem;line-height:1.5;color:#cbd5e1;';
+      d.style.cssText = 'font-size:0.7rem;color:#cbd5e1;white-space:nowrap;';
       d.textContent = me.role && me.role !== me.user ? me.user + ' (' + me.role + ')' : me.user;
       if (me.mode === 'local') {
         const b = document.createElement('a');
         b.textContent = 'Sign out';
         b.href = '#';
-        b.style.cssText = 'display:block;color:#38bdf8;text-decoration:none;';
+        b.style.cssText = 'margin-left:6px;color:#38bdf8;text-decoration:none;';
         b.onclick = ev => { ev.preventDefault(); fetch('/logout', { method: 'POST' }).finally(() => { location.href = '/login'; }); };
         d.appendChild(b);
       }
