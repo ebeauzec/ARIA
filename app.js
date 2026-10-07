@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.279";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.280";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.280",
+    date: "7 October 2026",
+    title: "Stale Findings Hidden, Advisory Naming",
+    sections: [
+      {
+        icon: "🧹",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Findings that Active IQ last reported more than two weeks ago, on a release that already contains the fix, are hidden as resolved by an upgrade (50 findings on 28 systems in the largest fleet). The documents say how many were left out. Findings with a recent date, or no date, stay listed under the 'check in Active IQ' action.",
+          "Security Advisories reports name each advisory by its NetApp ID with the CVEs it covers (for example 'NTAP-20260610-0001 (9 CVEs: ...)') and say '2 advisories covering 10 CVEs' instead of '2 advisories' above a list of 10 CVE numbers. Entries that were labelled 'N/A' or with an Active IQ risk number ('NTAP-3709') now show the real advisory ID or title.",
+          "Knowledge-base and bug notices (for example the PFC and NVMe deallocate notes) are listed as notices, separate from security advisories, in the Security Advisories report and its summary counts.",
+          "An advisory entry with no advisory ID is looked up through its CVE, so it gets the same fixed-release or workaround line as every other finding instead of generic text.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.279",
     date: "7 October 2026",
@@ -20097,13 +20115,14 @@ function _rrGroupLines(pairs) {
 function _rrNaText(systems) {
   let n = 0, cl = 0; const adv = new Set();
   (systems || []).forEach(s => { (s.risksNotApplicable || []).forEach(r => { n++; const id = _advIdOf(r); if (id) adv.add(id.toUpperCase()); }); cl += (s.bulletinsCleared || []).length; });
-  let un = 0; (systems || []).forEach(s => { un += (s.bulletinsUnverified || []).length; });
+  let un = 0, st = 0; (systems || []).forEach(s => { un += (s.bulletinsUnverified || []).length; st += (s.risksStale || []).length; });
+  const stText = st ? `${st} finding${st !== 1 ? 's' : ''} that Active IQ last reported more than two weeks ago, on a release that already contains the fix, ${st !== 1 ? 'were' : 'was'} left out as resolved by an upgrade.` : '';
   const unText = un ? `${un} version-matched advisory entr${un !== 1 ? 'ies' : 'y'} were left out because NetApp publishes no advisory with that ID.` : '';
   const clText0 = cl ? `${cl} advisor${cl !== 1 ? 'ies' : 'y'} matched to these systems by software version ${cl !== 1 ? 'were' : 'was'} also left out: the installed release is at or beyond the fixed release in NetApp's advisory.` : '';
-  const clText = [clText0, unText].filter(Boolean).join(' ');
+  const clText = [clText0, unText, stText].filter(Boolean).join(' ');
   if (!n) return clText;
   const ex = [...adv].sort().slice(0, 3).join(', ');
-  return `${n} finding${n !== 1 ? 's' : ''} that Active IQ attached to these systems (${adv.size} advisor${adv.size !== 1 ? 'ies' : 'y'}${ex ? ', for example ' + ex : ''}) ${n !== 1 ? 'are' : 'is'} left out: NetApp's advisory lists only other products (for example Active IQ Unified Manager) as affected, so there is nothing to change on these systems.${clText ? ' ' + clText : ''}`;
+  return `${n} finding${n !== 1 ? 's' : ''} that Active IQ attached to these systems${adv.size ? ` (${adv.size} advisor${adv.size !== 1 ? 'ies' : 'y'}${ex ? ', for example ' + ex : ''})` : ''} ${n !== 1 ? 'are' : 'is'} left out: NetApp's advisory lists only other products (for example Active IQ Unified Manager) as affected, so there is nothing to change on these systems.${clText ? ' ' + clText : ''}`;
 }
 // the sentences ARIA itself wrote when Active IQ gave no advice ("Upgrade to ONTAP x which includes the patch"): say less than the resolution, and can disagree with it
 const _rrIsStockText = t => /^(Upgrade to .* which includes the patch|Upgrade to the latest recommended OS version|Apply the corrective action per NetApp|See (the )?Security Advisory)/i.test(String(t || ''));
@@ -20116,6 +20135,16 @@ function _rrSteps(sys, r, plan) {
   if (r && r.advisoryUrl && !/\/advisory\/?(\?|$)/.test(r.advisoryUrl)) steps.push(`Review the advisory: ${r.advisoryUrl}`);
   if (steps.length) steps.push('Confirm in Active IQ that the finding clears after the next AutoSupport');
   return steps.length ? steps : ['Review the finding with NetApp Support; Active IQ gives no specific steps for it'];
+}
+// A bulletin entry is a NetApp security advisory (named by its ID, with the CVEs it covers) or a knowledge-base / bug notice (named by its title).
+function _advNtap(b) { const m = (String((b && b.ntapId) || '') + ' ' + String((b && b.link) || '') + ' ' + String((b && b.title) || '') + ' ' + String((b && b.id) || '')).match(/ntap-\d{8}-\d{4}/i); return m ? m[0].toUpperCase() : ''; }
+function _advCves(b) { return [...new Set(String((b && b.cve) || '').split(/[,\s]+/).map(x => x.trim()).filter(x => /^CVE-\d{4}-\d{4,}$/i.test(x)))]; }
+function _advIsNotice(b) { return !_advNtap(b) && !_advCves(b).length && !/^CVE-/i.test(String((b && b.id) || '')); }
+function _advDisplay(b) {
+  const n = _advNtap(b), c = _advCves(b);
+  if (n) return n + (c.length ? ` (${c.length > 2 ? c.length + ' CVEs: ' : ''}${c.join(', ')})` : '');
+  if (c.length) return c.join(', ');
+  return String((b && (b.title || b.id)) || 'advisory').slice(0, 110);
 }
 const _rrText = (sys, r) => { const x = riskResolution(sys, r); return x ? x.summary : ''; };
 const _rrKindLabel = k => ({ upgrade: 'UPGRADE', firmware: 'FIRMWARE', workaround: 'WORKAROUND', config: 'CONFIGURATION', hardware: 'HARDWARE', na: 'NOT APPLICABLE', review: 'REVIEW' }[k] || 'RESOLUTION');
@@ -20145,15 +20174,21 @@ function _recomputeStatusFromRisks(s) {
   s.status = (risks.some(r => r.severity === 'critical') || contractExpired) ? 'critical'
     : (risks.some(r => r.severity === 'high') || asupFailed || (s.contracts && s.contracts.daysRemaining != null && s.contracts.daysRemaining <= 90)) ? 'warning' : 'normal';
 }
+// Active IQ last raised the finding more than two weeks ago and the installed release is at or beyond the advisory's fixed release: it was fixed by an upgrade since
+const _RR_STALE_DAYS = 14;
+function _rrIsStale(s, r) {
+  const t = Date.parse((r && r.lastSeen) || ''); if (isNaN(t) || (Date.now() - t) <= _RR_STALE_DAYS * 864e5) return false;
+  const x = _rrBase(s, r); return !!(x && x.cleared);
+}
 function _applyAdvisoryApplicability(systems) {
   let moved = 0;
   (systems || []).forEach(s => {
     if (!s) return;
-    const all = (s.risks || []).concat(s.risksNotApplicable || []);
+    const all = (s.risks || []).concat(s.risksNotApplicable || [], s.risksStale || []);
     all.forEach(r => _rrOwner.set(r, s));
-    const keep = [], na = [];
-    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; (ap && ap.applies === false ? na : keep).push(r); });
-    if (na.length !== (s.risksNotApplicable || []).length || keep.length !== (s.risks || []).length) { moved++; s.risks = keep; s.risksNotApplicable = na; _recomputeStatusFromRisks(s); }
+    const keep = [], na = [], stale = [];
+    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; if (ap && ap.applies === false) na.push(r); else if (_rrIsStale(s, r)) stale.push(r); else keep.push(r); });
+    if (na.length !== (s.risksNotApplicable || []).length || stale.length !== (s.risksStale || []).length || keep.length !== (s.risks || []).length) { moved++; s.risks = keep; s.risksNotApplicable = na; s.risksStale = stale; _recomputeStatusFromRisks(s); }
     // the system's advisory list (what the Security Advisories and CVE sections print) is built from the same advisories:
     // drop the ones that do not apply here, and put the resolution (not the generic "see the advisory") on the rest
     if (Array.isArray(s.securityBulletins) && (s.securityBulletins.length || (s._bulletinsDropped || []).length)) {
@@ -20165,7 +20200,7 @@ function _applyAdvisoryApplicability(systems) {
       _allB.forEach(b => {
         const ntap = String(b.ntapId || b.advisoryId || '').toLowerCase() || ((String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i) || [''])[0].toLowerCase();
         const pseudo = { advisoryId: ntap, advisoryUrl: b.link || '', description: b.title || '', cveDetails: b.cve ? [{ id: b.cve }] : [], fixAction: '', fixedVersions: [] };
-        const x = ntap ? riskResolution(s, pseudo) : null;
+        const x = (ntap || b.cve) ? riskResolution(s, pseudo) : null;
         if (ntap && ADVISORY_NOT_FOUND.has(ntap) && b.source === 'db') { s.bulletinsUnverified.push(ntap); dropB.push(b); return; }   // no such advisory at NetApp: a hand-entered database row, not a finding
         if (x && x.kind === 'na') { dropB.push(b); return; }
         if (x && x.cleared && b.source === 'db') { s.bulletinsCleared.push(ntap || b.id); dropB.push(b); return; }   // the database's version range says 'affected'; the advisory's own fixed releases say this system has the fix
@@ -35670,24 +35705,25 @@ function compileAdvisoriesWordMd(systems, scopeTitle) {
   let o = `# ${cust} -- Security Advisories\n\nPrepared ${today} from NetApp security advisories matched to each system's software version.\n\n`;
   if (!all.length) return o + `No security vulnerabilities were mapped against release baselines for this scope.\n`;
   const groups = new Map();
-  all.forEach(({ sys, b }) => { const k = (b.cve || b.id || b.title) + '|' + sev(b); let g = groups.get(k); if (!g) { g = { b, sys: new Set() }; groups.set(k, g); } g.sys.add(sys); });
+  all.forEach(({ sys, b }) => { const k = _advDisplay(b) + '|' + sev(b); let g = groups.get(k); if (!g) { g = { b, sys: new Set() }; groups.set(k, g); } g.sys.add(sys); });
   const list = [...groups.values()].sort((x, y) => ((rank[sev(x.b)] ?? 4) - (rank[sev(y.b)] ?? 4)) || (y.sys.size - x.sys.size) || String(x.b.cve || x.b.id).localeCompare(String(y.b.cve || y.b.id)));
   const nSys = new Set(all.map(x => x.sys)).size;
   const bySev = {}; list.forEach(g => { const k = sev(g.b); bySev[k] = (bySev[k] || 0) + 1; });
-  o += `## 1. Summary\n\n- **${list.length}** distinct advisories affect **${nSys}** system${nSys !== 1 ? 's' : ''} (${all.length} system-advisory pairs).\n${_rrNaText(systems) ? '- ' + _rrNaText(systems) + '\n' : ''}\n`;
+  const _nNotice = list.filter(g => _advIsNotice(g.b)).length, _nAdv = list.length - _nNotice, _nCve = new Set(list.flatMap(g => _advCves(g.b))).size;
+  o += `## 1. Summary\n\n- **${_nAdv}** distinct security advisor${_nAdv !== 1 ? 'ies' : 'y'} (covering ${_nCve} CVE${_nCve !== 1 ? 's' : ''})${_nNotice ? ` and **${_nNotice}** NetApp knowledge-base or bug notice${_nNotice !== 1 ? 's' : ''}` : ''} affect **${nSys}** system${nSys !== 1 ? 's' : ''} (${all.length} system-advisory pairs).\n${_rrNaText(systems) ? '- ' + _rrNaText(systems) + '\n' : ''}\n`;
   o += _wdTable(['Severity', 'Advisories'], Object.keys(bySev).sort((x, y) => (rank[x] ?? 4) - (rank[y] ?? 4)).map(k => [cap(k), bySev[k]]));
-  o += `## 2. Advisories\n\n` + _wdTable(['Advisory', 'Severity', 'Title', 'Systems affected'], list.map(g => [g.b.cve || g.b.id, cap(sev(g.b)), g.b.title, g.sys.size]));
+  o += `## 2. Advisories\n\n` + _wdTable(['Advisory', 'Severity', 'Title', 'Systems affected'], list.map(g => [_advDisplay(g.b), cap(sev(g.b)), g.b.title, g.sys.size]));
   o += `## 3. Mitigation and affected systems\n\nAdvisories that share a mitigation and the same affected systems are listed together. The affected systems are findings; the mitigation is general NetApp guidance.\n\n`;
   const mit = new Map();
   list.forEach(g => {
     const names = [...g.sys].sort((x, y) => String(x).localeCompare(String(y), undefined, { numeric: true }));
     const text = _wdClean(g.b.mitigation || 'Upgrade to a fixed release; see the NetApp advisory.');
-    const key = sev(g.b) + '\u0001' + text + '\u0001' + names.join(',');
-    let m = mit.get(key); if (!m) { m = { sev: sev(g.b), text, names, ids: [], res: !!g.b.resolution }; mit.set(key, m); }
-    m.ids.push(g.b.cve || g.b.id);
+    const kb = _advIsNotice(g.b), key = sev(g.b) + '\u0001' + kb + '\u0001' + text + '\u0001' + names.join(',');
+    let m = mit.get(key); if (!m) { m = { sev: sev(g.b), text, names, ids: [], cves: new Set(), kb, res: !!g.b.resolution }; mit.set(key, m); }
+    m.ids.push(_advDisplay(g.b)); _advCves(g.b).forEach(c => m.cves.add(c));
   });
   [...mit.values()].forEach((m, n) => {
-    o += `### ${n + 1}. ${cap(m.sev)}: ${m.ids.length} advisor${m.ids.length !== 1 ? 'ies' : 'y'}\n\n**Advisories:** ${m.ids.join(', ')}\n\n**Affected systems (${m.names.length}):** ${m.names.join(', ')}\n\n**${m.res ? 'Recommended action' : 'General guidance, mitigation'}:** ${m.text}\n\n`;
+    o += `### ${n + 1}. ${cap(m.sev)}: ${m.ids.length} ${m.kb ? 'knowledge-base notice' : 'advisor'}${m.kb ? (m.ids.length !== 1 ? 's' : '') : (m.ids.length !== 1 ? 'ies' : 'y')}${m.cves.size > m.ids.length ? ` covering ${m.cves.size} CVEs` : ''}\n\n**${m.kb ? 'Notices' : 'Advisories'}:** ${m.ids.join('; ')}\n\n**Affected systems (${m.names.length}):** ${m.names.join(', ')}\n\n**${m.res ? 'Recommended action' : 'General guidance, mitigation'}:** ${m.text}\n\n`;
   });
   return o;
 }
@@ -35948,7 +35984,7 @@ Scope: ${scopeTitle}
 ${_rrNaText(targetSystems) ? '\n' + _rrNaText(targetSystems) + '\n' : ''}
 ${allSecurityAdvisories.length === 0 ? "✓ No security vulnerabilities mapped against release baselines." :
   `${_saList.length} distinct advisor${_saList.length !== 1 ? 'ies' : 'y'}, most severe first.\n\n` +
-  _saList.map((g, n) => `${n + 1}. CVE: ${g.s.cve || g.s.id} [Severity: ${(g.s.severity || '').toUpperCase()}] -- ${g.systems.length} system${g.systems.length !== 1 ? 's' : ''}
+  _saList.map((g, n) => `${n + 1}. ${_advIsNotice(g.s) ? 'NOTICE' : 'ADVISORY'}: ${_advDisplay(g.s)} [Severity: ${(g.s.severity || '').toUpperCase()}] -- ${g.systems.length} system${g.systems.length !== 1 ? 's' : ''}
 - Systems: ${g.systems.join(', ')}
 - Title: ${g.s.title}
 - ${g.s.resolution ? 'Recommended action' : 'Mitigation'}: ${g.s.mitigation}

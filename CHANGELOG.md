@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.280 (2026-10-07)
+
+### Fixed
+- Findings that Active IQ last reported more than two weeks ago, on a release that already contains the fix, are hidden as resolved by an upgrade (50 findings on 28 systems in the largest fleet). The documents say how many were left out. Findings with a recent date, or no date, stay listed under the 'check in Active IQ' action.
+- Security Advisories reports name each advisory by its NetApp ID with the CVEs it covers (for example 'NTAP-20260610-0001 (9 CVEs: ...)') and say '2 advisories covering 10 CVEs' instead of '2 advisories' above a list of 10 CVE numbers. Entries that were labelled 'N/A' or with an Active IQ risk number ('NTAP-3709') now show the real advisory ID or title.
+- Knowledge-base and bug notices (for example the PFC and NVMe deallocate notes) are listed as notices, separate from security advisories, in the Security Advisories report and its summary counts.
+- An advisory entry with no advisory ID is looked up through its CVE, so it gets the same fixed-release or workaround line as every other finding instead of generic text.
+
 ## 5.6.279 (2026-10-07)
 
 ### Fixed
