@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.285";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.286";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.286",
+    date: "7 October 2026",
+    title: "SVM And LIF Summary As A Table",
+    sections: [
+      {
+        icon: "📊",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "The SVM and LIF section's Per-System Summary is one table (System, SVMs, LIFs, Protocols, Health) with one row per system. It was a line of text per system, which Word turned into a mix of bold headings and shaded blocks. In Word reports the Health column is colour-coded: green for healthy, amber for non-homed LIFs, red for LIFs down or degraded.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.285",
     date: "7 October 2026",
@@ -25301,13 +25316,12 @@ function compileSvmLifInventoryText(targetSystems) {
   out += `  Fleet Total: ${totalSvms} SVMs across ${perSystemRows.length} system${perSystemRows.length !== 1 ? 's' : ''}, ${totalLifs} LIFs — Protocol Distribution: ${pDistStr}\n`;
   out += `  Network Health: ${totalDownLifs} LIF${totalDownLifs !== 1 ? 's' : ''} down/degraded, ${totalMigratedLifs} non-homed (migrated)\n\n`;
 
+  // One table, one row per system: a line of text per system came out of Word as a mix of headings and shaded blocks.
   out += `  PER-SYSTEM SUMMARY:\n`;
-  perSystemRows.forEach(r => {
-    const healthLabel = (r.down > 0 || r.migrated > 0)
-      ? `⚠ ${[r.down > 0 ? `${r.down} down/degraded` : null, r.migrated > 0 ? `${r.migrated} non-homed` : null].filter(Boolean).join(', ')}`
-      : `✓ Healthy`;
-    out += `    ${r.name.padEnd(24)} SVMs: ${String(r.svmCount).padStart(2)}  LIFs: ${String(r.lifCount).padStart(3)}  Protocols: ${r.protocols.padEnd(20)} ${healthLabel}\n`;
-  });
+  const _healthOf = r => (r.down > 0 || r.migrated > 0)
+    ? `\u26a0 ${[r.down > 0 ? `${r.down} down/degraded` : null, r.migrated > 0 ? `${r.migrated} non-homed` : null].filter(Boolean).join(', ')}`
+    : `\u2713 Healthy`;
+  out += _dfTable(['System', 'SVMs', 'LIFs', 'Protocols', 'Health'], perSystemRows.map(r => [String(r.name).padEnd(16, '\u00a0'), r.svmCount, r.lifCount, r.protocols, _healthOf(r)])) + '\n';
 
   const systemsWithIssues = perSystemRows.filter(r => r.down > 0 || r.migrated > 0);
   if (systemsWithIssues.length > 0) {
@@ -36924,7 +36938,7 @@ const _DX_LINK_RE = /https?:\/\/[^\s<>"]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A
 // A score is green from 80%, amber from 50%, red below: the same bands as the on-screen recommendations, in darker shades that read on white paper.
 const _dxScoreColor = pct => `<w:color w:val="${pct >= 80 ? '15803D' : pct >= 50 ? 'B45309' : 'B91C1C'}"/>`;
 function _docxRuns(text, base) {
-  const out = []; const re = /(\*\*(.+?)\*\*)|(`([^`]+)`)|((?:^|(?<=[\s(]))_(.+?)_(?=[\s).,;:]|$))|(\[Score (\d+)%[^\]]*\])|(Active IQ score (\d+)%)|(\{\{score:(\d+)\}\})/g; let last = 0, m;
+  const out = []; const re = /(\*\*(.+?)\*\*)|(`([^`]+)`)|((?:^|(?<=[\s(]))_(.+?)_(?=[\s).,;:]|$))|(\[Score (\d+)%[^\]]*\])|(Active IQ score (\d+)%)|(\{\{score:(\d+)\}\})|(\u2713 Healthy)|(\u26a0 \d+ (?:down\/degraded|non-homed)(?:, \d+ (?:down\/degraded|non-homed))*)/g; let last = 0, m;
   const plain = (t, extra) => t ? `<w:r><w:rPr>${extra || ''}${base || ''}</w:rPr><w:t xml:space="preserve">${_xe(t)}</w:t></w:r>` : '';
   const run = (t, extra, code) => {   // plain text: any URL, bare NetApp/web address or e-mail in it becomes a clickable link
     if (!t) return '';
@@ -36941,7 +36955,7 @@ function _docxRuns(text, base) {
     }
     return o + plain(t.slice(at), extra);
   };
-  while ((m = re.exec(text))) { out.push(run(text.slice(last, m.index))); if (m[2] != null) out.push(run(m[2], '<w:b/>')); else if (m[4] != null) out.push(run(m[4], '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="18"/>', true)); else if (m[7] != null) out.push(run(m[7], '<w:b/>' + _dxScoreColor(+m[8]))); else if (m[9] != null) { out.push(run('Active IQ score ')); out.push(run(m[10] + '%', '<w:b/>' + _dxScoreColor(+m[10]))); } else if (m[11] != null) out.push(run(m[12] + '%', '<w:b/>' + _dxScoreColor(+m[12]))); else out.push(run(m[6], '<w:i/>')); last = m.index + m[0].length; }
+  while ((m = re.exec(text))) { out.push(run(text.slice(last, m.index))); if (m[2] != null) out.push(run(m[2], '<w:b/>')); else if (m[4] != null) out.push(run(m[4], '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/><w:sz w:val="18"/>', true)); else if (m[7] != null) out.push(run(m[7], '<w:b/>' + _dxScoreColor(+m[8]))); else if (m[9] != null) { out.push(run('Active IQ score ')); out.push(run(m[10] + '%', '<w:b/>' + _dxScoreColor(+m[10]))); } else if (m[11] != null) out.push(run(m[12] + '%', '<w:b/>' + _dxScoreColor(+m[12]))); else if (m[13] != null) out.push(run(m[13], '<w:b/>' + '<w:color w:val="15803D"/>')); else if (m[14] != null) out.push(run(m[14], '<w:b/>' + `<w:color w:val="${/down/.test(m[14]) ? 'B91C1C' : 'B45309'}"/>`)); else out.push(run(m[6], '<w:i/>')); last = m.index + m[0].length; }
   out.push(run(text.slice(last))); return out.join('');
 }
 
