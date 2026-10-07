@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.278 (2026-10-07)
+
+### Fixed
+- Advisories matched to a system by software version are no longer listed when the installed release already contains the fix. The local advisory database holds some entries with a placeholder range ('ONTAP 9.0 up to current, check advisory'), which made every ONTAP version look affected, so systems on 9.16.1P13 were listed for fixes released in 9.16.1P4. ARIA now compares the installed release with the fixed releases in NetApp's own advisory (fetched automatically) and drops those advisories. The documents say how many were left out and why. Findings that Active IQ itself raised stay listed and say what to confirm.
+
 ## 5.6.277 (2026-10-07)
 
 ### Added

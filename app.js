@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.277";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.278";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.278",
+    date: "7 October 2026",
+    title: "Advisories Already Fixed On The System",
+    sections: [
+      {
+        icon: "🛡️",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Advisories matched to a system by software version are no longer listed when the installed release already contains the fix. The local advisory database holds some entries with a placeholder range ('ONTAP 9.0 up to current, check advisory'), which made every ONTAP version look affected, so systems on 9.16.1P13 were listed for fixes released in 9.16.1P4. ARIA now compares the installed release with the fixed releases in NetApp's own advisory (fetched automatically) and drops those advisories. The documents say how many were left out and why. Findings that Active IQ itself raised stay listed and say what to confirm.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.277",
     date: "7 October 2026",
@@ -19967,7 +19982,7 @@ function riskResolution(sys, r) {
 function _riskResolution(sys, r) {
   const fam = _platformFamily(sys), advId = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)), rec = advId ? ADVISORY_RES[advId] : null;
   const cur = _rrCurrentVersion(sys, fam), prod = _famProduct(fam), desc = String(r.description || '').replace(/\s+/g, ' ').trim();
-  const res = { kind: 'review', summary: '', minVersion: '', fixed: false, product: prod, current: cur ? cur.text : '', workaround: '', applies: null, advisoryId: advId ? advId.toUpperCase() : '', link: r.advisoryUrl || '' };
+  const res = { kind: 'review', summary: '', minVersion: '', fixed: false, cleared: false, product: prod, current: cur ? cur.text : '', workaround: '', applies: null, advisoryId: advId ? advId.toUpperCase() : '', link: r.advisoryUrl || '' };
   const app = advId ? _advApplicability(sys, advId) : { applies: null, products: [] };
   res.applies = app.applies;
   if (app.applies === false) {
@@ -19997,7 +20012,7 @@ function _riskResolution(sys, r) {
   const parts = [];
   if (fixVersions.length) {
     const f = _advPickFix(cur, fixVersions);
-    if (f.pick && f.already) { res.kind = 'review'; res.minVersion = `${prod} ${f.pick.text}`; parts.push(f.newer ? `The advisory lists fixes only up to ${prod} ${f.pick.text}; the installed ${cur.text} is newer, so this should no longer apply. Confirm in Active IQ, then acknowledge or close the finding` : `Installed ${prod} ${cur.text} is at or beyond the fixed release ${f.pick.text}; confirm Active IQ clears the finding on its next AutoSupport`); }
+    if (f.pick && f.already) { res.kind = 'review'; res.cleared = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(f.newer ? `The advisory lists fixes only up to ${prod} ${f.pick.text}; the installed ${cur.text} is newer, so this should no longer apply. Confirm in Active IQ, then acknowledge or close the finding` : `Installed ${prod} ${cur.text} is at or beyond the fixed release ${f.pick.text}; confirm Active IQ clears the finding on its next AutoSupport`); }
     else if (f.pick) { res.kind = 'upgrade'; res.fixed = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(`Upgrade ${prod} to at least ${f.pick.text}${cur ? ` (now ${cur.text})` : ''}`); }
   } else if (/FIRMWARE_UPGRADE/.test(r.fixAction || '')) {
     res.kind = 'firmware'; parts.push(`Update ${(RESOLUTION_RULES.firmwareLabels || {})[r.fixActionSub] || (RESOLUTION_RULES.firmwareLabels || {}).NONE || 'firmware'} to the current release`);
@@ -20046,11 +20061,12 @@ function _rrGroupLines(pairs) {
 }
 // findings left out because their advisory affects other products only (Unified Manager ...): one sentence for the documents
 function _rrNaText(systems) {
-  let n = 0; const adv = new Set();
-  (systems || []).forEach(s => (s.risksNotApplicable || []).forEach(r => { n++; const id = _advIdOf(r); if (id) adv.add(id.toUpperCase()); }));
-  if (!n) return '';
+  let n = 0, cl = 0; const adv = new Set();
+  (systems || []).forEach(s => { (s.risksNotApplicable || []).forEach(r => { n++; const id = _advIdOf(r); if (id) adv.add(id.toUpperCase()); }); cl += (s.bulletinsCleared || []).length; });
+  const clText = cl ? `${cl} advisor${cl !== 1 ? 'ies' : 'y'} matched to these systems by software version ${cl !== 1 ? 'were' : 'was'} also left out: the installed release is at or beyond the fixed release in NetApp's advisory.` : '';
+  if (!n) return clText;
   const ex = [...adv].sort().slice(0, 3).join(', ');
-  return `${n} finding${n !== 1 ? 's' : ''} that Active IQ attached to these systems (${adv.size} advisor${adv.size !== 1 ? 'ies' : 'y'}${ex ? ', for example ' + ex : ''}) ${n !== 1 ? 'are' : 'is'} left out: NetApp's advisory lists only other products (for example Active IQ Unified Manager) as affected, so there is nothing to change on these systems.`;
+  return `${n} finding${n !== 1 ? 's' : ''} that Active IQ attached to these systems (${adv.size} advisor${adv.size !== 1 ? 'ies' : 'y'}${ex ? ', for example ' + ex : ''}) ${n !== 1 ? 'are' : 'is'} left out: NetApp's advisory lists only other products (for example Active IQ Unified Manager) as affected, so there is nothing to change on these systems.${clText ? ' ' + clText : ''}`;
 }
 // the sentences ARIA itself wrote when Active IQ gave no advice ("Upgrade to ONTAP x which includes the patch"): say less than the resolution, and can disagree with it
 const _rrIsStockAdvice = r => { const x = riskResolution(null, r); return !!(x && x.summary && x.kind !== 'review' && /^(Upgrade to .* which includes the patch|Upgrade to the latest recommended OS version|Apply the corrective action per NetApp|See (the )?Security Advisory)/i.test(String((r && r.recommendation) || ''))); };
@@ -20103,12 +20119,14 @@ function _applyAdvisoryApplicability(systems) {
     // the system's advisory list (what the Security Advisories and CVE sections print) is built from the same advisories:
     // drop the ones that do not apply here, and put the resolution (not the generic "see the advisory") on the rest
     if (Array.isArray(s.securityBulletins) && s.securityBulletins.length) {
+      s.bulletinsCleared = [];
       const keepB = [];
       s.securityBulletins.forEach(b => {
         const ntap = String(b.ntapId || b.advisoryId || '').toLowerCase() || ((String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i) || [''])[0].toLowerCase();
         const pseudo = { advisoryId: ntap, advisoryUrl: b.link || '', description: b.title || '', cveDetails: b.cve ? [{ id: b.cve }] : [], fixAction: '', fixedVersions: [] };
         const x = ntap ? riskResolution(s, pseudo) : null;
         if (x && x.kind === 'na') return;
+        if (x && x.cleared && b.source === 'db') { (s.bulletinsCleared = s.bulletinsCleared || []).push(ntap || b.id); return; }   // the database's version range says 'affected'; the advisory's own fixed releases say this system has the fix
         const generic = !b.mitigation || /^(none at this time|consult netapp|refer to the netapp advisory|see (the )?security advisory|upgrade to recommended)/i.test(String(b.mitigation).trim());
         if (x && x.summary && (x.kind !== 'review' || generic)) { b.mitigation = x.summary; b.resolution = x.summary; if (x.minVersion) b.fixedIn = b.fixedIn || x.minVersion; }
         else if (generic) b.mitigation = 'No workaround is published; the fix is a software upgrade. See the advisory for the fixed releases';
