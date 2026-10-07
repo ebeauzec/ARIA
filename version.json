@@ -1,8 +1,8 @@
 {
-  "version": "5.6.272",
+  "version": "5.6.273",
   "major": 5,
   "minor": 6,
-  "patch": 272,
+  "patch": 273,
   "date": "2026-10-07",
-  "notes": "SGF6024 rear panel, software-node note, StorageGRID models checked."
+  "notes": "StorageGRID rear-panel model badge shows the appliance model."
 }
