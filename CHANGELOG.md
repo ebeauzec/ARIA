@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.272 (2026-10-07)
+
+### Fixed
+- SGF6024 appliances had no rear panel; they are now drawn as an SG6000-CN plus two EF570 storage controllers, with the interconnect diagram.
+- Software nodes (VMware, KVM, bare metal) say so instead of "appliance model not identified"; a storage controller whose grid is not in scope says why the model is unknown.
+- Every appliance model in the live fleet (SG1000, SG5712, SG5760, SG5812, SG5860, SG6060, SG6160, SGF6024) was checked against its drawing.
+
 ## 5.6.271 (2026-10-07)
 
 ### Fixed
