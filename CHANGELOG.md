@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.289 (2026-10-07)
+
+### Changed
+- Upgrade targets stay on the release line the system runs (newest known release on it), with Active IQ's cross-line recommendation shown as an option. Out-of-support lines still use Active IQ's target.
+
 ## 5.6.288 (2026-10-07)
 
 ### Changed
