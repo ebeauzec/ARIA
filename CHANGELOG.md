@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.286 (2026-10-07)
+
+### Changed
+- The SVM and LIF section's Per-System Summary is one table (System, SVMs, LIFs, Protocols, Health) with one row per system. It was a line of text per system, which Word turned into a mix of bold headings and shaded blocks. In Word reports the Health column is colour-coded: green for healthy, amber for non-homed LIFs, red for LIFs down or degraded.
+
 ## 5.6.285 (2026-10-07)
 
 ### Changed

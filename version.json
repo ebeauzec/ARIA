@@ -1,8 +1,8 @@
 {
-  "version": "5.6.285",
+  "version": "5.6.286",
   "major": 5,
   "minor": 6,
-  "patch": 285,
+  "patch": 286,
   "date": "2026-10-07",
-  "notes": "Scores in Word reports are bold and colour-coded."
+  "notes": "SVM and LIF per-system summary is a table with colour-coded health."
 }
