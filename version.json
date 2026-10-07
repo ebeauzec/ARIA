@@ -1,8 +1,8 @@
 {
-  "version": "5.6.279",
+  "version": "5.6.280",
   "major": 5,
   "minor": 6,
-  "patch": 279,
+  "patch": 280,
   "date": "2026-10-07",
-  "notes": "Logic audit: non-existent advisories, impossible capacity figures, up-to-date vs upgrade-needed."
+  "notes": "Stale findings hidden; advisories named by ID with their CVEs; KB notices separate."
 }
