@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.284 (2026-10-07)
+
+### Fixed
+- NetApp advisory data is refreshed only when NetApp changes it. Each stored advisory remembers the date NetApp last updated it; the daily index of NetApp's advisories carries the current dates, and only advisories that are new or whose date differs are fetched again. Before, an advisory was stored once and never refreshed, so a fix or severity NetApp added later would never have appeared.
+- The advisory loader retries (up to five times, 30 seconds apart) when the server is still starting or unreachable, instead of giving up until the next page load.
+
 ## 5.6.283 (2026-10-07)
 
 ### Fixed
