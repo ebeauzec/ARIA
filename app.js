@@ -45,9 +45,29 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.275";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.276";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.276",
+    date: "7 October 2026",
+    title: "One Answer In Every Document",
+    sections: [
+      {
+        icon: "🧭",
+        label: "Fixed -- Contradictions Between Documents",
+        color: "#22c55e",
+        items: [
+          "One upgrade target per system, used by every document. The highest of the minimum fixed releases of a system's findings, each taken on the branch it runs, is the system's target (for example 9.16.1P9 instead of separate actions for 9.15.1P16, 9.15.1P19, 9.15.1P20 and 9.16.1P9). The Corrective Actions in the Email, Handover, MSP, QBR, Problem Statements, Solution Proposal, Success Plan and Risk & Remediation documents, the Security Fix Floor, each finding's resolution line, the Security Brief CVE matrix and the OS Upgrade Roadmap all state that same figure. Active IQ's recommended release is shown beside it as a separate, labelled figure.",
+          "A finding with no published fix no longer proposes a different upgrade than the system's target: it names the target and says Active IQ's recommended release separately.",
+          "Security Fix Floor is stated per product line (ONTAP, SANtricity OS, StorageGRID) instead of one 'highest requirement' across products, and the cross-site parity figure is labelled as the highest of Active IQ's recommended releases.",
+          "'Systems' means the systems Active IQ monitors in every document. StorageGRID nodes named only by a grid's node list are stated beside the count, not added to it (the Sales Proposal and Security Brief used to say 11 where other documents said 8).",
+          "Advisories named by a system's own advisory list are fetched too, so no document prints 'None at this time' as the fix for a CVE; database text that is itself an upgrade instruction is no longer labelled a workaround.",
+          "The Prioritized Technical Risks and Security Advisories reports state how many findings were left out as not applicable and show the recommended action per issue. A remediation plan with no steps from Active IQ is built from the resolution and the guidance it links instead of showing an empty list.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.275",
     date: "7 October 2026",
@@ -19458,6 +19478,9 @@ function _dfMinFixLines(cveId, advisoryUrl, systemNames, allSystems) {
 // actually fixed). Returns null when no critical/high CVE on this system has a
 // published fixed release, or the system isn't ONTAP/StorageGRID/E-Series.
 function _dfCriticalHighFixFloor(sys) {
+  { const t = _sysFixTarget(sys, { sev: ['critical', 'high'], security: true });
+    if (!t) return null;
+    return { product: t.product, version: t.vtext, cveIds: t.drivers.map(r => _rrCveOf(r) || String(r.advisoryId || '').toUpperCase() || String(r.description || '').slice(0, 60)).filter(Boolean), alreadyMet: false }; }
   const fam = _platformFamily(sys), key = fam === 'storagegrid' ? 'storagegrid' : fam === 'eseries' ? 'eseries' : fam === 'ontap' ? 'ontap' : null;
   if (!key) return null;
   const cur = _dfVerParse(fam === 'eseries' ? (sys.santricityVersion || sys.ontapVersion) : sys.ontapVersion);
@@ -19506,7 +19529,7 @@ function _dfCriticalHighFixFloorSummary(systems) {
     const conflict = !!(cqvVer && floorVer && _dfVerCmp(cqvVer, floorVer) < 0);
     rows.push({ systemName: s.systemName || s.serialNumber, customerName: s.customerName, platform: s.platform || s.model,
       currentVersion: (_platformFamily(s) === 'eseries' ? (s.santricityVersion || s.ontapVersion) : s.ontapVersion) || 'Unknown',
-      fixedIn: floor.version, cveIds: floor.cveIds, cqv, conflict });
+      fixedIn: floor.version, product: floor.product || '', cveIds: floor.cveIds, cqv, conflict });
   });
   if (!rows.length) return null;
   rows.sort((a, b) => (b.conflict - a.conflict) || a.systemName.localeCompare(b.systemName));
@@ -19861,16 +19884,49 @@ const _rrMemo = new WeakMap();
 const _rrOwner = new WeakMap();   // risk -> the system it was raised on (set when advisory applicability is applied)
 // -> { kind, summary, minVersion, current, workaround, applies, advisoryId, link }
 //    kind: na | upgrade | firmware | workaround | config | hardware | review
+const _rrBaseMemo = new WeakMap(), _rrTargetMemo = new WeakMap();
+function _rrBase(sys, r) {
+  const hit = _rrBaseMemo.get(r); if (hit && hit._v === _advResVersion) return hit;
+  const out = _riskResolution(sys || {}, r); out._v = _advResVersion; _rrBaseMemo.set(r, out); return out;
+}
+// ONE target release per system: the highest of the minimum fixed releases of all its findings, each taken on the branch the system runs
+// (so 9.15.1P16, 9.15.1P19 and 9.15.1P20 for three findings are one upgrade, to 9.15.1P20). Every document states this same figure; Active IQ's own
+// recommended release (sys.upgrades.targetVersion) is a different, labelled figure. opts.sev limits it to those severities, opts.security to advisories/CVEs.
+function _sysFixTarget(sys, opts) {
+  if (!sys) return null; opts = opts || {};
+  const key = (opts.sev ? opts.sev.join(',') : '') + (opts.security ? 's' : '') + '|' + _advResVersion + '|' + (sys.risks || []).length;
+  const memo = _rrTargetMemo.get(sys) || {}; if (key in memo) return memo[key];
+  let best = null, drivers = [];
+  (sys.risks || []).forEach(r => {
+    if (opts.sev && !opts.sev.includes(String(r.severity || '').toLowerCase())) return;
+    const b = _rrBase(sys, r); if (b.kind !== 'upgrade' || !b.fixed || !b.minVersion) return;
+    if (opts.security && !(b.advisoryId || _spIsCve(r) || (r.cveDetails || []).length)) return;
+    const v = _dfVerParse(b.minVersion); if (!v) return;
+    if (!best || _dfVerCmp(v, best.v) > 0) { best = { v, product: b.product }; drivers = [r]; } else if (_dfVerCmp(v, best.v) === 0) drivers.push(r);
+  });
+  const out = best ? { product: best.product, vtext: best.v.text, version: best.product + ' ' + best.v.text, count: drivers.length, drivers } : null;
+  memo[key] = out; _rrTargetMemo.set(sys, memo); return out;
+}
 function riskResolution(sys, r) {
   if (!r) return null;
   if (!sys) sys = _rrOwner.get(r) || {};
-  const hit = _rrMemo.get(r); if (hit && hit._v === _advResVersion) return hit;
-  const out = _riskResolution(sys || {}, r); out._v = _advResVersion; _rrMemo.set(r, out); return out;
+  const hit = _rrMemo.get(r); if (hit && hit._v === _advResVersion && hit._n === (sys.risks || []).length) return hit;
+  let out = _rrBase(sys, r);
+  if (out.kind === 'upgrade' && !out.fixed && out.minVersion) {   // Active IQ asks for an upgrade but NetApp publishes no fixed release for this finding
+    const t = _sysFixTarget(sys), aiq = out.minVersion.replace(/^\S+(?: OS)?\s/, '');
+    out = t ? { ...out, summary: `Upgrade ${t.product} to at least ${t.vtext}, the release that clears every finding on this system with a published fix; no fixed release is published for this finding, and Active IQ's recommended release is ${aiq}`, systemTarget: t.version }
+            : { ...out, summary: out.summary.replace(/, Active IQ's recommended release; no fixed release is published for this finding/, ` (Active IQ's recommended release); no fixed release is published for this finding`) };
+  }
+  if (out.kind === 'upgrade' && out.fixed && out.minVersion) {
+    const t = _sysFixTarget(sys), mine = _dfVerParse(out.minVersion);
+    if (t && mine && _dfVerCmp(_dfVerParse(t.version), mine) > 0) out = { ...out, summary: out.summary.replace(/(\s\(disruptive: needs an outage window\))?$/, '') + `. All findings on this system clear at ${t.vtext}` + (out.summary.includes('(disruptive') ? ' (disruptive: needs an outage window)' : ''), systemTarget: t.version };
+  }
+  out = { ...out, _v: _advResVersion, _n: (sys.risks || []).length }; _rrMemo.set(r, out); return out;
 }
 function _riskResolution(sys, r) {
   const fam = _platformFamily(sys), advId = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)), rec = advId ? ADVISORY_RES[advId] : null;
   const cur = _rrCurrentVersion(sys, fam), prod = _famProduct(fam), desc = String(r.description || '').replace(/\s+/g, ' ').trim();
-  const res = { kind: 'review', summary: '', minVersion: '', current: cur ? cur.text : '', workaround: '', applies: null, advisoryId: advId ? advId.toUpperCase() : '', link: r.advisoryUrl || '' };
+  const res = { kind: 'review', summary: '', minVersion: '', fixed: false, product: prod, current: cur ? cur.text : '', workaround: '', applies: null, advisoryId: advId ? advId.toUpperCase() : '', link: r.advisoryUrl || '' };
   const app = advId ? _advApplicability(sys, advId) : { applies: null, products: [] };
   res.applies = app.applies;
   if (app.applies === false) {
@@ -19901,7 +19957,7 @@ function _riskResolution(sys, r) {
   if (fixVersions.length) {
     const f = _advPickFix(cur, fixVersions);
     if (f.pick && f.already) { res.kind = 'review'; res.minVersion = `${prod} ${f.pick.text}`; parts.push(f.newer ? `The advisory lists fixes only up to ${prod} ${f.pick.text}; the installed ${cur.text} is newer, so this should no longer apply. Confirm in Active IQ, then acknowledge or close the finding` : `Installed ${prod} ${cur.text} is at or beyond the fixed release ${f.pick.text}; confirm Active IQ clears the finding on its next AutoSupport`); }
-    else if (f.pick) { res.kind = 'upgrade'; res.minVersion = `${prod} ${f.pick.text}`; parts.push(`Upgrade ${prod} to at least ${f.pick.text}${cur ? ` (now ${cur.text})` : ''}`); }
+    else if (f.pick) { res.kind = 'upgrade'; res.fixed = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(`Upgrade ${prod} to at least ${f.pick.text}${cur ? ` (now ${cur.text})` : ''}`); }
   } else if (/FIRMWARE_UPGRADE/.test(r.fixAction || '')) {
     res.kind = 'firmware'; parts.push(`Update ${(RESOLUTION_RULES.firmwareLabels || {})[r.fixActionSub] || (RESOLUTION_RULES.firmwareLabels || {}).NONE || 'firmware'} to the current release`);
   } else if (r.fixAction === 'OS_UPGRADE' || (bug && !isSecurity)) {
@@ -19909,6 +19965,7 @@ function _riskResolution(sys, r) {
     if (target) { res.minVersion = `${prod} ${target}`; parts.push(`Upgrade ${prod} to ${target}${cur ? ` (now ${cur.text})` : ''}, Active IQ's recommended release${bug ? `; check that it contains the fix for bug ${bug[2]}` : '; no fixed release is published for this finding'}`); }
     else parts.push(`Upgrade ${prod} to a release that contains the fix${bug ? ' for bug ' + bug[2] : ''}`);
   }
+  if (res.workaround && !parts.length && /^(upgrade|update|apply|install)\b/i.test(res.workaround)) { res.kind = 'upgrade'; parts.push(res.workaround.replace(/\.$/, '')); res.workaround = ''; }
   if (res.workaround) {
     const hasFix = parts.some(p => /^(Upgrade|Update|Installed)/.test(p));
     if (!hasFix) res.kind = 'workaround';
@@ -19923,9 +19980,10 @@ function _riskResolution(sys, r) {
     const g = (Array.isArray(r.guidance) ? r.guidance : []).map(x => x && x.displayName).filter(Boolean)[0];
     const sub = r.fixActionSub && r.fixActionSub !== 'NONE' ? r.fixActionSub : '';
     const via = g ? `; steps in NetApp guidance "${_rrClip(g, 90)}"` : '';
-    if (r.fixAction === 'SW_CONFIG_CHANGE') { res.kind = 'config'; parts.push((act || `Change the setting named in the finding: ${_rrClip(desc, 120)}`) + (act ? via : via)); }
-    else if (r.fixAction === 'HW_CONFIG_CHANGE') { res.kind = 'hardware'; parts.push((act || `Change the hardware configuration named in the finding: ${_rrClip(desc, 120)}`) + via); }
-    else if (r.fixAction === 'HW_REPLACEMENT') { res.kind = 'hardware'; parts.push((act || `Replace or retire the hardware named in the finding: ${_rrClip(desc, 120)}`) + via); }
+    const noSteps = (what) => `Active IQ classes this as ${what} but publishes no steps: search the NetApp Knowledge Base for "${_rrClip(desc, 90)}" or raise a support case`;
+    if (r.fixAction === 'SW_CONFIG_CHANGE') { res.kind = 'config'; parts.push(act ? act + via : (g ? `Follow NetApp guidance "${_rrClip(g, 100)}" to correct the configuration` : noSteps('a software configuration change'))); }
+    else if (r.fixAction === 'HW_CONFIG_CHANGE') { res.kind = 'hardware'; parts.push(act ? act + via : (g ? `Follow NetApp guidance "${_rrClip(g, 100)}" to correct the hardware configuration` : noSteps('a hardware configuration change'))); }
+    else if (r.fixAction === 'HW_REPLACEMENT') { res.kind = 'hardware'; parts.push(act ? act + via : (g ? `Follow NetApp guidance "${_rrClip(g, 100)}" to replace or retire the hardware` : noSteps('a hardware replacement'))); }
     else if (act) { res.kind = /^(upgrade|update)/i.test(act) ? 'upgrade' : 'config'; parts.push(act + via); }
     else if (isSecurity) parts.push(`Review advisory${res.advisoryId ? ' ' + res.advisoryId : ''} for the fix; Active IQ lists no fixed release or workaround`);
     else parts.push(g ? `Follow NetApp guidance "${_rrClip(g, 110)}"${sub ? ' (' + sub.toLowerCase() + ')' : ''}` : `No specific change is published for this finding; review it with NetApp support`);
@@ -19955,6 +20013,15 @@ function _rrNaText(systems) {
 }
 // the sentences ARIA itself wrote when Active IQ gave no advice ("Upgrade to ONTAP x which includes the patch"): say less than the resolution, and can disagree with it
 const _rrIsStockAdvice = r => { const x = riskResolution(null, r); return !!(x && x.summary && x.kind !== 'review' && /^(Upgrade to .* which includes the patch|Upgrade to the latest recommended OS version|Apply the corrective action per NetApp|See (the )?Security Advisory)/i.test(String((r && r.recommendation) || ''))); };
+function _rrSteps(sys, r, plan) {
+  if (plan && Array.isArray(plan.steps) && plan.steps.length) return plan.steps;
+  const steps = [], x = riskResolution(sys, r);
+  if (x && x.summary) steps.push(x.summary);
+  (Array.isArray(r && r.guidance) ? r.guidance : []).slice(0, 3).forEach(g => steps.push(`Read the NetApp guidance: ${g.displayName}${g.url ? ' (' + g.url + ')' : ''}`));
+  if (r && r.advisoryUrl && !/\/advisory\/?(\?|$)/.test(r.advisoryUrl)) steps.push(`Review the advisory: ${r.advisoryUrl}`);
+  if (steps.length) steps.push('Confirm in Active IQ that the finding clears after the next AutoSupport');
+  return steps.length ? steps : ['Review the finding with NetApp Support; Active IQ gives no specific steps for it'];
+}
 const _rrText = (sys, r) => { const x = riskResolution(sys, r); return x ? x.summary : ''; };
 const _rrKindLabel = k => ({ upgrade: 'UPGRADE', firmware: 'FIRMWARE', workaround: 'WORKAROUND', config: 'CONFIGURATION', hardware: 'HARDWARE', na: 'NOT APPLICABLE', review: 'REVIEW' }[k] || 'RESOLUTION');
 const _rrHtml = (sys, r) => {
@@ -19962,6 +20029,18 @@ const _rrHtml = (sys, r) => {
   const col = x.kind === 'na' ? 'var(--text-muted)' : x.kind === 'upgrade' || x.kind === 'firmware' ? 'var(--accent-cyan)' : 'var(--status-normal)';
   return `<div style="font-size:0.78rem;margin-top:5px;line-height:1.45;"><span style="font-size:0.6rem;font-weight:700;letter-spacing:0.06em;color:${col};border:1px solid ${col};border-radius:3px;padding:0 4px;margin-right:6px;">${_rrKindLabel(x.kind)}</span><span style="color:var(--text-primary);">${_esc(x.summary)}</span></div>`;
 };
+// the same single target per system, as lines for the documents that list findings one by one
+function _dfSystemTargetsText(systems) {
+  const g = new Map();
+  (systems || []).forEach(s => {
+    const t = _sysFixTarget(s); if (!t) return;
+    const cur = _rrCurrentVersion(s, _platformFamily(s)), aiq = s.upgrades && s.upgrades.targetVersion && s.upgrades.targetVersion !== 'Up to Date' ? s.upgrades.targetVersion : '';
+    let e = g.get(t.version); if (!e) { e = { names: [], aiq: new Set() }; g.set(t.version, e); }
+    e.names.push({ name: s.systemName || s.serialNumber, cur: cur ? cur.text : 'unknown' }); if (aiq) e.aiq.add(aiq);
+  });
+  if (!g.size) return '';
+  return [...g.entries()].sort((x, y) => x[0].localeCompare(y[0], undefined, { numeric: true })).map(([v, e]) => `    ${v} or later -- ${_dfGroupNow(e.names)}${e.aiq.size ? ` (Active IQ recommends ${[...e.aiq].sort().join(' / ')})` : ''}`).join('\n');
+}
 // Findings Active IQ attached to a system although the advisory affects other products only are moved to s.risksNotApplicable,
 // so every count, score and document stops treating them as work for this system. Idempotent: reruns whenever advisory data arrives.
 function _recomputeStatusFromRisks(s) {
@@ -19989,7 +20068,9 @@ function _applyAdvisoryApplicability(systems) {
         const pseudo = { advisoryId: ntap, advisoryUrl: b.link || '', description: b.title || '', cveDetails: b.cve ? [{ id: b.cve }] : [], fixAction: '', fixedVersions: [] };
         const x = ntap ? riskResolution(s, pseudo) : null;
         if (x && x.kind === 'na') return;
-        if (x && x.summary && x.kind !== 'review') { b.mitigation = x.summary; b.resolution = x.summary; if (x.minVersion) b.fixedIn = b.fixedIn || x.minVersion; }
+        const generic = !b.mitigation || /^(none at this time|consult netapp|refer to the netapp advisory|see (the )?security advisory|upgrade to recommended)/i.test(String(b.mitigation).trim());
+        if (x && x.summary && (x.kind !== 'review' || generic)) { b.mitigation = x.summary; b.resolution = x.summary; if (x.minVersion) b.fixedIn = b.fixedIn || x.minVersion; }
+        else if (generic) b.mitigation = 'No workaround is published; the fix is a software upgrade. See the advisory for the fixed releases';
         keepB.push(b);
       });
       if (keepB.length !== s.securityBulletins.length) s.securityBulletins = keepB;
@@ -20006,6 +20087,7 @@ async function loadAdvisoryResolutions(systems) {
     const cveToId = {};   // findings that name a CVE but no advisory: look the advisory up through the local advisory database
     (typeof NETAPP_SECURITY_BULLETIN_DB !== 'undefined' ? NETAPP_SECURITY_BULLETIN_DB : []).forEach(b => (b.cve || []).forEach(c => { cveToId[String(c).toUpperCase()] = String(b.id || '').toLowerCase(); }));
     (systems || []).forEach(s => (s.risks || []).concat(s.risksNotApplicable || []).forEach(r => { const a = _advIdOf(r) || cveToId[_rrCveOf(r)] || ''; if (/^ntap-\d{8}-\d{4}$/i.test(a)) ids.add(a.toLowerCase()); }));
+    (systems || []).forEach(s => (s.securityBulletins || []).forEach(b => { const m = (String(b.ntapId || '') + ' ' + String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i); if (m) ids.add(m[0].toLowerCase()); }));
     if (!ids.size) return;
     for (let i = 0; i < 60; i++) {
       const resp = await fetch('/api/advisory-resolutions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...ids] }), cache: 'no-store' });
@@ -20198,7 +20280,8 @@ function _dfStorageGridView(systems) {
 // Effective system count: StorageGRID nodes counted from the grid (installed node count / topology), not just the
 // nodes that send AutoSupport, so totals reflect the real estate. Non-StorageGRID systems count one each.
 function _dfSgExtraNodes(systems) { return _dfStorageGridView(systems).extraNodes; }
-function _dfEffectiveSystemCount(systems) { return (systems || []).length + _dfSgExtraNodes(systems); }
+// "Systems" means the systems Active IQ monitors, in every document. StorageGRID nodes that only a grid's own node list names are stated beside the count, never added to it.
+function _dfEffectiveSystemCount(systems) { return (systems || []).length; }
 // Platform mix lines: { label, count }. StorageGRID is broken out by node role / appliance model from the grid roster.
 function _dfPlatformMix(systems) {
   const mix = {}; const add = (k, n) => { mix[k] = (mix[k] || 0) + n; };
@@ -23412,7 +23495,9 @@ function _filterAndDeduplicateRisks(risks, targetSystems) {
     }
 
     { const _rx = riskResolution(sys, r);
-      if (_rx && _rx.summary && ['upgrade', 'firmware', 'workaround', 'config', 'hardware'].includes(_rx.kind)) { fixLabel = _rx.summary.replace(/ \(now [^)]*\)/g, ''); fixKey = 'res:' + fixLabel; } }
+      if (_rx && _rx.summary && ['upgrade', 'firmware', 'workaround', 'config', 'hardware'].includes(_rx.kind)) {
+        const _t = _rx.kind === 'upgrade' && _rx.fixed ? _sysFixTarget(sys) : null;
+        fixLabel = _t ? `Upgrade ${_t.product} to at least ${_t.vtext}` : _rx.summary.replace(/ \(now [^)]*\)/g, '').replace(/\. All findings on this system clear at .*$/, ''); fixKey = 'res:' + fixLabel; } }
     if (fixGroups.has(fixKey)) {
       const group = fixGroups.get(fixKey);
       group.findings.push({
@@ -25343,7 +25428,7 @@ DATE GENERATED       : ${new Date().toISOString().split('T')[0]}
 ACCOUNT TEAM         : TAM: ${activeTAMOwner} | Account Manager: ${activeAMOwner}
 SUPPORT CASE HEALTH  : ${avgCsat} / 10.0 (Support & Account Hygiene)
 ENVIRONMENT HEALTH   : ${allRisks.length > 0 ? 'WARNING - Action Required' : 'OPTIMAL / COMPLIANT'}
-SYSTEMS IN SCOPE     : ${_effCount}${_effCount !== systemCount ? ` (${systemCount} reporting AutoSupport directly; the rest are StorageGRID nodes counted from their grid)` : ''}
+SYSTEMS IN SCOPE     : ${_effCount}${_dfSgExtraNodes(targetSystems) ? ` (plus ${_dfSgExtraNodes(targetSystems)} further StorageGRID node${_dfSgExtraNodes(targetSystems) !== 1 ? 's' : ''} listed by their grid, not counted as systems)` : ''}
 
 --------------------------------------------------------------------------------
 1. EXECUTIVE SUMMARY & VALUE ALIGNMENT [METRICS]
@@ -25391,7 +25476,7 @@ ${_dfTable(['Critical', 'High', 'Medium'], [[critCount, highCount, medCount]])}
   - Motherboard Firmware Drift: ${mbDrift.length} system${mbDrift.length !== 1 ? 's' : ''} below recommended version
   - AutoSupport Issues: ${asupIssues.length}
   - Support Cases: ${(() => { const cc = _dfCaseCounts(allSupportCases); return `${cc.open} open, ${cc.closed} closed (${cc.total} total)`; })()}
-${(() => { const ff = _dfCriticalHighFixFloorSummary(targetSystems); if (!ff) return ''; const worst = ff.rows.reduce((a, r) => !a || _dfVerCmp(_dfVerParse(r.fixedIn), _dfVerParse(a.fixedIn)) > 0 ? r : a, null);
+${(() => { const ff = _dfCriticalHighFixFloorSummary(targetSystems); if (!ff) return ''; const _prodBest = {}; ff.rows.forEach(r => { const k = r.product || 'ONTAP'; if (!_prodBest[k] || _dfVerCmp(_dfVerParse(r.fixedIn), _dfVerParse(_prodBest[k])) > 0) _prodBest[k] = r.fixedIn; }); const worst = { fixedIn: Object.entries(_prodBest).map(([k, v]) => k + ' ' + v).join(', ') };
   return `  - Security Fix Floor (Critical/High CVEs): ${_dfPlural(ff.rows.length, 'system')} below the version needed to clear all critical/high CVEs (highest requirement: ${worst.fixedIn})${ff.conflictCount > 0 ? ` -- ${_dfPlural(ff.conflictCount, 'system')} with a Customer Qualified Version set BELOW that floor (decision point for the account team)` : (ff.cqvSetCount > 0 ? ` -- ${_dfPlural(ff.cqvSetCount, 'system')} with a Customer Qualified Version set, none conflicting` : '')}`; })()}
 ${(() => { const nc = _dfCriticalHighNonCveIssuesSummary(targetSystems); if (!nc) return ''; const parity = _dfNonCveParityVersion(targetSystems);
   return `  - Critical NetApp Issues (Non-CVE): ${_dfPlural(nc.rows.length, 'system')} with ${_dfPlural(nc.totalCount, 'critical/high finding')} that don't reduce to a single required software version (hardware, firmware, configuration, or lifecycle fixes instead) -- see Section 2 / As-Built for individual findings${parity ? `. To maintain cross-site version parity, all systems for this customer should match at: ${parity.results.map(r => `${r.label} ${r.version}`).join(', ')} (the highest Active IQ-recommended target among the affected systems)` : ''}`; })()}
@@ -26915,7 +27000,7 @@ Classification: INTERNAL — ACCOUNT TRANSITION DOCUMENT
 --------------------------------------------------------------------------------
   Customer Name:      ${cleanScope}
   Domestic Parent:    ${domesticParent}
-  Total Systems:      ${total + _dfSgExtraNodes(targetSystems)}${_dfSgExtraNodes(targetSystems) ? ` (incl. ${_dfSgExtraNodes(targetSystems)} StorageGRID node${_dfSgExtraNodes(targetSystems) !== 1 ? 's' : ''} counted from their grid)` : ''}
+  Total Systems:      ${total}${_dfSgExtraNodes(targetSystems) ? ` (plus ${_dfSgExtraNodes(targetSystems)} further StorageGRID node${_dfSgExtraNodes(targetSystems) !== 1 ? 's' : ''} listed by their grid, not counted as systems)` : ''}
   Total Sites:        ${uniqueSiteNames.length}
   Site Locations:
 ${siteLines}
@@ -27218,6 +27303,7 @@ ${_kevAckLines}
   if (matrixLines.trim() === '') {
     matrixLines = '    No specific CVEs detected.\n';
   } else {
+    { const _tg = _dfSystemTargetsText(targetSystems); if (_tg) matrixLines = `    ONE UPGRADE CLEARS EVERY FINDING BELOW THAT HAS A PUBLISHED FIX. Per-CVE lines show the lowest release for that CVE alone; the release to plan for each system is:\n${_tg}\n\n` + matrixLines; }
     matrixLines = '\n' + matrixLines + '\n';
     if (cveArray.length > CVE_MATRIX_CAP) {
       matrixLines += `\n    + ${cveArray.length - CVE_MATRIX_CAP} more CVE(s) not shown -- see the Remediation Tracker for the complete list.\n`;
@@ -29063,7 +29149,7 @@ ${ff.cqvSetCount > 0 ? `  Customer Qualified Version (CQV) set on ${_dfPlural(ff
 ${(() => { const nc = _dfCriticalHighNonCveIssuesSummary(targetSystems); if (!nc) return ''; const parity = _dfNonCveParityVersion(targetSystems); return `CRITICAL NETAPP ISSUES (Non-CVE)
   ${_dfPlural(nc.rows.length, 'system')} with ${_dfPlural(nc.totalCount, 'critical/high finding')} that are NOT CVEs (hardware, firmware, lifecycle, configuration, capacity). Unlike the CVE-based Security Fix Floor above, these do not reduce to a single required software version per finding -- the fix varies per finding (drive/shelf/BMC firmware, a config change, a hardware refresh) and some findings describe a version to avoid rather than one that fixes the issue, so each finding is listed for individual review below.
 ${parity ? `  Cross-Site Version Parity Recommendation: to maintain a consistent baseline across every site for this customer (meeting or exceeding each affected system's own Active IQ recommendation), all systems should match at --
-${parity.results.map(r => `    ${r.label}: ${r.version} (highest requirement, driven by: ${r.driverSystems.join(', ')})`).join('\n')}` : ''}
+${parity.results.map(r => `    ${r.label}: ${r.version} (highest of Active IQ's recommended releases, driven by: ${r.driverSystems.join(', ')}; the minimum that clears each system's findings is the Security Fix Floor above)`).join('\n')}` : ''}
 ${nc.rows.map(r => `  SYSTEM: ${r.systemName}${r.customerName ? ` (${r.customerName})` : ''}
 ${r.items.map(it => `    - [${it.severity.toUpperCase()}/${it.category}] ${it.description}`).join('\n')}`).join('\n')}
 `; })()}
@@ -29918,7 +30004,7 @@ ${fm.perSystem.filter(s => s.pct < 60).map(s => { const gaps = []; if (!s.arp) g
   const _hwModels = [...new Set(_hwWindow.map(s => s.model || s.platform).filter(Boolean))];
   salesProposals += `\nCOMMERCIAL CONTEXT [METRICS + OWNERSHIP]
 --------------------------------------------------------------------------------
-  Estate:                      ${sysCount + _dfSgExtraNodes(targetSystems)} systems (${Object.entries((() => { const a = targetSystems.reduce((a, s) => { const f = _platformFamily(s); a[f] = (a[f] || 0) + 1; return a; }, {}); const _v = _dfStorageGridView(targetSystems); if (_v.grids.length || _v.unresolved.length) a.storagegrid = _v.nodeTotal; return a; })()).map(([f, c]) => c + ' ' + ({ ontap: 'ONTAP', eseries: 'E-Series', storagegrid: 'StorageGRID', element: 'Element OS (HCI)' }[f] || f)).join(', ')})
+  Estate:                      ${sysCount} systems (${Object.entries(targetSystems.reduce((a, s) => { const f = _platformFamily(s); a[f] = (a[f] || 0) + 1; return a; }, {})).map(([f, c]) => c + ' ' + ({ ontap: 'ONTAP', eseries: 'E-Series', storagegrid: 'StorageGRID', element: 'Element OS (HCI)' }[f] || f)).join(', ')})${(() => { const _v = _dfStorageGridView(targetSystems); return _v.nodeTotal ? `; the StorageGRID grid${_v.grids.length !== 1 ? 's have' : ' has'} ${_v.nodeTotal} node${_v.nodeTotal !== 1 ? 's' : ''} in all` : ''; })()}
   Support entitlement:         ${_contractFactsSales.active.length} active${_contractFactsSales.expired.length ? ', ' + _contractFactsSales.expired.length + ' lapsed' : ''}${_contractFactsSales.expiring90.length ? ', ' + _contractFactsSales.expiring90.length + ' expiring within 90 days' : ''}
   Hardware support ending within 24 months (or already ended): ${_hwWindow.length ? _hwWindow.length + ' system' + (_hwWindow.length !== 1 ? 's' : '') + ' (' + _hwModels.join(', ') + ')' : 'none reported'}
   Data reduction (ONTAP):      ${avgDRRatio === 'N/A' ? 'ratio not reported by Active IQ' : avgDRRatio + ':1, ' + savedTotalTB.toFixed(1) + ' TB saved'}
@@ -34104,6 +34190,7 @@ function generateActionPlan() {
           </div>
 
           <div style="font-size: 0.85rem; color: var(--text-primary); margin-bottom: 8px;"><span class="rk-tag rk-tag-finding" title="Detected on this system">FINDING</span> <strong>Issue</strong>: ${r.description}</div>
+          ${_rrHtml(typeof sys !== 'undefined' ? sys : null, r)}
           <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; background: rgba(0,0,0,0.15); padding: 10px; border-radius: var(--radius-sm);">
             <strong>Root Cause Analysis:</strong><br>${r.remediationPlan ? r.remediationPlan.cause : "Undetermined"}
           </div>
@@ -34113,7 +34200,7 @@ function generateActionPlan() {
           <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px;">
             <span class="rk-tag rk-tag-guide" title="General NetApp advice for this kind of issue, not a statement about this system">GENERAL GUIDANCE</span> <strong>Step-by-Step Remediation Plan:</strong>
             <ol style="margin-left: 20px; margin-top: 6px; font-family: monospace; line-height: 1.4;">
-              ${r.remediationPlan ? r.remediationPlan.steps.map(s => `<li>${s}</li>`).join("") : "<li>Review standard operating guidelines.</li>"}
+              ${_rrSteps(typeof sys !== 'undefined' ? sys : null, r, r.remediationPlan).map(s => `<li>${_esc(String(s).replace(/^\d+\.\s*/, ''))}</li>`).join("")}
             </ol>
           </div>
           <div style="font-size: 0.85rem; color: var(--text-muted);">
@@ -34370,7 +34457,7 @@ function generateActionPlan() {
       <strong style="color:#94a3b8;">Cross-Site Version Parity Recommendation (Critical NetApp Issues, Non-CVE):</strong>
       ${_dfPlural(_parity.issueSystemCount, 'system')} in this account ${_parity.issueSystemCount === 1 ? 'has' : 'have'} ${_dfPlural(_parity.totalIssueCount, 'outstanding critical/high non-CVE finding')} (see each system's own card below for details). To maintain a consistent version across every site for this customer:
       <ul style="margin:6px 0 0 18px; padding:0;">
-        ${_parity.results.map(r => `<li>All ${r.label} systems should match at <code>${r.version}</code> (highest requirement, driven by: ${r.driverSystems.slice(0, 3).join(', ')}${r.driverSystems.length > 3 ? ` +${r.driverSystems.length - 3} more` : ''})</li>`).join('')}
+        ${_parity.results.map(r => `<li>All ${r.label} systems should match at <code>${r.version}</code> (highest of Active IQ's recommended releases, driven by: ${r.driverSystems.slice(0, 3).join(', ')}${r.driverSystems.length > 3 ? ` +${r.driverSystems.length - 3} more` : ''})</li>`).join('')}
       </ul>
     </div>`;
   })();
@@ -35390,7 +35477,7 @@ function compileUpgradesWordMd(systems, scopeTitle) {
   o += `\n` + _wdTable(['Urgency', 'Systems'], Object.keys(byUrg).map(k => [k, byUrg[k]]));
   if (parity && parity.results && parity.results.length) {
     o += `**Cross-site version parity (critical NetApp issues, non-CVE).** ${_dfPlural(parity.issueSystemCount, 'system')} in this scope ${parity.issueSystemCount === 1 ? 'has' : 'have'} ${_dfPlural(parity.totalIssueCount, 'outstanding critical/high non-CVE finding')}. To keep one consistent version across every site:\n\n`;
-    parity.results.forEach(r => { o += `- All ${r.label} systems should match at **${r.version}** (highest requirement, driven by: ${r.driverSystems.slice(0, 3).join(', ')}${r.driverSystems.length > 3 ? ` and ${r.driverSystems.length - 3} more` : ''}).\n`; });
+    parity.results.forEach(r => { o += `- All ${r.label} systems should match at **${r.version}** (highest of Active IQ's recommended releases, driven by: ${r.driverSystems.slice(0, 3).join(', ')}${r.driverSystems.length > 3 ? ` and ${r.driverSystems.length - 3} more` : ''}).\n`; });
     o += `\n`;
   }
   o += `## 2. Upgrades by system\n\n` + _wdTable(['System', 'Platform', 'Current', 'Minimum required', 'Latest supported', 'Path', 'Security fix floor', 'Non-CVE critical/high', 'Urgency'],
@@ -35463,7 +35550,7 @@ function compileRisksWordMd(systems, scopeTitle) {
     o += `**Affected systems (${names.length}):** ${names.join(', ')}\n\n`;
     { const _rl = _rrGroupLines([...(g.pairs || [])]); if (_rl.length) o += `**Recommended action:** ${_rl.join(' | ')}\n\n`; }
     o += `**Finding (detected on the systems above)**\n\n**Root cause:** ${p && p.cause ? _wdClean(_dfCleanCause(p.cause)) : 'Undetermined'}\n\n**Operations impact:** ${p && p.impact ? _wdClean(p.impact) : 'Undetermined'}\n\n**General guidance (not specific to these systems; verify before applying)**\n\n`;
-    const steps = p && p.steps && p.steps.length ? p.steps : ['Review standard operating guidelines.'];
+    const steps = _rrSteps((g.pairs && g.pairs[0] && g.pairs[0].sys) || null, r, p);
     o += `**Remediation steps**\n\n` + steps.map((s, k) => `${k + 1}. ${_wdClean(String(s).replace(/^\d+\.\s*/, ''))}`).join('\n') + '\n\n';
     const opts = p && p.options && p.options.length ? p.options : ['Contact NetApp Support.'];
     o += `**Options and trade-offs**\n\n` + opts.map(x => `- ${_wdClean(x)}`).join('\n') + '\n\n';
@@ -35715,9 +35802,11 @@ This document compiles the high-level metrics generated from telemetry data anal
     });
     const _rkList = [..._rkGroups.values()].sort((x, y) => _rkBySev(x.r, y.r) || (y.systems.length - x.systems.length));
     const _rkStep = s => String(s).replace(/^\s*\d+[.)]\s*/, '');   // the steps already carry their own numbers
+    const _sysByNameR = {}; targetSystems.forEach(s => { _sysByNameR[s.systemName] = s; });
+    const _rkAction = r => _rrGroupLines(allRisks.filter(x => x.description === r.description && x.category === r.category).map(x => ({ sys: _sysByNameR[x.systemName], r: x }))).join(' | ');
     text = `NETAPP PRIORITIZED TECHNICAL RISKS REPORT
 Scope: ${scopeTitle}
-
+${_rrNaText(targetSystems) ? '\n' + _rrNaText(targetSystems) + '\n' : ''}
 ${allRisks.length === 0 ? "✓ No technical risk signatures identified across the monitored scope." :
   `${_rkList.length} distinct risk${_rkList.length !== 1 ? 's' : ''} across ${new Set(allRisks.map(r => r.systemName)).size} system${new Set(allRisks.map(r => r.systemName)).size !== 1 ? 's' : ''}, most severe first.\n\n` +
   _rkList.map((g, n) => { const r = g.r, plan = r.remediationPlan;
@@ -35725,10 +35814,10 @@ ${allRisks.length === 0 ? "✓ No technical risk signatures identified across th
 - Systems: ${g.systems.join(', ')}
 - Safety Classification: ${getRiskSafetyTier(r).toUpperCase()}
 - FINDING (detected on these systems): ${r.description}
-- Root Cause: ${plan ? plan.cause : "Undetermined"}
+${_rkAction(r) ? '- RECOMMENDED ACTION: ' + _rkAction(r) + '\n' : ''}- Root Cause: ${plan ? plan.cause : "Undetermined"}
 - Operations Impact: ${plan ? plan.impact : "Undetermined"}
 - GENERAL GUIDANCE (not specific to a system) -- remediation steps:
-${plan ? plan.steps.map((s, i) => `   ${i + 1}. ${_rkStep(s)}`).join("\n") : "   1. Review standard operating guidelines."}
+${_rrSteps(_sysByNameR[g.systems[0]] || null, r, plan).map((s, i) => `   ${i + 1}. ${_rkStep(s)}`).join("\n")}
 - GENERAL GUIDANCE -- trade-offs:
 ${plan ? plan.options.map(o => `   * ${o}`).join("\n") : "   * Contact NetApp Support."}`; }).join("\n\n")}`;
   } else if (index === 3) {
@@ -35750,13 +35839,13 @@ ${plan ? plan.options.map(o => `   * ${o}`).join("\n") : "   * Contact NetApp Su
     const _saList = [..._saGroups.values()].sort((x, y) => _saBySev(x.s, y.s) || (y.systems.length - x.systems.length));
     text = `NETAPP SECURITY ADVISORIES REPORT
 Scope: ${scopeTitle}
-
+${_rrNaText(targetSystems) ? '\n' + _rrNaText(targetSystems) + '\n' : ''}
 ${allSecurityAdvisories.length === 0 ? "✓ No security vulnerabilities mapped against release baselines." :
   `${_saList.length} distinct advisor${_saList.length !== 1 ? 'ies' : 'y'}, most severe first.\n\n` +
   _saList.map((g, n) => `${n + 1}. CVE: ${g.s.cve || g.s.id} [Severity: ${(g.s.severity || '').toUpperCase()}] -- ${g.systems.length} system${g.systems.length !== 1 ? 's' : ''}
 - Systems: ${g.systems.join(', ')}
 - Title: ${g.s.title}
-- Mitigation: ${g.s.mitigation}
+- ${g.s.resolution ? 'Recommended action' : 'Mitigation'}: ${g.s.mitigation}
 - Status: ${g.s.status}`).join("\n\n")}`;
   } else if (index === 4) {
     filename = _dlFilename('Support Cases and Service Activity', scopeTitle, 'txt');
@@ -35811,7 +35900,7 @@ ${hop.considerations.map(c => `     - ${c.replace(/<[^>]*>/g, "")}`).join("\n")}
     return `System: ${u.systemName} [Urgency: ${u.urgency}]
 - Current OS: ${currentVer}
 - Recommended OS Target Version: ${u.targetVersion}
-- Platform Model: ${u.platform}
+${(() => { const _s = targetSystems.find(x => x.systemName === u.systemName), _t = _s && _sysFixTarget(_s); if (!_t) return ''; const _a = _dfVerParse(u.targetVersion), _b = _dfVerParse(_t.vtext); return `- Minimum release that clears every finding with a published fix: ${_t.version}${_a && _b ? (_dfVerCmp(_a, _b) >= 0 ? ' (met by the recommended target above)' : ' (HIGHER than the recommended target above: use this release or later)') : ''}\n`; })()}- Platform Model: ${u.platform}
 - Latest Supported OS Version: ${getLatestSupportedVersion(u.platform)}
 - Expected Upgrade Benefits: ${u.benefits}
 ${hopsText}`;
