@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.271 (2026-10-07)
+
+### Fixed
+- A StorageGRID storage node was drawn as a bare E4000 (or E2800) controller canister. Active IQ reports the appliance's storage controller as its own system (model 4000 / 2806); the rear panel and port view now use the appliance model from the grid's node list (SG5712, SG5760, SG5860, SG6060, ...).
+
 ## 5.6.270 (2026-10-07)
 
 ### Changed
