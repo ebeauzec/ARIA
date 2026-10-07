@@ -1,8 +1,8 @@
 {
-  "version": "5.6.273",
+  "version": "5.6.274",
   "major": 5,
   "minor": 6,
-  "patch": 273,
+  "patch": 274,
   "date": "2026-10-07",
-  "notes": "StorageGRID rear-panel model badge shows the appliance model."
+  "notes": "StorageGRID appliance model shown in every document."
 }

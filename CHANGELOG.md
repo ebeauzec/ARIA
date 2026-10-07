@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.274 (2026-10-07)
+
+### Fixed
+- StorageGRID appliance nodes carry the appliance model from the grid node list (SG5860, SG5712, SGF6024, ...) in every deliverable, report, ticket and table. Active IQ's storage controller model (4000, 2806, 5700) is kept as the controller model; nodes Active IQ files as E-Series keep their E-Series analysis.
+
 ## 5.6.273 (2026-10-07)
 
 ### Fixed

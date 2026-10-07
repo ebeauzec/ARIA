@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.273";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.274";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.274",
+    date: "7 October 2026",
+    title: "StorageGRID Appliance Model In Every Document",
+    sections: [
+      {
+        icon: "🐛",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "StorageGRID appliance nodes are labelled with the appliance model from the grid's node list (SG5860, SG5712, SGF6024, ...) everywhere: Customer Deliverables, Word and text reports, tickets, tables and pickers. Active IQ reports the storage controller (4000, 2806, 5700) as the system's model; that value is kept as the controller model and the E-Series analysis of nodes Active IQ files as E-Series is unchanged.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.273",
     date: "7 October 2026",
@@ -19008,6 +19023,7 @@ function computeCapacityRAG(sys) {
 // are matched by _isPlatformStorageGRID first.
 function _platformFamily(s) {
   if (!s) return 'ontap';
+  if (s.controllerModel && /e-series/i.test(String(s.platformType || '')) && (s.santricityVersion || s.eseriesCapacity)) return 'eseries';   // appliance node Active IQ files as E-Series
   if (_isPlatformStorageGRID(s)) return 'storagegrid';
   const p = String(s.platform || '').trim();
   const m = String(s.model || '').trim();
@@ -19711,8 +19727,23 @@ function _dfSgRec(title) {
 // Inject StorageGRID findings into the standard risk engine so they behave like every other Active IQ risk: they appear in
 // Technical Risks, severity counts, the health/ranking logic, every deliverable and the tracker import. Idempotent (id-keyed).
 // Attached to each grid's admin-node system. Info-level findings stay in the StorageGRID views only.
+// Active IQ reports the storage controller inside a StorageGRID appliance as its own system (model 4000 / 2806 / 5700),
+// but the grid's node list knows the appliance (SG5860, SG5712, SGF6024, ...). Every deliverable prints s.model / s.platform,
+// so put the appliance model there once, after the topology is loaded; the controller model is kept in s.controllerModel.
+// Systems Active IQ types as E-SERIES keep the E-Series analysis (see _platformFamily); only the label changes.
+function _sgApplyApplianceModels(list) {
+  (list || []).forEach(s => {
+    if (!s || s.storagegridTopology) return;
+    const n = _sgNodeRecord(s); const m = n && n.applianceModel ? String(n.applianceModel) : '';
+    if (!m || (s.model === m && s.platform === m)) return;
+    if (!s.controllerModel) s.controllerModel = s.model || s.platform || '';
+    s.model = m; s.platform = m;
+  });
+}
+
 function applyStorageGridRisks(systems) {
   const list = systems || state.systems || [];
+  try { _sgApplyApplianceModels(list); } catch (_e) { console.warn('[SG] appliance model labelling failed', _e); }
   let added = 0;
   _dfStorageGridView(list).grids.forEach(g => {
     const sys = g.system; sys.risks = Array.isArray(sys.risks) ? sys.risks : [];
@@ -21605,6 +21636,7 @@ function enrichSystemTelemetry(s) {
     platform:          model,
     model:             s.model || model,  // raw hardware model name from API
     platformType:      platformType,      // generic family: ONTAP, STORAGEGRID, etc.
+    controllerModel:   s.controllerModel || undefined,   // StorageGRID appliance nodes: Active IQ's storage controller model (4000, 2806, 5700); model/platform hold the appliance
     status:            computedStatus,
     risks:             risks,
     upgrades:          upgrades,
