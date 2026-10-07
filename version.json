@@ -1,8 +1,8 @@
 {
-  "version": "5.6.289",
+  "version": "5.6.290",
   "major": 5,
   "minor": 6,
-  "patch": 289,
+  "patch": 290,
   "date": "2026-10-07",
-  "notes": "Upgrade targets stay on the customer's release line; Active IQ's cross-line recommendation is an option."
+  "notes": "Fixes default to a P-release on the same release line."
 }

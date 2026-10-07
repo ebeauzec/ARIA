@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.290 (2026-10-07)
+
+### Changed
+- Fixes for bugs, vulnerabilities and other findings default to a P-release on the release line the system runs; findings with no published fix name the newest known release on that line.
+
 ## 5.6.289 (2026-10-07)
 
 ### Changed
