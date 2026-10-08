@@ -45,9 +45,33 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.296";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.297";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.297",
+    date: "8 October 2026",
+    title: "Wrong Upgrade Target Fixed, Reference Tables Derived",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "A system on ONTAP 9.16.1 was told to upgrade to at least 9.13.1P20 in the remediation plan. The plan passes a copy of each finding, and the copy had lost its link to its system, so the engine did not know the installed release and picked the lowest fixed release in the advisory. The system is now found by serial number, and an unknown release lists the first fixed release of each line instead of choosing one. Checked against all 32,539 findings in the fleet: none recommends a lower release or another line.",
+        ],
+      },
+      {
+        icon: "🧭",
+        label: "Added",
+        color: "#38bdf8",
+        items: [
+          "The remaining hand-kept reference tables are derived by ARIA from data it already collects (tools/derived_reference.py): the latest release per ONTAP line (9.16.1P15, was P11), the minimum safe release per line from the advisories' own fixed releases (now including 9.19.1), the current platform list (minus end-of-availability models), upgrade caveats and MetroCluster feature versions from the release notes, and the Trident note. Hand-kept entries stay beside the derived ones where they hold judgement; where both give a minimum, the higher wins and both reasons are shown.",
+          "Each harvest records which ONTAP releases are installed in or recommended for the fleet (data/fleet_evidence.json), which feeds the latest-release derivation.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.296",
     date: "8 October 2026",
@@ -20209,7 +20233,7 @@ function _advPickFix(cur, versions) {
   versions.forEach(v => { const p = _dfVerParse(v); if (p && !seen.has(p.text)) { seen.add(p.text); cands.push(p); } });
   cands.sort(_dfVerCmp);
   if (!cands.length) return { pick: null, already: false, none: true };
-  if (!cur) return { pick: cands[0], already: false, none: false };
+  if (!cur) return { pick: null, already: false, none: false, unknown: true, cands };   // installed release unknown: say what each line needs, never pick one
   const same = cands.filter(v => _dfSameBranch(v, cur)), later = cands.filter(v => _dfVerCmp(v, cur) > 0);
   const pick = same.length ? same[0] : (later[0] || null);
   if (!pick) return { pick: cands[cands.length - 1], already: true, newer: true, none: false };   // installed release is newer than every fixed release listed
@@ -20251,9 +20275,20 @@ function _sysFixTarget(sys, opts) {
   const out = best ? { product: best.product, vtext: best.v.text, version: best.product + ' ' + best.v.text, count: drivers.length, drivers } : null;
   memo[key] = out; _rrTargetMemo.set(sys, memo); return out;
 }
+let _rrSysIdx = null, _rrSysIdxFor = null;
+function _rrSystemOf(r) {
+  const own = _rrOwner.get(r); if (own) return own;
+  if (!r || !(r.serialNumber || r.systemName) || typeof state === 'undefined' || !Array.isArray(state.systems)) return null;
+  if (_rrSysIdxFor !== state.systems || !_rrSysIdx) {   // rebuilt only when the list of systems is replaced
+    _rrSysIdx = { serial: new Map(), name: new Map() };
+    state.systems.forEach(s => { if (s.serialNumber) _rrSysIdx.serial.set(String(s.serialNumber), s); if (s.systemName) _rrSysIdx.name.set(String(s.systemName), s); });
+    _rrSysIdxFor = state.systems;
+  }
+  return _rrSysIdx.serial.get(String(r.serialNumber)) || _rrSysIdx.name.get(String(r.systemName)) || null;
+}
 function riskResolution(sys, r) {
   if (!r) return null;
-  if (!sys) sys = _rrOwner.get(r) || {};
+  if (!sys || !Object.keys(sys).length) sys = _rrSystemOf(r) || {};
   const hit = _rrMemo.get(r); if (hit && hit._v === _advResVersion && hit._n === (sys.risks || []).length) return hit;
   let out = _rrBase(sys, r);
   if (out.kind === 'upgrade' && !out.fixed) {   // an upgrade is asked for but NetApp publishes no fixed release for this finding
@@ -20300,7 +20335,11 @@ function _riskResolution(sys, r) {
   const parts = [];
   if (fixVersions.length) {
     const f = _advPickFix(cur, fixVersions);
-    if (f.pick && f.already) { res.kind = 'review'; res.cleared = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(f.newer ? `The advisory lists fixes only up to ${prod} ${f.pick.text}; the installed ${cur.text} is newer, so this should no longer apply. Confirm in Active IQ, then acknowledge or close the finding` : `Installed ${prod} ${cur.text} is at or beyond the fixed release ${f.pick.text}; Active IQ still reports it, so confirm the release in Active IQ and acknowledge the finding (or raise a case if it keeps returning)`); }
+    if (f.unknown) {   // the system's release is not known here: list the first fixed release of each line instead of guessing one
+      const perLine = new Map(); f.cands.forEach(v => { const k = v.n.slice(0, v.major === 9 ? 3 : 2).join('.'); if (!perLine.has(k)) perLine.set(k, v.text); });
+      res.kind = 'upgrade'; res.fixed = true; res.minVersion = '';
+      parts.push(`Upgrade ${prod} to the first fixed release of the line the system runs: ${[...perLine.values()].join(', ')}`);
+    } else if (f.pick && f.already) { res.kind = 'review'; res.cleared = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(f.newer ? `The advisory lists fixes only up to ${prod} ${f.pick.text}; the installed ${cur.text} is newer, so this should no longer apply. Confirm in Active IQ, then acknowledge or close the finding` : `Installed ${prod} ${cur.text} is at or beyond the fixed release ${f.pick.text}; Active IQ still reports it, so confirm the release in Active IQ and acknowledge the finding (or raise a case if it keeps returning)`); }
     else if (f.pick) { res.kind = 'upgrade'; res.fixed = true; res.minVersion = `${prod} ${f.pick.text}`; parts.push(`Upgrade ${prod} to at least ${f.pick.text}${cur ? ` (now ${cur.text})` : ''}`); }
   } else if (/FIRMWARE_UPGRADE/.test(r.fixAction || '')) {
     res.kind = 'firmware'; parts.push(`Update ${(RESOLUTION_RULES.firmwareLabels || {})[r.fixActionSub] || (RESOLUTION_RULES.firmwareLabels || {}).NONE || 'firmware'} to the current release`);

@@ -202,6 +202,7 @@ def read_doc(root, rel):
 _SOURCES = [
     ('ONTAP / StorageGRID / SANtricity release list', 'version_catalog.json', 'built-in scanner (docs.netapp.com)', 48, ''),
     ('ONTAP release highlights (What\'s new pages)', 'ontap_release_notes.json', 'built-in scanner (docs.netapp.com)', 24 * 10, ''),
+    ('Derived reference tables (release lines, minimum releases, platforms, caveats)', 'derived_reference.json', 'built-in scanner, derived from the sources above', 24 * 10, ''),
     ('End-of-availability dates', 'eoa_database.json', 'built-in scanner', 24 * 10, ''),
     ('Interoperability (IMT) versions', 'imt_interop.json', 'built-in scanner', 24 * 10, ''),
     ('Firmware baselines', 'firmware_baselines.json', 'built-in scanner', 24 * 10, ''),
