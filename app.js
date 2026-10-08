@@ -45,9 +45,35 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.295";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.296";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.296",
+    date: "8 October 2026",
+    title: "Reference Gaps Closed",
+    sections: [
+      {
+        icon: "🧩",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "New NetApp advisories were missed after NetApp re-dated thousands of old advisories as updated on 7 October: the scanner read only the 400 most recently updated, all old ones. It now also reads the list ordered by publication date. 20 advisories were added at once, including two the NetApp Reference Library had logged.",
+          "The recommended SP/BMC and BIOS firmware could be older than what is installed (a hand-kept baseline overrode Active IQ: a system on BMC 13.12 was told 13.11 is recommended; 495 such cases in the current data). The recommended version is now never lower than the highest version installed on that model in the fleet, and release versions are compared numerically (9.16.1P9 is below 9.16.1P11).",
+          "The Trident interoperability check was skipped silently because the recommended version (26.06.1) was not an exact key in the compatibility table (26.06). It now falls back to the version without its patch part.",
+        ],
+      },
+      {
+        icon: "🧭",
+        label: "Added",
+        color: "#38bdf8",
+        items: [
+          "The end-of-availability platform list is read from NetApp's page by ARIA (new tools/eoa_list.py): 16 platforms were missing, among them the AFF A150, A250, A400 and A900, the ASA A150 to A900 and the FAS8300, FAS8700 and FAS9500.",
+          "ARIA reads the newest released Host Utilities and SnapCenter versions (docs.netapp.com) and Veeam, Proxmox VE and vSphere (endoflife.date) and lists, in Settings > Data & Sync, every integration whose newest release is ahead of its compatibility table. It does not invent the compatibility ranges for those releases.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.295",
     date: "8 October 2026",
@@ -14587,7 +14613,10 @@ function runIMTInteropCheck(systems, detectedSignals) {
     if (integration.signal && !detectedSignals[integration.signal]) continue;
     if (!integration.versions) continue;
 
-    const recommended = integration.versions[integration.currentRecommended];
+    // currentRecommended can be more precise than the table's keys (the scanner records "26.06.1" for Trident, the table says "26.06"): fall back
+    // to the same release without its patch part. An exact-key-only lookup silently skipped the whole integration.
+    const _recKey = [integration.currentRecommended, ...(function (v) { const out = []; let s = String(v || ''); while (/[.\-]/.test(s)) { s = s.replace(/[.\-][^.\-]*$/, ''); out.push(s); } return out; })(integration.currentRecommended)].find(k => k && integration.versions[k]);
+    const recommended = _recKey ? integration.versions[_recKey] : null;
     if (!recommended) continue;
 
     // When multiple switch families share one fleet-wide signal (Nexus and MDS
@@ -39058,6 +39087,7 @@ async function loadReferenceStatus() {
     const msgs = [];
     if (stale.length) msgs.push(`Not refreshed recently: ${stale.join(', ')}. Use "Refresh all reference data now".`);
     if (lib.found && lib.stale) msgs.push(`The NetApp Reference Library was last compiled ${lib.compiled || 'on an unknown date'} (${lib.ageDays == null ? 'age unknown' : lib.ageDays + ' days ago'}). ARIA reads that folder but does not update it.`);
+    (d.imtNewer || []).forEach(x => msgs.push(`${x.name}: version ${x.latest} is released, ARIA's compatibility table recommends ${x.ours}. The table needs its compatibility range for ${x.latest} before it can recommend it.`));
     const _seenW = new Set(); (d.harvestWarnings || []).forEach(w => { const m = 'Harvest warning: ' + w.message; if (!_seenW.has(m)) { _seenW.add(m); msgs.push(m + ' (' + String(w.at).slice(0, 10) + ')'); } });
     if (!lib.found) msgs.push('The NetApp Reference Library folder was not found on this machine. Enter its path below to enable the library search.');
     ban.style.display = msgs.length ? '' : 'none'; ban.style.background = 'rgba(245,158,11,0.10)'; ban.style.border = '1px solid rgba(245,158,11,0.35)'; ban.innerHTML = msgs.map(m => _esc(m)).join('<br>');

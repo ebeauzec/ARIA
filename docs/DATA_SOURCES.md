@@ -32,7 +32,8 @@ The Active IQ API is **not** open source and **not** freely available: it is Net
 | **NetApp product documentation** (docs.netapp.com, discovered through its published sitemap) | Release notes and the version catalog, platform hardware (slots, ports), end-of-availability notices, upgrade information, switch software versions | `_scan_version_catalog`, `_scan_hardware_docs`, `harvest_eoa_announcements`, `_scan_sitemap_discovery`, `hw_docs_harvester.py` |
 | **GitHub** public repositories and releases (the NetApp organisation's open-source projects such as Trident and Harvest, and the documentation repository); an optional personal token with no permissions raises the rate limit | Latest versions of integrations and documentation structure | `tools/firmware_harvester.py`, `hw_docs_harvester.py` |
 | **PyPI** (the public netapp-ontap package page) | Latest ONTAP library version | `harvest_ontap_pypi` |
-| **endoflife.date** (open data) | ONTAP release lifecycle | `harvest_ontap_endoflife` |
+| **endoflife.date** (open data) | ONTAP release lifecycle; the newest released Veeam, Proxmox VE and vSphere versions | `harvest_ontap_endoflife`, `tools/netapp_docs_versions.py` |
+| **NetApp documentation pages read by ARIA's own scrapers** (docs.netapp.com) | ONTAP release highlights (What's new pages), the end-of-availability platform list, the newest Host Utilities and SnapCenter versions | `tools/ontap_release_notes.py`, `tools/eoa_list.py`, `tools/netapp_docs_versions.py` |
 | **Public integration pages** (for example the Ansible Galaxy and Terraform registry pages of NetApp's own collections, and the Harvest site) | Latest versions of NetApp integrations | `server.py` reference scanner |
 
 Notes:
