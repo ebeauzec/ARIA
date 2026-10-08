@@ -201,6 +201,7 @@ def read_doc(root, rel):
 # (label, file, refreshed by, stale after hours, note)
 _SOURCES = [
     ('ONTAP / StorageGRID / SANtricity release list', 'version_catalog.json', 'built-in scanner (docs.netapp.com)', 48, ''),
+    ('ONTAP release highlights (What\'s new pages)', 'ontap_release_notes.json', 'built-in scanner (docs.netapp.com)', 24 * 10, ''),
     ('End-of-availability dates', 'eoa_database.json', 'built-in scanner', 24 * 10, ''),
     ('Interoperability (IMT) versions', 'imt_interop.json', 'built-in scanner', 24 * 10, ''),
     ('Firmware baselines', 'firmware_baselines.json', 'built-in scanner', 24 * 10, ''),
@@ -210,7 +211,7 @@ _SOURCES = [
     ('Security bulletins', 'security_bulletins.json', 'built-in scanner (PSIRT, NVD, EPSS)', 48, ''),
     ('CISA known-exploited list', 'cisa_kev.json', 'built-in scanner (CISA)', 48, ''),
     ('Knowledge base', 'knowledge_base.json', 'built-in scanner (KB crawl)', 24 * 14, ''),
-    ('Curated reference tables', 'reference_library.js', 'compiled by hand on this machine', None, 'Not refreshed automatically; if the file is missing the tables are empty'),
+    ('Curated reference tables', 'reference_library.js', 'compiled by hand on this machine', None, 'Hand-kept: platform replacements, upgrade caveats, best practices. Everything above is applied over it'),
 ]
 
 

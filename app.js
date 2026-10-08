@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.293";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.294";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.294",
+    date: "8 October 2026",
+    title: "ARIA Builds Its Own Reference Data",
+    sections: [
+      {
+        icon: "🧭",
+        label: "Added",
+        color: "#38bdf8",
+        items: [
+          "ARIA reads NetApp's public ONTAP What's new pages itself and builds the per-release highlights from them (new tools/ontap_release_notes.py, data/ontap_release_notes.json). A new release appears without anyone editing a table.",
+          "ARIA's own scanner data is applied over the hand-kept reference file when the page loads: release list, end-of-availability dates, interoperability versions, switch firmware baselines and release highlights. A fresh install, such as a new Mac, no longer starts with empty tables, and a stale hand-kept value is replaced by the live one.",
+          "A harvest that comes back much smaller than the last one (a failed or rate-limited call) no longer shrinks the data silently: the watchlist lookup is tried three times, customers and sites missing from a result that dropped by 10% or more are kept from the previous harvest, and every such case shows as a warning in Settings > Data & Sync.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.291",
     date: "7 October 2026",
@@ -39006,6 +39023,7 @@ async function loadReferenceStatus() {
     const msgs = [];
     if (stale.length) msgs.push(`Not refreshed recently: ${stale.join(', ')}. Use "Refresh all reference data now".`);
     if (lib.found && lib.stale) msgs.push(`The NetApp Reference Library was last compiled ${lib.compiled || 'on an unknown date'} (${lib.ageDays == null ? 'age unknown' : lib.ageDays + ' days ago'}). ARIA reads that folder but does not update it.`);
+    const _seenW = new Set(); (d.harvestWarnings || []).forEach(w => { const m = 'Harvest warning: ' + w.message; if (!_seenW.has(m)) { _seenW.add(m); msgs.push(m + ' (' + String(w.at).slice(0, 10) + ')'); } });
     if (!lib.found) msgs.push('The NetApp Reference Library folder was not found on this machine. Enter its path below to enable the library search.');
     ban.style.display = msgs.length ? '' : 'none'; ban.style.background = 'rgba(245,158,11,0.10)'; ban.style.border = '1px solid rgba(245,158,11,0.35)'; ban.innerHTML = msgs.map(m => _esc(m)).join('<br>');
     const inp = document.getElementById('libraryPathInput'); if (inp && document.activeElement !== inp) inp.value = lib.configured || '';

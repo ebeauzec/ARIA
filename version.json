@@ -1,8 +1,8 @@
 {
-  "version": "5.6.293",
+  "version": "5.6.294",
   "major": 5,
   "minor": 6,
-  "patch": 293,
+  "patch": 294,
   "date": "2026-10-08",
-  "notes": "Clearer refresh message."
+  "notes": "ARIA builds its own reference data; harvest shrink guard."
 }
