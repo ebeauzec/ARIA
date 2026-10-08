@@ -4647,6 +4647,15 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         duration_ms = int((time.time() - start_time) * 1000)
 
         try:
+            import sys as _sys_de
+            _tools_de = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools')
+            if _tools_de not in _sys_de.path:
+                _sys_de.path.insert(0, _tools_de)
+            import derived_reference as _dr
+            _dr.write_fleet_evidence(str(SCRIPT_DIR / 'data'), systems_out)
+        except Exception as _fe_err:
+            print(f"  [HARVEST] Fleet evidence not saved: {_fe_err}", flush=True)
+        try:
             _fw_raised = _raise_firmware_to_evidence(systems_out)
             if _fw_raised:
                 print(f"  [HARVEST] Firmware: raised {_fw_raised} recommended SP/BMC/BIOS version(s) to the highest version installed on that model in this fleet", flush=True)
@@ -8202,6 +8211,15 @@ class EnrichmentScheduler:
         except Exception as _ndv_err:
             print(f'  [ENRICH]   Integration version harvest failed: {_ndv_err}', flush=True)
 
+        # ── 7f. Reference tables that were kept by hand, derived from the data above (see tools/derived_reference.py) ──
+        try:
+            import derived_reference as _dr2
+            _dr_res = _dr2.build(_data_dir)
+            changes['derived_reference'] = _dr_res
+            print(f'  [ENRICH]   Derived reference tables: {_dr_res}', flush=True)
+        except Exception as _dr_err:
+            print(f'  [ENRICH]   Derived reference tables failed: {_dr_err}', flush=True)
+
         return changes
 
 
@@ -8227,6 +8245,8 @@ def _reference_overlay_js():
     live['fwSwitches'] = {k: v for k, v in (fw.get('switches') or {}).items() if not str(k).startswith('_') and isinstance(v, dict)}
     notes = load('ontap_release_notes.json') or {}
     live['highlights'] = {k: v.get('summary') for k, v in (notes.get('releases') or {}).items() if isinstance(v, dict) and v.get('summary')}
+    live['derived'] = load('derived_reference.json') or {}
+    live['eoaNames'] = eoa.get('platforms') or []
     return (";(function(){var R=(window.ARIA_REF=window.ARIA_REF||{});var L=" + json.dumps(live).replace('</', '<\\/') + ";"
             "function vk(v){return String(v).split('.').map(function(p){return parseInt(p)||0;});}"
             "function vc(a,b){var x=vk(a),y=vk(b);for(var i=0;i<Math.max(x.length,y.length);i++){var q=(x[i]||0)-(y[i]||0);if(q)return q;}return 0;}"
@@ -8238,6 +8258,19 @@ def _reference_overlay_js():
             "var M=(R.IMT_INTEROP_MATRIX=R.IMT_INTEROP_MATRIX||{});Object.keys(L.imt).forEach(function(k){M[k]=Object.assign({},M[k],L.imt[k]);});"
             "var F=(R.REFERENCE_LIBRARY_FIRMWARE_BASELINES=R.REFERENCE_LIBRARY_FIRMWARE_BASELINES||{});Object.keys(L.fwSwitches).forEach(function(k){F[k]=Object.assign({},F[k],L.fwSwitches[k]);});"
             "var H=(R.REFERENCE_LIBRARY_ONTAP_HIGHLIGHTS=R.REFERENCE_LIBRARY_ONTAP_HIGHLIGHTS||{});Object.keys(L.highlights).forEach(function(k){H[k]=L.highlights[k];});"
+            "var X=L.derived||{};"
+            # minimum safe release per line: the higher of the derived and the hand-kept value; both reasons are kept
+            "var PM=(R.REFERENCE_LIBRARY_PRELEASE_MINIMUMS=R.REFERENCE_LIBRARY_PRELEASE_MINIMUMS||{});Object.keys(X.prereleaseMinimums||{}).forEach(function(k){var d=X.prereleaseMinimums[k],c=PM[k];if(!c){PM[k]=d;return;}var hi=vc(String(d.minSafe).replace(/[Pp]/,'.'),String(c.minSafe).replace(/[Pp]/,'.'))>=0?d.minSafe:c.minSafe;PM[k]={minSafe:hi,reason:d.reason+(c.minSafe!==d.minSafe?' Hand-kept note for this line ('+c.minSafe+'): '+c.reason:''),derived:true};});"
+            # upgrade caveats: the hand-kept ones first, then the release-note entries not already there
+            "var UC=(R.REFERENCE_LIBRARY_UPGRADE_CAVEATS=R.REFERENCE_LIBRARY_UPGRADE_CAVEATS||{});Object.keys(X.upgradeCaveats||{}).forEach(function(k){var cur=(UC[k]=UC[k]||[]);X.upgradeCaveats[k].forEach(function(l){if(cur.indexOf(l)<0)cur.push(l);});});"
+            # MetroCluster feature versions
+            "var MC=(R.REFERENCE_LIBRARY_MC_REQUIREMENTS=R.REFERENCE_LIBRARY_MC_REQUIREMENTS||{});MC.featureVersions=MC.featureVersions||{};Object.keys(X.mcFeatureVersions||{}).forEach(function(k){if(!(k in MC.featureVersions))MC.featureVersions[k]=X.mcFeatureVersions[k];});"
+            # current platforms: derived + hand-kept, minus anything on the end-of-availability list
+            "var CP=(R.REFERENCE_LIBRARY_CURRENT_PLATFORMS=R.REFERENCE_LIBRARY_CURRENT_PLATFORMS||{});var EO=(L.eoaNames||[]).map(function(n){return String(n).toUpperCase().replace('AFF ','').replace(/-/g,' ').trim();});"
+            "Object.keys(X.currentPlatforms||{}).forEach(function(g){var u=(CP[g]||[]).slice();X.currentPlatforms[g].forEach(function(m){if(u.indexOf(m)<0)u.push(m);});CP[g]=u;});"
+            "Object.keys(CP).forEach(function(g){CP[g]=CP[g].filter(function(m){var t=String(m).toUpperCase().replace('AFF ','').replace(/-/g,' ').trim();return EO.indexOf(t)<0&&EO.indexOf(t.replace('ASA ',''))<0;});});"
+            # Trident: the note named a version that was current weeks ago
+            "var IN=R.REFERENCE_LIBRARY_INTEGRATION_NOTES;if(IN&&IN.trident&&X.tridentGA){IN.trident.currentGA=X.tridentGA;IN.trident.githubTagged='Newest release read from the Trident release feed: '+X.tridentGA+'.';}"
             "})();")
 
 

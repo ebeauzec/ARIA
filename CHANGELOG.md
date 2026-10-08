@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.297 (2026-10-08)
+
+### Fixed
+- A system on ONTAP 9.16.1 was told to upgrade to at least 9.13.1P20 in the remediation plan: the plan passes a copy of each finding that had lost its link to its system, so the installed release was unknown and the lowest fixed release was picked. The system is found by serial number now, and an unknown release lists the first fixed release of each line. No finding in the fleet (32,539 checked) recommends a lower release or another line.
+
+### Added
+- `tools/derived_reference.py` derives the remaining hand-kept reference tables from data ARIA collects: latest release per ONTAP line, minimum safe release per line (advisory fixed releases), current platforms, upgrade caveats and MetroCluster feature versions (release notes), Trident note. Harvests record `data/fleet_evidence.json`.
+
 ## 5.6.296 (2026-10-08)
 
 ### Fixed
