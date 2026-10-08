@@ -941,16 +941,27 @@ def _raise_firmware_to_evidence(systems_out):
     the recommended version is 13.11. Nothing newer than what is already installed somewhere in the monitored fleet can be older than the
     recommendation, so for each model the recommended version is raised to the highest version found installed on that model. A baseline that is
     ahead of the fleet is left alone. Returns the number of systems changed."""
-    best = {}
+    seen = {}
     for s in systems_out:
         model = str(s.get('model') or s.get('platform') or '')
         for field in ('systemFirmware', 'motherboardFirmware'):
             fw = s.get(field) or {}
             cur = fw.get('currentVersion')
             if model and cur:
-                k = (model, field, fw.get('type') or '')
-                if k not in best or _fw_ver_key(cur) > _fw_ver_key(best[k]):
-                    best[k] = cur
+                seen.setdefault((model, field, fw.get('type') or ''), {}).setdefault(cur, 0)
+                seen[(model, field, fw.get('type') or '')][cur] += 1
+    best = {}
+    for k, counts in seen.items():
+        vs = sorted(counts, key=_fw_ver_key)
+        # A version seen on one system only, far above the next one in the same line (15.95P1 against 15.14), is a backup-image reading after a power
+        # cycle (NetApp KB CFBMC-2358), not a release: it must not become everyone's recommendation.
+        while len(vs) >= 2 and counts[vs[-1]] == 1:
+            top, nxt = _fw_ver_key(vs[-1])[0], _fw_ver_key(vs[-2])[0]
+            if len(top) >= 2 and len(nxt) >= 2 and top[0] == nxt[0] and top[1] - nxt[1] > 20:
+                vs.pop()
+            else:
+                break
+        best[k] = vs[-1]
     changed = 0
     for s in systems_out:
         model = str(s.get('model') or s.get('platform') or '')
@@ -10671,7 +10682,7 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         try:
             if method == 'GET' and route == '/api/library/status':
                 found = _lm.find_library(cfg)
-                lib = _lm.library_status(found['path']) if found.get('path') else {'found': False}
+                lib = _lm.library_status(found['path'], str(SCRIPT_DIR / 'data')) if found.get('path') else {'found': False}
                 lib['source'] = found.get('source'); lib['configured'] = (cfg.get('libraryPath') or '').strip()
                 sch = _enrichment_scheduler.status() if _enrichment_scheduler else {}
                 _wdb = _init_db()

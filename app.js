@@ -45,9 +45,35 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.299";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.300";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.300",
+    date: "8 October 2026",
+    title: "Minimum Safe Release In Use, Firmware Known Issues, Weekly Library Harvest",
+    sections: [
+      {
+        icon: "🧭",
+        label: "Added",
+        color: "#38bdf8",
+        items: [
+          "The minimum safe release of each ONTAP line (derived from the advisories' fixed releases) is now used: a health-checklist item for the fleet and for each system, a Minimum safe column and summary line in the OS Upgrade Roadmap, a note on the upgrade card, and a section in the text report beside the security fix floor. In this fleet 877 systems run below their line's minimum.",
+          "An upgrade target is never below its line's minimum safe release. Active IQ's own same-line recommendation was lower for some systems, and 121 systems that Active IQ reports as up to date were below the minimum: all now have a same-line target (125 raised).",
+          "Firmware and upgrade-path known issues from the NetApp Reference Library, kept in resolution_rules.json so they need no code change: CFBMC-8277 (BMC 13.12 can shut a node down after a lost heartbeat; 64 systems in this fleet), CFBMC-6454 (BMC watchdog reboot, 13.10 and later; 90 systems), CFBMC-2358 (A250 backup-image reading) and CONTAP-799924 (the 9.16.1P1 to 9.19.1 upgrade path). They are listed under the SP/BMC drift and with the upgrade path, with the fixed release stated only where NetApp publishes it.",
+          "A weekly harvest routine (docs/LIBRARY_HARVEST_ROUTINE.md, run by a scheduled Claude job): it reads the library entries ARIA has not absorbed yet, checks the other NetApp sources (releases, advisories, firmware, platforms, best practices, interoperability) and applies what is confirmed. ARIA records which library entries are harvested and Settings > Data & Sync shows how many are not. ARIA itself still uses no AI.",
+        ],
+      },
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The rule that the recommended SP/BMC version is never below the highest installed on that model now ignores a lone far-higher reading (a backup image after a power cycle, such as 15.95P1) instead of recommending it to the whole model.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.299",
     date: "8 October 2026",
@@ -17698,7 +17724,7 @@ function renderCSMTab() {
     let _verPass = 0, _effPass = 0, _asupPass = 0, _hwPass = 0, _secPass = 0;
     let _capPass = 0, _haPass = 0, _casePass = 0, _arpPass = 0, _fsaPass = 0;
     // New ops checks
-    let _portHealthPass = 0, _fwCurrPass = 0, _cisaKevPass = 0, _asupCfgPass = 0;
+    let _portHealthPass = 0, _fwCurrPass = 0, _cisaKevPass = 0, _asupCfgPass = 0, _minSafePass = 0, _minSafeKnown = 0;
     // ── RIGHT COLUMN: Data Protection & Lifecycle ───────────────────────────────
     let _drPass = 0, _riskPass = 0, _contractPass = 0;
     // New DP/lifecycle checks
@@ -17807,6 +17833,10 @@ function renderCSMTab() {
       if (_isOnt && _cisaHits.length === 0) _cisaKevPass++;
       else if (_isOnt) _fail('kev', s, `${_cisaHits.length} CISA KEV CVE${_cisaHits.length > 1 ? 's' : ''}`);
 
+      // 14b. On the minimum safe release for its line (systems on a line with no known minimum are left out of the total)
+      { const _ms = _isOnt ? _minSafeRelease(s) : null;
+        if (_ms) { _minSafeKnown++; if (!_ms.behind) _minSafePass++; else _fail('minsafe', s, `${_ms.current} is below ${_ms.minSafe}`); } }
+
       // 15. AutoSupport configured (real AutoSupportStatus enum -- QoS was
       // here before, but Active IQ's schema has no QoS field at all;
       // confirmed via live introspection, not a harvesting gap)
@@ -17908,6 +17938,7 @@ function renderCSMTab() {
       { name: 'AutoSupport Configured',                               completedCount: _asupCfgPass, fails: _fl.asupcfg,     detail: '', tip: 'Systems with AutoSupport turned on (real Active IQ AutoSupportStatus). Without it, a system is invisible to proactive risk detection and this tool\'s own health scoring.' },
       // — Security & Compliance —
       { cat: 'SECURITY \u0026 COMPLIANCE', name: 'No Active Security CVEs Applicable (PSIRT)',            total: _nOntap, completedCount: _secPass, fails: _fl.sec,         detail: '', tip: 'Systems with zero NetApp PSIRT-published CVEs applicable to their current OS version.' },
+      { name: 'On the Minimum Safe Release for Its Line',          total: _minSafeKnown, completedCount: _minSafePass, fails: _fl.minsafe, detail: '', tip: 'Systems running at or above the minimum safe release of their ONTAP line: the first release of the line with no known high or critical NetApp advisory open against it, taken from the fixed releases the advisories list.' },
       { name: 'No CISA KEV Active Exploitation Alerts',               total: _nOntap, completedCount: _cisaKevPass, fails: _fl.kev,     detail: '', tip: 'Systems with no CVEs matching CISA Known Exploited Vulnerabilities (KEV) catalog -- confirmed active real-world exploitation, not just theoretical risk.' },
 
       { name: 'Anti-Ransomware Protection (ARP) Active',              total: _nOntap - _arpNA, completedCount: _arpPass, fails: _fl.arp,         detail: '', tip: 'Systems with ONTAP built-in Anti-Ransomware Protection enabled -- entropy-based anomaly detection on volumes that flags likely ransomware encryption activity.' },
@@ -18432,6 +18463,11 @@ function renderCSMTab() {
       detail: !_sIsOnt ? `${_sNA} \u2014 this tool's advisory matching only evaluates ONTAP versions; check security.netapp.com for ${_sFamName}` : _sCVEs.length > 0
         ? `${_sCVEs.length} active: ${_sCVEs.slice(0, 3).map(b => b.cve || b.id || '').filter(Boolean).join(', ')}${_sCVEs.length > 3 ? ` +${_sCVEs.length - 3} more` : ''}`
         : 'No active advisories for this version'
+    },
+    { name: 'On the Minimum Safe Release for Its Line',
+      na: !_sIsOnt || !_minSafeRelease(sys),
+      ok: !!_minSafeRelease(sys) && !_minSafeRelease(sys).behind,
+      detail: (() => { const m = _minSafeRelease(sys); return !_sIsOnt ? `${_sNA} \u2014 minimum releases are derived for ONTAP lines only` : !m ? 'No minimum is known for this release line' : m.behind ? `${m.current} is below ${m.minSafe}, the first ${m.line} release with no known high or critical advisory open` : `${m.current} meets the minimum for ${m.line} (${m.minSafe})`; })()
     },
     { name: 'No CISA KEV Active Exploitation Alerts',
       na: !_sIsOnt,
@@ -19884,6 +19920,46 @@ function _dfCriticalHighFixFloor(sys) {
     return { product: t.product, version: t.vtext, cveIds: t.drivers.map(r => _rrCveOf(r) || String(r.advisoryId || '').toUpperCase() || String(r.description || '').slice(0, 60)).filter(Boolean), alreadyMet: false }; }
 }
 
+// Minimum safe release per ONTAP line (REFERENCE_LIBRARY_PRELEASE_MINIMUMS, derived by ARIA from the fixed releases NetApp lists in the advisories rated
+// high or critical for ONTAP 9). It answers a different question from the security fix floor above: the floor is what THIS system's own Active IQ
+// findings need; the minimum safe release is the first release of the line with no known high or critical advisory open against it, whether or not
+// Active IQ has raised that advisory on the system. A system can be above its floor and still below the minimum, never the reverse by design.
+function _minSafeRelease(sys) {
+  if (!sys || _platformFamily(sys) !== 'ontap') return null;
+  const cur = _dfVerParse(sys.ontapVersion || sys.osVersion); if (!cur || cur.major !== 9) return null;
+  const line = cur.n.slice(0, 3).join('.'), m = (typeof REFERENCE_LIBRARY_PRELEASE_MINIMUMS !== 'undefined' ? REFERENCE_LIBRARY_PRELEASE_MINIMUMS : {})[line];
+  const min = m && m.minSafe ? _dfVerParse(m.minSafe) : null; if (!min) return null;
+  return { line, current: cur.text, minSafe: min.text, reason: m.reason || '', behind: _dfVerCmp(cur, min) < 0 };
+}
+// Known issues of the SP/BMC firmware a system runs (resolution_rules.json > firmwareKnownIssues; the rules file is served with the advisory data).
+function _fwKnownIssues(sys) {
+  const rules = (typeof RESOLUTION_RULES !== 'undefined' && RESOLUTION_RULES.firmwareKnownIssues) || [];
+  const fw = Array.isArray(sys && sys.systemFirmware) ? sys.systemFirmware[0] : (sys && sys.systemFirmware);
+  if (!rules.length || !fw || !fw.currentVersion) return [];
+  const norm = x => String(x).toUpperCase().replace(/[-\s]/g, '');
+  const model = norm((sys && (sys.model || sys.platform)) || ''), type = String(fw.type || '').toUpperCase(), cur = _dfVerParse(fw.currentVersion);
+  if (!cur) return [];
+  return rules.filter(r => (!r.component || String(r.component).toUpperCase() === type) && (r.families || []).some(f => model.includes(norm(f)))
+    && ((r.versions || []).some(v => { const x = _dfVerParse(v); return x && _dfVerCmp(x, cur) === 0; }) || (r.minVersion && (() => { const x = _dfVerParse(r.minVersion); return x && _dfVerCmp(cur, x) >= 0; })())));
+}
+// Known issues of one upgrade path (resolution_rules.json > upgradePathKnownIssues): the installed release and the line it would move to.
+function _upgradePathIssues(fromText, toText) {
+  const rules = (typeof RESOLUTION_RULES !== 'undefined' && RESOLUTION_RULES.upgradePathKnownIssues) || [];
+  const from = _dfVerParse(fromText), to = _dfVerParse(toText);
+  if (!rules.length || !from || !to) return [];
+  return rules.filter(r => { const f = _dfVerParse(r.fromVersion), l = _dfVerParse(r.toLine); return f && l && _dfVerCmp(f, from) === 0 && _dfSameBranch(l, to); });
+}
+function _dfMinSafeSummary(systems) {
+  const byLine = new Map();
+  (systems || []).forEach(s => {
+    const m = _minSafeRelease(s); if (!m) return;
+    let g = byLine.get(m.line); if (!g) { g = { line: m.line, minSafe: m.minSafe, reason: m.reason, total: 0, behind: [] }; byLine.set(m.line, g); }
+    g.total++; if (m.behind) g.behind.push({ name: s.systemName || s.serialNumber, cur: m.current });
+  });
+  const lines = [...byLine.values()].sort((x, y) => _cmpVersionText(x.line, y.line));
+  return lines.length ? { lines, total: lines.reduce((n, g) => n + g.total, 0), behindTotal: lines.reduce((n, g) => n + g.behind.length, 0) } : null;
+}
+
 // Fleet-level rollup of _dfCriticalHighFixFloor(), plus the Customer Qualified
 // Version (CQV) angle: a customer running an N-1 (or any fixed) software strategy
 // sets a CQV in Active IQ via updateQualifiedVersionInAIQ() (OS Upgrades tab), which
@@ -20503,17 +20579,28 @@ function _applyUpgradeLineTargets(systems) {
   (systems || []).forEach(s => { if (s && _platformFamily(s) === 'ontap') { see(s.ontapVersion || s.osVersion); see(s.upgrades && s.upgrades.aiqTarget); see(s.recommendedOSVersion); } });
   Object.values(ADVISORY_RES || {}).forEach(rec => (rec.fixes || []).forEach(f => { if (_advClass(f.product) === 'ontap' && !f.wontfix) (f.versions || []).forEach(see); }));
   (systems || []).forEach(s => {
-    const u = s && s.upgrades; if (!u || u.source !== 'active-iq' || _platformFamily(s) !== 'ontap') return;
-    if (u.aiqTarget === undefined) { if (u.targetVersion === 'Up to Date') return; u.aiqTarget = u.targetVersion; u.aiqBenefits = u.benefits; }
+    const u = s && s.upgrades; if (!u || (u.source !== 'active-iq' && u.source !== 'not-reported') || _platformFamily(s) !== 'ontap') return;
+    if (u.aiqTarget === undefined) { u.aiqTarget = u.targetVersion; u.aiqBenefits = u.benefits; u.aiqUrgency = u.urgency; }   // 'Up to Date' is kept too: it can still be below the line's minimum
     const cur = _dfVerParse(s.ontapVersion || s.osVersion), aiq = _dfVerParse(u.aiqTarget);
-    u.targetVersion = u.aiqTarget; u.benefits = u.aiqBenefits; delete u.crossLine;
-    if (!cur || !aiq || _dfSameBranch(aiq, cur)) return;
-    const eos = Date.parse(s.swEndOfLimitedSupport || '');   // a line that is out of support has to be left: Active IQ's target stands
-    if (!isNaN(eos) && eos < Date.now()) return;
-    u.crossLine = true;
-    const b = best.get(key(cur));
-    if (b && _dfVerCmp(b.v, cur) > 0) { u.targetVersion = b.v.text; u.benefits = `Newest ${key(cur)} release ARIA knows of (same line). Active IQ suggests ${u.aiqTarget}, a new release line: optional.`; }
-    else u.benefits = `Active IQ recommends ${u.aiqTarget}, a new release line; no newer ${key(cur)} release is known to ARIA.`;
+    u.targetVersion = u.aiqTarget; u.benefits = u.aiqBenefits; u.urgency = u.aiqUrgency; delete u.crossLine; delete u.raisedToMinimum;
+    if (!cur) return;
+    if (aiq && !_dfSameBranch(aiq, cur)) {
+      const eos = Date.parse(s.swEndOfLimitedSupport || '');   // a line that is out of support has to be left: Active IQ's target stands
+      if (!isNaN(eos) && eos < Date.now()) return;
+      u.crossLine = true;
+      const b = best.get(key(cur));
+      if (b && _dfVerCmp(b.v, cur) > 0) { u.targetVersion = b.v.text; u.benefits = `Newest ${key(cur)} release ARIA knows of (same line). Active IQ suggests ${u.aiqTarget}, a new release line: optional.`; }
+      else u.benefits = `Active IQ recommends ${u.aiqTarget}, a new release line; no newer ${key(cur)} release is known to ARIA.`;
+    }
+    // A target on the system's own line is never below that line's minimum safe release (the first release with no known high or critical advisory open).
+    // Active IQ's own same-line recommendation can be older than that, and a document must not tell a customer to stop short of it.
+    const m = _minSafeRelease(s), t = _dfVerParse(u.targetVersion), mv = m && _dfVerParse(m.minSafe);
+    if (m && mv && ((t && _dfSameBranch(t, mv) && _dfVerCmp(t, mv) < 0) || (!t && m.behind))) {
+      const nb = best.get(key(cur)), to = nb && _dfVerCmp(nb.v, mv) >= 0 ? nb.v : mv;
+      u.targetVersion = to.text; u.raisedToMinimum = true; if (!u.urgency || u.urgency === 'None') u.urgency = 'Recommended';
+      u.benefits = t ? `${to.text} is the newest ${m.line} release ARIA knows of and not below ${m.minSafe}, the minimum safe release for the line. Active IQ recommended ${u.aiqTarget}.`
+                     : `${m.current} is below ${m.minSafe}, the minimum safe release for ${m.line} (the first release with no known high or critical NetApp advisory open), although Active IQ reports no newer release. Target: ${to.text}, the newest ${m.line} release ARIA knows of.`;
+    }
   });
 }
 function _applyAdvisoryApplicability(systems) {
@@ -25790,7 +25877,7 @@ function compileCustomerSuccessPlanText(scopeTitle, allRisks, allUpgrades, targe
     const sfwRaw = sys.systemFirmware;
     const sfw = (Array.isArray(sfwRaw) ? sfwRaw[0] : sfwRaw) || {};
     if (sfw.currentVersion && sfw.recommendedVersion && _isBehind(sfw.currentVersion, sfw.recommendedVersion)) {
-      spDrift.push({ systemName: `${sys.systemName} (${sys.platform || sys.model || ''})`, current: sfw.currentVersion, recommended: sfw.recommendedVersion });
+      spDrift.push({ systemName: `${sys.systemName} (${sys.platform || sys.model || ''})`, current: sfw.currentVersion, recommended: sfw.recommendedVersion, issues: _fwKnownIssues(sys) });
     }
     const mbfw = sys.motherboardFirmware || {};
     if (mbfw.currentVersion && mbfw.recommendedVersion && _isBehind(mbfw.currentVersion, mbfw.recommendedVersion)) {
@@ -26179,7 +26266,7 @@ ${shelfDrift.length > 0 ? '  SHELF FIRMWARE DRIFT DETECTED:\n' + shelfDrift.map(
 * ACTION 2.5: Service Processor / BMC Firmware
   - Update: 'system service-processor image update -node * -update-type latest'
   - Verify: 'system service-processor show -fields firmware-version'
-${spDrift.length > 0 ? '  SP/BMC FIRMWARE DRIFT DETECTED:\n' + spDrift.map(sp => `    ⚠ ${sp.systemName}: current=${sp.current}, target=${sp.recommended}`).join('\n') : '  ✓ All SP/BMC firmware at recommended baseline.'}
+${spDrift.length > 0 ? '  SP/BMC FIRMWARE DRIFT DETECTED:\n' + spDrift.map(sp => `    ⚠ ${sp.systemName}: current=${sp.current}, target=${sp.recommended}`).join('\n') + (() => { const by = new Map(); spDrift.forEach(sp => (sp.issues || []).forEach(i => { if (!by.has(i.id)) by.set(i.id, { i, n: 0 }); by.get(i.id).n++; })); return by.size ? '\n  KNOWN ISSUES OF THE INSTALLED FIRMWARE:\n' + [...by.values()].map(({ i, n }) => `    - ${i.id} (${_dfPlural(n, 'system')}): ${i.summary}. ${i.note} ${i.url}`).join('\n') : ''; })() : '  ✓ All SP/BMC firmware at recommended baseline.'}
 
 * ACTION 2.6: Motherboard Firmware
   - Update: 'system node firmware download' then 'system node firmware update -node * -type motherboard'
@@ -29677,6 +29764,11 @@ ${(() => { const ff = _dfCriticalHighFixFloorSummary(targetSystems); if (!ff) re
   ${_dfPlural(ff.rows.length, 'system')} ${ff.rows.length === 1 ? 'is' : 'are'} below the version needed to clear every critical/high-severity CVE affecting it. "Fixed In" below is the HIGHEST fix-in release required across those CVEs for that system -- being fixed for one does not help if another on the same system needs a later release.
 ${[...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([ver, rows]) => `  Fixed In: ${ver}  --  ${_dfGroupNow(rows.map(r => ({ name: r.systemName, cur: r.currentVersion })))}`).join('\n')}
 ${ff.cqvSetCount > 0 ? `  Customer Qualified Version (CQV) set on ${_dfPlural(ff.cqvSetCount, 'system')}.${ff.conflictCount > 0 ? ` ${ff.conflictCount} of those ${ff.conflictCount === 1 ? 'has' : 'have'} a CQV BELOW the fix floor -- the customer's qualified version does not clear a critical/high finding, a decision point for the account team: ${ff.rows.filter(r => r.conflict).map(r => `${r.systemName} (CQV ${r.cqv} < required ${r.fixedIn})`).join(', ')}.` : ' None conflict with the fix floor above.'}` : ''}
+`; })()}
+
+${(() => { const ms = _dfMinSafeSummary(targetSystems); if (!ms || !ms.behindTotal) return ''; return `MINIMUM SAFE RELEASE PER ONTAP LINE
+  ${_dfPlural(ms.behindTotal, 'system')} of ${ms.total} ${ms.behindTotal === 1 ? 'runs' : 'run'} below the minimum safe release of ${ms.behindTotal === 1 ? 'its' : 'their'} line: the first release of the line with no known high or critical NetApp advisory open against it, from the fixed releases the advisories list. This is separate from the fix floor above, which counts only the findings Active IQ raised on the system.
+${ms.lines.filter(g => g.behind.length).map(g => `  ${g.line}: minimum ${g.minSafe}  --  ${_dfGroupNow(g.behind.map(x => ({ name: x.name, cur: x.cur })))}`).join('\n')}
 `; })()}
 
 ${(() => { const nc = _dfCriticalHighNonCveIssuesSummary(targetSystems); if (!nc) return ''; const parity = _dfNonCveParityVersion(targetSystems); return `CRITICAL NETAPP ISSUES (Non-CVE)
@@ -35106,6 +35198,11 @@ function generateActionPlan() {
           </div>`;
           })()}
           ${(() => {
+            const _sysM = targetSystems.find(s => s.serialNumber === u.serialNumber), _m = _sysM && _minSafeRelease(_sysM);
+            if (!_m || !_m.behind) return '';
+            return `<div style="margin-top:10px; padding:10px 14px; background:rgba(245,158,11,0.06); border:1px solid #f59e0b44; border-radius:6px; font-size:0.78rem;" title="${_esc(_m.reason)}"><strong style="color:#f59e0b;">Minimum safe release for ${_m.line}:</strong> <code style="color:#f59e0b;">${_m.minSafe}</code>. This system runs ${_m.current}, below it: NetApp lists a fix in ${_m.minSafe} or later for at least one advisory rated high or critical.</div>`;
+          })()}
+          ${(() => {
             // Critical/high NetApp issues that are NOT CVEs -- a deliberately
             // separate figure from the Security Fix Floor above. These don't
             // reduce to one required ONTAP version the way CVEs do (fix vector
@@ -36000,12 +36097,13 @@ function compileUpgradesWordMd(systems, scopeTitle) {
     let latest = ''; try { latest = getLatestSupportedVersion(u.platform) || ''; } catch (e) { latest = ''; }
     let floor = null; try { floor = _dfCriticalHighFixFloor(sys); } catch (e) { floor = null; }
     let nonCve = null; try { nonCve = _dfCriticalHighNonCveIssues(sys); } catch (e) { nonCve = null; }
-    return { sys, u, cur, min, hops, latest, floor: floor && !floor.alreadyMet ? floor : null, nonCve };
+    return { sys, u, cur, min, hops, latest, floor: floor && !floor.alreadyMet ? floor : null, nonCve, minSafe: _minSafeRelease(sys) };
   });
   const byUrg = {}; rows.forEach(r => { const k = r.u.urgency || 'Not rated'; byUrg[k] = (byUrg[k] || 0) + 1; });
   o += `## 1. Summary\n\n- **${rows.length}** system${rows.length !== 1 ? 's' : ''} have a recommended upgrade; ${rows.filter(r => r.hops.length > 1).length} need more than one hop.\n`;
-  const fl = rows.filter(r => r.floor).length, nc = rows.filter(r => r.nonCve).length;
+  const fl = rows.filter(r => r.floor).length, nc = rows.filter(r => r.nonCve).length, msb = rows.filter(r => r.minSafe && r.minSafe.behind).length;
   if (fl) o += `- **${fl}** have critical/high CVEs that need a version above the recommended target (see the Security fix floor column).\n`;
+  if (msb) o += `- **${msb}** run below the minimum safe release of their ONTAP line (the first release of the line with no known high or critical advisory open); see the Minimum safe column. The target of every one of them is at or above it.\n`;
   if (nc) o += `- **${nc}** have critical/high NetApp findings that are not CVEs and are not cleared by a version change alone.\n`;
   o += `\n` + _wdTable(['Urgency', 'Systems'], Object.keys(byUrg).map(k => [k, byUrg[k]]));
   if (parity && parity.results && parity.results.length) {
@@ -36013,8 +36111,8 @@ function compileUpgradesWordMd(systems, scopeTitle) {
     parity.results.forEach(r => { o += `- All ${r.label} systems should match at **${r.version}** (highest of Active IQ's recommended releases, driven by: ${r.driverSystems.slice(0, 3).join(', ')}${r.driverSystems.length > 3 ? ` and ${r.driverSystems.length - 3} more` : ''}).\n`; });
     o += `\n`;
   }
-  o += `## 2. Upgrades by system\n\n` + _wdTable(['System', 'Platform', 'Current', 'Target', 'Latest supported', 'Path', 'Security fix floor', 'Non-CVE critical/high', 'Urgency'],
-    rows.slice().sort((x, y) => String(x.u.systemName).localeCompare(String(y.u.systemName), undefined, { numeric: true })).map(r => [r.u.systemName, r.u.platform, r.cur, r.min, r.latest, r.hops.length > 1 ? `${r.hops.length} hops` : (r.hops.length === 1 ? 'Direct' : 'n/a'), r.floor ? r.floor.version : '', r.nonCve ? r.nonCve.count : '', r.u.urgency]));
+  o += `## 2. Upgrades by system\n\n` + _wdTable(['System', 'Platform', 'Current', 'Target', 'Latest supported', 'Path', 'Minimum safe (line)', 'Security fix floor', 'Non-CVE critical/high', 'Urgency'],
+    rows.slice().sort((x, y) => String(x.u.systemName).localeCompare(String(y.u.systemName), undefined, { numeric: true })).map(r => [r.u.systemName, r.u.platform, r.cur, r.min, r.latest, r.hops.length > 1 ? `${r.hops.length} hops` : (r.hops.length === 1 ? 'Direct' : 'n/a'), r.minSafe ? r.minSafe.minSafe + (r.minSafe.behind ? ' (behind)' : '') : '', r.floor ? r.floor.version : '', r.nonCve ? r.nonCve.count : '', r.u.urgency]));
   // distinct upgrade paths
   const paths = new Map();
   rows.forEach(r => { const k = [r.u.platform, r.cur, r.min, r.hops.map(h => h.from + '>' + h.to).join(',')].join('|'); let g = paths.get(k); if (!g) { g = { r, systems: [] }; paths.set(k, g); } g.systems.push(r.u.systemName); });
@@ -36029,6 +36127,8 @@ function compileUpgradesWordMd(systems, scopeTitle) {
       r.hops.forEach((h, i) => { o += `${i + 1}. **${h.from} to ${h.to}**\n`; (h.steps || []).forEach(s => { o += `- ${stepTxt(s)}\n`; }); o += `\n`; });
     } else if (r.hops.length === 1) o += `Direct upgrade: no intermediate versions are required.\n\n`;
     if (r.u.benefits) o += `**Expected benefits:** ${one(r.u.benefits)}\n\n`;
+    { const pi = _upgradePathIssues(r.cur, r.min).concat(r.u.aiqTarget && r.u.aiqTarget !== r.min ? _upgradePathIssues(r.cur, r.u.aiqTarget) : []);
+      pi.forEach(i => { o += `**Known issue on this path (${i.id}):** ${i.summary}. ${i.note} ${i.url}\n\n`; }); }
   });
   // non-CVE critical/high findings per system
   const withNc = rows.filter(r => r.nonCve && r.nonCve.items && r.nonCve.items.length);
@@ -39138,6 +39238,7 @@ async function loadReferenceStatus() {
     if (lib.found && lib.stale) msgs.push(`The NetApp Reference Library was last compiled ${lib.compiled || 'on an unknown date'} (${lib.ageDays == null ? 'age unknown' : lib.ageDays + ' days ago'}). ARIA reads that folder but does not update it.`);
     (d.imtNewer || []).forEach(x => msgs.push(`${x.name}: version ${x.latest} is released, ARIA's compatibility table recommends ${x.ours}. The table needs its compatibility range for ${x.latest} before it can recommend it.`));
     const _seenW = new Set(); (d.harvestWarnings || []).forEach(w => { const m = 'Harvest warning: ' + w.message; if (!_seenW.has(m)) { _seenW.add(m); msgs.push(m + ' (' + String(w.at).slice(0, 10) + ')'); } });
+    if (lib.found && lib.harvest && lib.harvest.unharvested && lib.harvest.unharvested.length) msgs.push(`The NetApp Reference Library has ${lib.harvest.unharvested.length} entr${lib.harvest.unharvested.length === 1 ? 'y' : 'ies'} newer than the last harvest into ARIA (newest: ${lib.harvest.unharvested[0]}). The weekly harvest routine (docs/LIBRARY_HARVEST_ROUTINE.md) reads them.`);
     if (!lib.found) msgs.push('The NetApp Reference Library folder was not found on this machine. Enter its path below to enable the library search.');
     ban.style.display = msgs.length ? '' : 'none'; ban.style.background = 'rgba(245,158,11,0.10)'; ban.style.border = '1px solid rgba(245,158,11,0.35)'; ban.innerHTML = msgs.map(m => _esc(m)).join('<br>');
     const inp = document.getElementById('libraryPathInput'); if (inp && document.activeElement !== inp) inp.value = lib.configured || '';
