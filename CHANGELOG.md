@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.295 (2026-10-08)
+
+### Fixed
+- CISA KEV status is read from CISA's catalog by CVE id. It was read from a field the per-system advisories never carry, so the KEV check passed for every system and no CVE showed as exploited.
+- The header KEV count and the severity summary ended early (KEV 0, 25 of 686 advisories) when one local advisory entry had no CVE list; each row is handled on its own now.
+
 ## 5.6.294 (2026-10-08)
 
 ### Added

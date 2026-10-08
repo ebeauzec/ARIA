@@ -10432,11 +10432,17 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 bdata = json.loads(BULLETINS_PATH.read_text(encoding='utf-8'))
                 for b in bdata.get('bulletins', []):
-                    cat = b.get('severity', 'unknown').lower()
-                    bulletin_summary[cat] = bulletin_summary.get(cat, 0) + 1
-                    # Collect all CVE IDs from PSIRT bulletins
-                    for cve_id in b.get('cve', []):
-                        psirt_cve_set.add(cve_id.upper())
+                    # One odd row (a known-bug entry with "cve": null, a missing severity) used to raise here and end the loop after the first
+                    # few rows, so the KEV count and the severity summary came out empty with no error. Each row is handled on its own.
+                    try:
+                        cat = str(b.get('severity') or 'unknown').lower()
+                        bulletin_summary[cat] = bulletin_summary.get(cat, 0) + 1
+                        # Collect all CVE IDs from PSIRT bulletins
+                        for cve_id in (b.get('cve') or []):
+                            if isinstance(cve_id, str) and cve_id:
+                                psirt_cve_set.add(cve_id.upper())
+                    except Exception:
+                        continue
             except Exception:
                 pass
         # kevCount = only PSIRT CVEs that appear in the CISA KEV catalog

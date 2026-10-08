@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.294";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.295";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.295",
+    date: "8 October 2026",
+    title: "CISA KEV Matching Fixed",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Known-exploited (CISA KEV) CVEs were never marked on systems. The flag was read from a field the per-system advisories never carry, so the 'No CISA KEV Active Exploitation Alerts' check passed for every system and no CVE showed as exploited. KEV status now comes from CISA's catalog by CVE id: in this fleet five KEV CVEs apply, one of them on 826 systems.",
+          "The header KEV count showed nothing when the local advisory file held an entry without a CVE list (a known-bug entry): one such row ended the count early with no error. Each row is now handled on its own, and the severity summary counts all advisories again (it counted 25 of 686).",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.294",
     date: "8 October 2026",
@@ -17699,7 +17715,7 @@ function renderCSMTab() {
       else _fail('fw', s, `${_fwRisks.length} firmware finding${_fwRisks.length > 1 ? 's' : ''}`);
 
       // 14. No CISA KEV active exploitation alerts
-      const _cisaHits = _sec.filter(b => b.cisaKEV === true || b.cisaKev === true || (b.tags || []).includes('CISA-KEV'));
+      const _cisaHits = _sec.filter(_bulletinIsKev);
       if (_isOnt && _cisaHits.length === 0) _cisaKevPass++;
       else if (_isOnt) _fail('kev', s, `${_cisaHits.length} CISA KEV CVE${_cisaHits.length > 1 ? 's' : ''}`);
 
@@ -18249,7 +18265,7 @@ function renderCSMTab() {
     const desc = ((r.description || '') + ' ' + (r.name || '') + ' ' + (r.category || '')).toLowerCase();
     return desc.includes('firmware') || desc.includes('disk qual') || desc.includes('shelf fw');
   });
-  const _sCisaHits   = _sCVEs.filter(b => b.cisaKEV === true || b.cisaKev === true || (b.tags || []).includes('CISA-KEV'));
+  const _sCisaHits   = _sCVEs.filter(_bulletinIsKev);
   const _sSvms       = (typeof getSystemSvms === 'function') ? (getSystemSvms(sys) || []) : (sys.vservers || []);
   const _sCloneCount = sys.flexCloneCount || 0;
   const _sAdoptScore = (typeof computeFeatureAdoptionScore === 'function') ? computeFeatureAdoptionScore(sys) : null;
@@ -20884,6 +20900,24 @@ function _renderPlatformInsightsSection(systems) {
 // One CVE inventory for every document. Advisory feeds also carry KB articles and vendor bug
 // ids (KB-..., CONTAP-...) that are not CVEs; counting them inflated "unique CVEs" (89 vs 57
 // critical/high + the rest). A bulletin that lists several CVEs contributes each of them.
+// CISA KEV: a CVE is "known exploited" when it is in CISA's catalog (data/cisa_kev.json, kept current by the scanner). The flag used to be read only from a
+// field on the bulletin (cisaKev), and the bulletins built for each system (from the advisory database, from the API, from findings) never carry it, so the
+// "No CISA KEV Active Exploitation Alerts" check passed for every system and no CVE was ever marked exploited -- even for CVEs that are in the catalog.
+let _kevCves = null;   // Map: CVE id -> catalog entry
+async function loadKevCatalog() {
+  try {
+    const r = await fetch('/data/cisa_kev.json', { cache: 'no-store' }); if (!r.ok) return;
+    const d = await r.json();
+    _kevCves = new Map(((d && d.vulnerabilities) || []).map(v => [String(v.cveID || '').toUpperCase(), v]).filter(x => x[0]));
+  } catch (_e) { /* offline or demo mode: the flag on the bulletin is still honoured */ }
+}
+function _bulletinIsKev(b) {
+  if (!b) return false;
+  if (b.cisaKEV === true || b.cisaKev === true || (b.tags || []).includes('CISA-KEV')) return true;
+  if (!_kevCves || !_kevCves.size) return false;
+  const ids = (String(b.cve || '') + ' ' + String(b.cveId || '') + ' ' + String(b.id || '') + ' ' + String(b.title || '')).match(/CVE-\d{4}-\d{4,}/gi) || [];
+  return ids.some(id => _kevCves.has(id.toUpperCase()));
+}
 function _dfCveIndex(systems) {
   const map = {};
   // kev: true if ANY source flags this CVE as CISA Known Exploited (confirmed active
@@ -20903,7 +20937,7 @@ function _dfCveIndex(systems) {
   (systems || []).forEach(sys => {
     (sys.securityBulletins || []).forEach(b => {
       const ids = new Set([...(String(b.cve || '').match(/CVE-\d{4}-\d{4,}/gi) || []), ...(String(b.cveId || b.id || '').match(/CVE-\d{4}-\d{4,}/gi) || []), ...(String(b.title || '').match(/CVE-\d{4}-\d{4,}/gi) || [])]);
-      const isKev = b.cisaKEV === true || b.cisaKev === true || (b.tags || []).includes('CISA-KEV');
+      const isKev = _bulletinIsKev(b);
       ids.forEach(id => add(id, b.severity, b.cvss || b.cvssScore, b.title, sys, isKev));
     });
     (sys.risks || []).forEach(r => (r.cveDetails || []).forEach(d => { if (d) add(d.id, d.severity, d.cvss || d.cvssScore, d.title || d.description, sys, !!r.knownExploited); }));
@@ -24198,6 +24232,7 @@ function formatCostOfInactionText(systems) {
  * Caches into state.enrichmentKB. Silently no-ops when offline.
  */
 async function loadEnrichmentKB() {
+  loadKevCatalog();
   if (!state.isRunningViaProxy) return;
   try {
     const resp = await fetch('/api/knowledge-base');
