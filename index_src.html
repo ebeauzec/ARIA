@@ -42,11 +42,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=5.6.291-1">
+  <link rel="stylesheet" href="styles.css?v=5.6.292-1">
   
   <!-- Load Chart.js locally -->
-  <script src="chart.js?v=5.6.291-1"></script>
-  <script src="pptxgen.bundle.js?v=5.6.291-1"></script>
+  <script src="chart.js?v=5.6.292-1"></script>
+  <script src="pptxgen.bundle.js?v=5.6.292-1"></script>
 </head>
 <body>
 
@@ -1184,6 +1184,37 @@
           </div>
         </div>
 
+        <div class="card settings-card" style="border-top: 2px solid #38bdf8; margin-bottom: 16px;" id="referenceDataCard">
+          <div class="settings-card-header">
+            <div class="settings-card-icon" style="background: rgba(56,189,248,0.12);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </div>
+            <div>
+              <div class="settings-card-title" style="background: linear-gradient(135deg, #38bdf8, #0ea5e9); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Reference Data &amp; NetApp Library</div>
+              <div class="settings-card-desc">How fresh each reference source is, and a search over the NetApp Reference Library folder. No AI is involved.</div>
+            </div>
+          </div>
+          <div id="refDataBanner" style="display:none; padding: 8px 12px; border-radius: 8px; margin-bottom: 10px; font-size: 0.78rem;"></div>
+          <div id="refDataTable" style="font-size: 0.76rem; margin-bottom: 10px; color: var(--text-secondary);">Loading…</div>
+          <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+            <button class="action-btn" style="font-size: 0.76rem; padding: 7px 14px; flex: 1;" onclick="refreshReferenceNow()" id="refRefreshBtn">Refresh all reference data now</button>
+            <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 14px;" onclick="loadReferenceStatus()">↻ Status</button>
+          </div>
+          <div class="form-group" style="margin-bottom: 8px;">
+            <label class="form-label" for="libraryPathInput">NetApp Reference Library folder <span style="font-weight:400;color:var(--text-muted);font-size:0.7rem;">(leave empty to auto-detect)</span></label>
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="libraryPathInput" class="form-input" placeholder="e.g. /Users/me/Library/CloudStorage/GoogleDrive-…/My Drive/Cowork/NetApp/NetApp Reference Library" style="font-family: var(--font-mono); font-size: 0.74rem;">
+              <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 14px;" onclick="saveLibraryPath()">Save</button>
+            </div>
+            <div class="form-helper" id="libraryPathInfo"></div>
+          </div>
+          <div style="display:flex; gap:8px; margin-bottom: 8px;">
+            <input type="text" id="librarySearchInput" class="form-input" placeholder="Search the library: a CVE, a bug number, a command, a platform…" onkeydown="if(event.key==='Enter')librarySearch()">
+            <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 14px;" onclick="librarySearch()">Search</button>
+          </div>
+          <div id="librarySearchResults" style="font-size: 0.78rem;"></div>
+        </div>
+
           </div>
           <div class="settings-span">
         <!-- Sync Controls Bar -->
@@ -1551,9 +1582,9 @@
   <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleJSONImport(event)">
 
   <!-- Javascript File -->
-  <script src="aria-api.js?v=5.6.291-1"></script>
-  <script src="data/reference_library.js?v=5.6.291-1"></script>
-  <script src="app.js?v=5.6.291-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
+  <script src="aria-api.js?v=5.6.292-1"></script>
+  <script src="data/reference_library.js?v=5.6.292-1"></script>
+  <script src="app.js?v=5.6.292-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
   <script>
     // Verify app.js parsed OK — if APP_VERSION is undefined, the file had a parse error
     if (typeof APP_VERSION === 'undefined') {

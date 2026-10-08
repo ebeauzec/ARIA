@@ -5654,10 +5654,11 @@ class EnrichmentScheduler:
         threading.Thread(target=self._do_scan, daemon=True, name='enrich-manual').start()
         return {'status': 'started'}
 
-    def run_kb_now(self):
-        """Manual trigger for the slow KB crawl specifically."""
+    def run_kb_now(self, force=False):
+        """Manual trigger for the slow KB crawl specifically. force=True ignores the 'file is still fresh' skips."""
         if self._kb_running:
             return {'status': 'already_running'}
+        self._force_kb = bool(force)
         threading.Thread(target=self._do_kb_scan, daemon=True, name='enrich-kb-manual').start()
         return {'status': 'started'}
 
@@ -5814,7 +5815,8 @@ class EnrichmentScheduler:
         scan_start = time.time()
         results = {}
         try:
-            interval_h = self._kb_interval / 3600
+            interval_h = 0 if getattr(self, '_force_kb', False) else self._kb_interval / 3600
+            self._force_kb = False
 
             kb_age = self._file_age_hours(self._KB_STALENESS_FILE)
             if kb_age is not None and kb_age < interval_h:
@@ -9395,6 +9397,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_config_get()
         elif self.path.startswith('/api/watchlists'):
             self.handle_watchlists()
+        elif self.path.startswith('/api/library/'):
+            self.handle_library('GET')
         elif self.path == '/api/eoa-database':
             self.handle_eoa_database_get()
         elif self.path == '/api/imt-interop':
@@ -9775,6 +9779,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_bulletins_post()
         elif self.path == '/api/enrich/scan':
             self.handle_enrich_scan()
+        elif self.path.startswith('/api/library/'):
+            self.handle_library('POST')
         elif self.path == '/api/auto-harvest/run':
             self.handle_auto_harvest_run()
         elif self.path == '/api/asup/import':
@@ -10416,6 +10422,62 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         self.wfile.write(res)
+
+    def handle_library(self, method):
+        """NetApp Reference Library + reference-data freshness (no AI, no network: reads files only).
+        GET  /api/library/status           library freshness + age of every reference data file
+        GET  /api/library/search?q=&limit= keyword search over the library's markdown
+        GET  /api/library/doc?path=        one library document (markdown text)
+        POST /api/library/config           {libraryPath} -- save the folder (empty = auto-detect)
+        POST /api/library/refresh          run every built-in reference scanner now"""
+        _tools = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools')
+        if _tools not in sys.path:
+            sys.path.insert(0, _tools)
+        import library_manager as _lm
+        parsed = urllib.parse.urlsplit(self.path)
+        route = parsed.path.rstrip('/')
+        q = urllib.parse.parse_qs(parsed.query)
+        cfg = _load_config()
+        try:
+            if method == 'GET' and route == '/api/library/status':
+                found = _lm.find_library(cfg)
+                lib = _lm.library_status(found['path']) if found.get('path') else {'found': False}
+                lib['source'] = found.get('source'); lib['configured'] = (cfg.get('libraryPath') or '').strip()
+                sch = _enrichment_scheduler.status() if _enrichment_scheduler else {}
+                self._send_json(200, {'library': lib, 'data': _lm.data_freshness(str(SCRIPT_DIR / 'data')),
+                                      'scanner': {'running': bool(sch.get('isRunning') or sch.get('isKbRunning')), 'lastScan': sch.get('lastScan'), 'lastKbScan': sch.get('lastKbScan')}})
+            elif method == 'GET' and route == '/api/library/search':
+                root = _lm.find_library(cfg).get('path')
+                if not root:
+                    self._send_json(404, {'error': 'Library folder not found. Set its path in Settings > Sync.'})
+                else:
+                    self._send_json(200, _lm.search(root, (q.get('q') or [''])[0], min(int((q.get('limit') or ['25'])[0]), 100)))
+            elif method == 'GET' and route == '/api/library/doc':
+                root = _lm.find_library(cfg).get('path')
+                text = _lm.read_doc(root, (q.get('path') or [''])[0]) if root else None
+                if text is None:
+                    self._send_json(404, {'error': 'Document not found'})
+                else:
+                    self._send_json(200, {'path': (q.get('path') or [''])[0], 'text': text})
+            elif method == 'POST' and route == '/api/library/config':
+                if (getattr(self, '_user', None) or {}).get('role') != 'admin':
+                    self._send_json(403, {'error': 'Administrators only'}); return
+                n = int(self.headers.get('Content-Length') or 0)
+                body = json.loads(self.rfile.read(n) or b'{}')
+                path = str(body.get('libraryPath') or '').strip()
+                if path and not os.path.isfile(os.path.join(os.path.expanduser(path), 'INDEX.md')):
+                    self._send_json(400, {'error': 'That folder has no INDEX.md, so it does not look like the NetApp Reference Library.'}); return
+                cfg['libraryPath'] = path
+                CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
+                self._send_json(200, {'ok': True})
+            elif method == 'POST' and route == '/api/library/refresh':
+                if not _enrichment_scheduler:
+                    self._send_json(503, {'error': 'Scanner is not running'}); return
+                self._send_json(202, {'fast': _enrichment_scheduler.run_now(), 'slow': _enrichment_scheduler.run_kb_now(force=True)})
+            else:
+                self._send_json(404, {'error': 'Unknown library route'})
+        except Exception as e:
+            self._send_json(500, {'error': str(e)})
 
     def handle_enrich_scan(self):
         """POST /api/enrich/scan — Manually trigger an enrichment scan."""
@@ -11117,8 +11179,17 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             db = _init_db()
             try:
                 row = db.execute("SELECT result_json FROM enrich_cache WHERE cache_key = '_catalog:versions'").fetchone()
-                if row:
-                    catalog = json.loads(row[0])
+                catalog = json.loads(row[0]) if row else None
+                # The scanner keeps data/version_catalog.json current; the cache row never expired, so the browser kept an old release list
+                # (no 9.19.1) for weeks. Use whichever of the two is newer.
+                try:
+                    _f = json.loads((SCRIPT_DIR / 'data' / 'version_catalog.json').read_text(encoding='utf-8'))
+                    if _f and (not catalog or str(_f.get('fetchedAt') or '') > str(catalog.get('fetchedAt') or '')):
+                        catalog = {k: v for k, v in _f.items() if not k.startswith('_')}
+                except Exception:
+                    pass
+                if catalog:
+                    pass
                 else:
                     catalog = fetch_latest_version_catalog()
                     if catalog:
@@ -11452,7 +11523,7 @@ def _user_command(argv):
 
 def main(block=True, port=None):
     """Start ARIA. block=False (used by the desktop program) starts serving in a thread and returns the server."""
-    global PORT
+    global PORT, _enrichment_scheduler, _harvest_scheduler   # module-level: as locals here, every handler and the Settings page saw "no scheduler"
     if port:
         PORT = int(port)
     if _user_command(sys.argv[1:]):
