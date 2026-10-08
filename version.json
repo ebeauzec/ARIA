@@ -1,8 +1,8 @@
 {
-  "version": "5.6.292",
+  "version": "5.6.293",
   "major": 5,
   "minor": 6,
-  "patch": 292,
+  "patch": 293,
   "date": "2026-10-08",
-  "notes": "Reference data freshness, NetApp library search, release list and scheduler fixes."
+  "notes": "Clearer refresh message."
 }
