@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.301 (2026-10-08)
+
+### Fixed
+- Opening or reloading the app started a full background harvest whatever the cache age. A page load now re-syncs only when the cache is older than the auto-refresh interval (an hour when auto-refresh is off).
+- The cache metadata has its own table (`harvest_cache_meta`): it sat after the 140 MB result in the same row, which cost about 8 seconds per status poll and page load.
+- `/api/harvest` is built once per cache version and sent gzip-compressed (about 180 MB becomes 22 MB).
+- A harvest records the seconds per phase (log line and `phaseSeconds` in the result).
+
 ## 5.6.300 (2026-10-08)
 
 ### Added
