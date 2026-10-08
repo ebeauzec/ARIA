@@ -45,7 +45,7 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.292";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.293";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
   {
@@ -39016,7 +39016,7 @@ async function refreshReferenceNow() {
   const btn = document.getElementById('refRefreshBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
   try {
     const r = await fetch('/api/library/refresh', { method: 'POST' });
-    showToast(r.ok ? 'Reference refresh started; it runs in the background and can take several minutes.' : 'Could not start the refresh (' + r.status + ').', r.ok ? 'success' : 'error');
+    showToast(r.ok ? 'Reference refresh started. The release list, advisories and KEV update within minutes; the knowledge-base crawl runs in the background and can take an hour.' : 'Could not start the refresh (' + r.status + ').', r.ok ? 'success' : 'error');
   } catch (e) { showToast('Could not start the refresh: ' + e.message, 'error'); }
   if (btn) setTimeout(() => { btn.disabled = false; btn.textContent = 'Refresh all reference data now'; loadReferenceStatus(); }, 4000);
 }

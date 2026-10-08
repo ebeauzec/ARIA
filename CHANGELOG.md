@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.293 (2026-10-08)
+
+### Fixed
+- The reference refresh message states how long each part takes (the knowledge-base crawl can take an hour).
+
 ## 5.6.292 (2026-10-08)
 
 ### Added
