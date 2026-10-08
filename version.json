@@ -1,8 +1,8 @@
 {
-  "version": "5.6.298",
+  "version": "5.6.299",
   "major": 5,
   "minor": 6,
-  "patch": 298,
+  "patch": 299,
   "date": "2026-10-08",
-  "notes": "ONTAP tools version read from NetApp."
+  "notes": "Code audit fixes."
 }
