@@ -4628,7 +4628,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                     # Persist resolved names so fallback runs keep real names
                     try:
                         _cfg_w = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
-                        _cfg_w["watchlistNames"] = {w["id"]: w["name"] for w in watchlists_out}
+                        _cfg_w.setdefault("watchlistNames", {}).update({w["id"]: w["name"] for w in watchlists_out})   # merge: another account's names must survive
                         CONFIG_PATH.write_text(json.dumps(_cfg_w, indent=2), encoding="utf-8")
                     except Exception:
                         pass
@@ -4655,7 +4655,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                     # Persist GQL-resolved names so fallback uses real names
                     try:
                         _cfg_w = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
-                        _cfg_w["watchlistNames"] = {w["id"]: w["name"] for w in watchlists_out}
+                        _cfg_w.setdefault("watchlistNames", {}).update({w["id"]: w["name"] for w in watchlists_out})   # merge: another account's names must survive
                         CONFIG_PATH.write_text(json.dumps(_cfg_w, indent=2), encoding="utf-8")
                     except Exception:
                         pass
