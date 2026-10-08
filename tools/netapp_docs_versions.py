@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 SOURCES = [
     {'key': 'host_utilities_linux', 'url': 'https://docs.netapp.com/us-en/ontap-sanhost/hu-luhu-release-notes.html', 'pat': r'Host Utilities\s+(\d+\.\d+(?:\.\d+)?)'},
     {'key': 'host_utilities_windows', 'url': 'https://docs.netapp.com/us-en/ontap-sanhost/hu-wuhu-release-notes.html', 'pat': r'Host Utilities\s+(\d+\.\d+(?:\.\d+)?)'},
+    {'key': 'vmware_otv', 'url': 'https://docs.netapp.com/us-en/ontap-tools-vmware-vsphere-10/release-notes/whats-new.html', 'pat': r'ONTAP tools(?: for VMware vSphere)?\s+(\d+\.\d+(?:\.\d+)?)'},
     {'key': 'snapcenter', 'url': 'https://docs.netapp.com/us-en/snapcenter/release-notes/release-notes.html', 'pat': r'SnapCenter\s+(?:Software\s+)?(\d+\.\d+(?:\.\d+)?)'},
 ]
 

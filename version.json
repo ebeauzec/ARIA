@@ -1,8 +1,8 @@
 {
-  "version": "5.6.297",
+  "version": "5.6.298",
   "major": 5,
   "minor": 6,
-  "patch": 297,
+  "patch": 298,
   "date": "2026-10-08",
-  "notes": "Wrong upgrade target fixed; remaining reference tables derived by ARIA."
+  "notes": "ONTAP tools version read from NetApp."
 }
