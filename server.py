@@ -1584,9 +1584,10 @@ _opener_lock  = threading.Lock()
 _opener_cache = None
 _opener_ssl_ctx_id = None  # tracks which ssl ctx the opener was built for
 
-def _build_opener(ctx):
-    """Build a urllib opener that honours OS/env proxy settings + the given SSL ctx."""
-    proxies = urllib.request.getproxies()  # reads env vars + Windows registry/WPAD
+def _build_opener(ctx, direct=False):
+    """Build a urllib opener that honours OS/env proxy settings + the given SSL ctx.
+    direct=True (or ARIA_NO_PROXY=1) ignores every proxy."""
+    proxies = {} if (direct or os.environ.get("ARIA_NO_PROXY")) else urllib.request.getproxies()  # reads env vars + Windows registry / macOS network settings
     handlers = [urllib.request.HTTPSHandler(context=ctx)]
     if proxies:
         # ProxyHandler must come before HTTPSHandler
@@ -1613,6 +1614,22 @@ def _get_opener():
     return _opener_cache
 
 
+_proxy_bypass = False   # set once a request that failed through the system proxy succeeds when sent direct
+
+
+def _send_direct(req):
+    """Send req without any proxy. Returns (status, raw), or None if the direct attempt itself failed to connect."""
+    # urllib rewrites a request it sends through a proxy to point at the proxy, so start from a fresh copy
+    req = urllib.request.Request(req.full_url, data=req.data, headers=dict(req.header_items()), method=req.get_method())
+    try:
+        with _build_opener(_ssl_ctx(), direct=True).open(req, timeout=120) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except Exception:
+        return None
+
+
 def _http(method, url, headers=None, body=None, _retry=True, _attempt=0):
     """Make an HTTP/HTTPS request using the shared SSL context.
 
@@ -1632,12 +1649,26 @@ def _http(method, url, headers=None, body=None, _retry=True, _attempt=0):
             hdrs.setdefault("Content-Type", "application/json")
         elif isinstance(body, str):
             data = body.encode("utf-8")
+    global _proxy_bypass
     req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    if _proxy_bypass:
+        res = _send_direct(req)
+        if res is not None:
+            return res
+        _proxy_bypass = False     # direct no longer works (network changed): go back to the system proxy
     opener = _get_opener()
     try:
         with opener.open(req, timeout=120) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
+        # A system proxy that wants a login Python cannot give (macOS VPN / security gateways) answers 401/407 itself.
+        # Try once without the proxy; keep going direct only if that gets a real answer.
+        if e.code in (401, 407) and urllib.request.getproxies() and not os.environ.get("ARIA_NO_PROXY"):
+            res = _send_direct(req)
+            if res is not None and res[0] not in (401, 407):
+                print(f"  [HTTP] {e.code} through the system proxy; direct connection works, using it from now on", flush=True)
+                _proxy_bypass = True
+                return res
         # Rate limited or briefly unavailable: wait (Retry-After if given, else 2/4/8 s) and try again, at most three times.
         if e.code in (429, 503) and _attempt < 3:
             try: wait = float(e.headers.get('Retry-After', ''))
