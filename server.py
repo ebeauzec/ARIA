@@ -928,6 +928,45 @@ def _save_harvest_account(db, account_id, account_label, result, duration_ms=0):
         _save_harvest(db, result, duration_ms)
 
 
+def _fw_ver_key(v):
+    """Sortable key for a firmware or release string: "13.12" < "13.13", "9.16.1P9" < "9.16.1P11", "19.2" < "19.2P1" (string comparison got these wrong)."""
+    s = str(v or '')
+    nums = [int(x) for x in re.findall(r'\d+', s.split('P')[0].split('p')[0])]
+    pm = re.search(r'[Pp](\d+)', s)
+    return (tuple(nums), int(pm.group(1)) if pm else 0)
+
+
+def _raise_firmware_to_evidence(systems_out):
+    """The hand-kept firmware baseline overrides Active IQ's recommended SP/BMC and BIOS versions, and it goes stale: a system running 13.12 was told
+    the recommended version is 13.11. Nothing newer than what is already installed somewhere in the monitored fleet can be older than the
+    recommendation, so for each model the recommended version is raised to the highest version found installed on that model. A baseline that is
+    ahead of the fleet is left alone. Returns the number of systems changed."""
+    best = {}
+    for s in systems_out:
+        model = str(s.get('model') or s.get('platform') or '')
+        for field in ('systemFirmware', 'motherboardFirmware'):
+            fw = s.get(field) or {}
+            cur = fw.get('currentVersion')
+            if model and cur:
+                k = (model, field, fw.get('type') or '')
+                if k not in best or _fw_ver_key(cur) > _fw_ver_key(best[k]):
+                    best[k] = cur
+    changed = 0
+    for s in systems_out:
+        model = str(s.get('model') or s.get('platform') or '')
+        for field in ('systemFirmware', 'motherboardFirmware'):
+            fw = s.get(field)
+            if not fw or not fw.get('currentVersion'):
+                continue
+            top = best.get((model, field, fw.get('type') or ''))
+            rec = fw.get('recommendedVersion') or ''
+            if top and (not rec or _fw_ver_key(top) > _fw_ver_key(rec)):
+                fw['recommendedVersion'] = top
+                fw['_recommendedSource'] = 'fleet_installed_max'
+                changed += 1
+    return changed
+
+
 def _harvest_guard(db, account_id, label, result, prev_result, notes=None):
     """A harvest that comes back much smaller than the one before is almost always a partial one (a failed lookup, a rate limit, a dropped
     connection), not customers that vanished. Customer and site lists are reference data keyed by id, so entries the new harvest lacks are
@@ -4046,7 +4085,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                 if _ext_branch_latest:
                     _existing_rec_os = s.get("recommendedOSVersion", "") or ""
                     # Use the external baseline if it's newer or if AIQ didn't provide one
-                    if not _existing_rec_os or _ext_branch_latest > _existing_rec_os:
+                    if not _existing_rec_os or _fw_ver_key(_ext_branch_latest) > _fw_ver_key(_existing_rec_os):
                         s["recommendedOSVersion"] = _ext_branch_latest
                         s["_recommendedOSSource"] = "external_baseline"
 
@@ -4606,6 +4645,13 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                 pass
 
         duration_ms = int((time.time() - start_time) * 1000)
+
+        try:
+            _fw_raised = _raise_firmware_to_evidence(systems_out)
+            if _fw_raised:
+                print(f"  [HARVEST] Firmware: raised {_fw_raised} recommended SP/BMC/BIOS version(s) to the highest version installed on that model in this fleet", flush=True)
+        except Exception as _fw_ev_err:
+            print(f"  [HARVEST] Firmware evidence pass skipped: {_fw_ev_err}", flush=True)
 
         result = {
             "status": "success",
@@ -5377,43 +5423,46 @@ def scan_and_persist_advisories(nvd_api_key=None):
     products = ['ONTAP', 'StorageGRID', 'SnapCenter', 'Trident', 'Active IQ']
     seen_ids = set()
     page_limit = 50
-    max_pages = 8  # 400 most-recently-updated advisories -- generous headroom over the ~70-entry local DB
-    for page in range(max_pages):
-        skip = page * page_limit
-        url = (f'https://security.netapp.com/adv_api/advisory/'
-               f'?limit={page_limit}&skip={skip}&order=desc&sort_by=updated_date')
-        text, err = _enrich_fetch(url, timeout=20)
-        if err or not text:
-            print(f'  [SCAN] Index page {page} fetch failed: {err}', flush=True)
-            break
-        try:
-            page_data = json.loads(text)
-        except Exception as ex:
-            print(f'  [SCAN] Index page {page} JSON parse failed: {ex}', flush=True)
-            break
-        advisories = page_data.get('advisories') or []
-        if not advisories:
-            break
-        for adv in advisories:
-            adv_id = (adv.get('adv_id') or '').lower()
-            if not adv_id or adv_id in seen_ids:
-                continue
-            haystack = ' '.join(
-                (adv.get('kb_affected_list') or []) + (adv.get('kb_investigating_list') or [])
-            ).lower()
-            if not any(p.lower() in haystack for p in products):
-                continue
-            seen_ids.add(adv_id)
-            index_entries.append({
-                'id': adv_id,
-                'link': f'https://security.netapp.com/advisory/{adv_id}/',
-                'raw': adv,
-            })
-        time.sleep(0.3)  # be polite
-        if len(advisories) < page_limit:
-            break  # reached the end of the index
+    # Two passes. NEW advisories come from the list ordered by PUBLICATION date: on 7 October 2026 NetApp re-dated thousands of old advisories as
+    # "updated", so the 400 most recently updated were all old ones and every advisory published after that day was missed for good.
+    # CHANGES to known advisories (new fixed releases, status) come from the list ordered by update date, as before.
+    for sort_by, max_pages in (('published_date', 8), ('updated_date', 8)):
+        for page in range(max_pages):
+            skip = page * page_limit
+            url = (f'https://security.netapp.com/adv_api/advisory/'
+                   f'?limit={page_limit}&skip={skip}&order=desc&sort_by={sort_by}')
+            text, err = _enrich_fetch(url, timeout=20)
+            if err or not text:
+                print(f'  [SCAN] Index page {page} ({sort_by}) fetch failed: {err}', flush=True)
+                break
+            try:
+                page_data = json.loads(text)
+            except Exception as ex:
+                print(f'  [SCAN] Index page {page} ({sort_by}) JSON parse failed: {ex}', flush=True)
+                break
+            advisories = page_data.get('advisories') or []
+            if not advisories:
+                break
+            for adv in advisories:
+                adv_id = (adv.get('adv_id') or '').lower()
+                if not adv_id or adv_id in seen_ids:
+                    continue
+                haystack = ' '.join(
+                    (adv.get('kb_affected_list') or []) + (adv.get('kb_investigating_list') or [])
+                ).lower()
+                if not any(p.lower() in haystack for p in products):
+                    continue
+                seen_ids.add(adv_id)
+                index_entries.append({
+                    'id': adv_id,
+                    'link': f'https://security.netapp.com/advisory/{adv_id}/',
+                    'raw': adv,
+                })
+            time.sleep(0.3)  # be polite
+            if len(advisories) < page_limit:
+                break  # reached the end of the index
 
-    print(f'  [SCAN] Found {len(index_entries)} relevant advisories across {page + 1} index page(s)', flush=True)
+    print(f'  [SCAN] Found {len(index_entries)} relevant advisories (published-date and updated-date passes)', flush=True)
 
     # ── 2. Load existing DB ────────────────────────────────────────────────────
     if BULLETINS_PATH.exists():
@@ -8133,6 +8182,26 @@ class EnrichmentScheduler:
         except Exception as _orn_err:
             print(f'  [ENRICH]   ONTAP release notes harvest failed: {_orn_err}', flush=True)
 
+        # ── 7d. End-of-availability platform list, read from docs.netapp.com (names only; dates come from Active IQ per system) ──
+        try:
+            import eoa_list as _eoa
+            _eoa_res = _eoa.harvest(_data_dir, lambda u: _enrich_fetch(u, timeout=30))
+            if _eoa_res.get('added') or _eoa_res.get('switchesAdded'):
+                changes['eoa_list'] = _eoa_res
+            print(f'  [ENRICH]   EOA platform list: {_eoa_res}', flush=True)
+        except Exception as _eoa_err:
+            print(f'  [ENRICH]   EOA platform list harvest failed: {_eoa_err}', flush=True)
+
+        # ── 7e. Newest released versions of NetApp-owned integrations (Host Utilities, SnapCenter), from docs.netapp.com release notes ──
+        try:
+            import netapp_docs_versions as _ndv
+            _ndv_res = _ndv.harvest(_data_dir, lambda u: _enrich_fetch(u, timeout=30))
+            if _ndv_res.get('changed'):
+                changes['integration_versions'] = _ndv_res['changed']
+            print(f'  [ENRICH]   Integration versions: {_ndv_res}', flush=True)
+        except Exception as _ndv_err:
+            print(f'  [ENRICH]   Integration version harvest failed: {_ndv_err}', flush=True)
+
         return changes
 
 
@@ -10557,6 +10626,12 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         if _tools not in sys.path:
             sys.path.insert(0, _tools)
         import library_manager as _lm
+        def _ndv_newer():
+            try:
+                import netapp_docs_versions as _ndv
+                return _ndv.newer_than_table(str(SCRIPT_DIR / 'data'))
+            except Exception:
+                return []
         parsed = urllib.parse.urlsplit(self.path)
         route = parsed.path.rstrip('/')
         q = urllib.parse.parse_qs(parsed.query)
@@ -10572,7 +10647,7 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     _warns = _recent_harvest_warnings(_wdb)
                 finally:
                     _wdb.close()
-                self._send_json(200, {'harvestWarnings': _warns, 'library': lib, 'data': _lm.data_freshness(str(SCRIPT_DIR / 'data')),
+                self._send_json(200, {'harvestWarnings': _warns, 'imtNewer': _ndv_newer(), 'library': lib, 'data': _lm.data_freshness(str(SCRIPT_DIR / 'data')),
                                       'scanner': {'running': bool(sch.get('isRunning') or sch.get('isKbRunning')), 'lastScan': sch.get('lastScan'), 'lastKbScan': sch.get('lastKbScan')}})
             elif method == 'GET' and route == '/api/library/search':
                 root = _lm.find_library(cfg).get('path')

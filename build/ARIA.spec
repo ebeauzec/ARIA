@@ -54,7 +54,7 @@ webview_datas, webview_binaries, webview_hidden = collect_all('webview')
 
 all_datas    = web_datas    + webview_datas
 all_binaries = webview_binaries
-all_hidden   = webview_hidden + collect_submodules('webview') + ['server', 'aria_auth', 'perf_integration', 'hw_docs_harvester', 'asup_parser', 'dqp_parser', 'firmware_harvester', 'reference_harvester', 'library_manager', 'ontap_release_notes']
+all_hidden   = webview_hidden + collect_submodules('webview') + ['server', 'aria_auth', 'perf_integration', 'hw_docs_harvester', 'asup_parser', 'dqp_parser', 'firmware_harvester', 'reference_harvester', 'library_manager', 'ontap_release_notes', 'eoa_list', 'netapp_docs_versions']
 
 # Platform-specific hidden imports
 if IS_WIN:

@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.6.296 (2026-10-08)
+
+### Fixed
+- The advisory scanner now also reads the NetApp list ordered by publication date. After NetApp re-dated thousands of old advisories on 7 October, the 400 most recently updated were all old ones and new advisories were missed (20 added at once).
+- Recommended SP/BMC and BIOS versions are never lower than the highest version installed on that model in the fleet (a stale hand-kept baseline overrode Active IQ; 495 cases of installed-newer-than-recommended), and release versions are compared numerically.
+- The Trident interoperability check no longer skips silently when the recommended version (26.06.1) is more precise than the table's key (26.06).
+
+### Added
+- `tools/eoa_list.py` reads the end-of-availability platform list from docs.netapp.com (16 platforms were missing).
+- `tools/netapp_docs_versions.py` reads the newest Host Utilities, SnapCenter, Veeam, Proxmox VE and vSphere versions and Settings > Data & Sync lists the integrations whose newest release is ahead of the compatibility table.
+
 ## 5.6.295 (2026-10-08)
 
 ### Fixed

@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir py7zr==0.22.0 \
 WORKDIR /app
 COPY --chown=aria:aria server.py aria_auth.py perf_integration.py hw_docs_harvester.py api_queries.json resolution_rules.json version.json \
      index.html index_src.html app.js styles.css chart.js pptxgen.bundle.js /app/
-COPY --chown=aria:aria tools/asup_parser.py tools/dqp_parser.py tools/firmware_harvester.py tools/reference_harvester.py tools/library_manager.py tools/ontap_release_notes.py /app/tools/
+COPY --chown=aria:aria tools/asup_parser.py tools/dqp_parser.py tools/firmware_harvester.py tools/reference_harvester.py tools/library_manager.py tools/ontap_release_notes.py tools/eoa_list.py tools/netapp_docs_versions.py /app/tools/
 COPY --chown=aria:aria docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
