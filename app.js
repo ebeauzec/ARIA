@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.300";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.301";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.301",
+    date: "8 October 2026",
+    title: "Opening The App No Longer Starts A Harvest",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Every time the app was opened or reloaded, the server started a full harvest in the background (about 19 minutes and 140 MB per large account), whatever the age of the cache. A page load now re-syncs only when the cache is older than the auto-refresh interval (4 hours by default; an hour when auto-refresh is off). The timer still keeps the data current.",
+          "The cache metadata (counts and timestamps) sat after the 140 MB result in the same database row, so SQLite read through the whole result to get to it: about 8 seconds on every status poll and page load, on a server that handles one request at a time. It now has a table of its own (0.07 s).",
+          "The merged fleet (about 180 MB of JSON) was parsed, merged and sent uncompressed on every page load. It is now built and compressed once per cache version and sent compressed: 22 MB on the wire, served in under 0.1 s once built.",
+          "A harvest now records the seconds each phase took (shown in the log and kept in the result as phaseSeconds), so the next step on harvest time rests on measured figures.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.300",
     date: "8 October 2026",

@@ -32,6 +32,7 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import json
+import gzip
 import ssl
 import sqlite3
 import threading
@@ -922,10 +923,38 @@ def _save_harvest_account(db, account_id, account_label, result, duration_ms=0):
         result.get("totalRisks", 0), result.get("totalCases", 0),
         result.get("totalRiskInstances", result.get("riskInstances", 0)),
     ))
+    _write_cache_meta(db, account_id, account_label, now, duration_ms, result)
     db.commit()
     print(f"  [CACHE] Saved harvest for account '{account_id}' ({len(result_json)} bytes, {result.get('totalSystems', 0)} systems)", flush=True)
     if account_id == "default":
         _save_harvest(db, result, duration_ms)
+
+
+# What /api/harvest sends, built once per cache version. The merged fleet is about 180 MB of JSON; it was parsed, merged and serialised again on every
+# page load and sent uncompressed. It is now compressed once and reused until a harvest changes the cache.
+_HARVEST_RESP = {'key': None, 'gz': b'', 'last_sync': ''}
+
+
+def _resync_after_seconds():
+    """How old the cache may get before opening the app starts a re-sync. Auto-refresh keeps the cache current on its own timer, so a page load only
+    steps in when that timer has not (it is off, or the server was asleep): after the auto-refresh interval, or an hour when auto-refresh is off."""
+    try:
+        cfg = _load_config()
+        if cfg.get('autoHarvestEnabled', True):
+            return max(1.0, float(cfg.get('autoHarvestIntervalHours', 4) or 4)) * 3600
+    except Exception:
+        pass
+    return 3600.0
+
+
+def _cache_age_seconds(last_sync_iso):
+    try:
+        t = datetime.fromisoformat(str(last_sync_iso).replace('Z', '+00:00'))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - t).total_seconds()
+    except Exception:
+        return float('inf')
 
 
 def _fw_ver_key(v):
@@ -1034,6 +1063,23 @@ def _load_cached_account(db, account_id):
     return result, meta
 
 
+_META_COLS = "account_id, account_label, harvested_at, duration_ms, system_count, cluster_count, risk_count, case_count, risk_instance_count"
+
+
+def _ensure_cache_meta_table(db):
+    db.execute("CREATE TABLE IF NOT EXISTS harvest_cache_meta (account_id TEXT PRIMARY KEY, account_label TEXT, harvested_at TEXT, duration_ms INTEGER, "
+               "system_count INTEGER, cluster_count INTEGER, risk_count INTEGER, case_count INTEGER, risk_instance_count INTEGER)")
+
+
+def _write_cache_meta(db, account_id, account_label, harvested_at, duration_ms, result):
+    """The counts and timestamps of a cached harvest, in a table of their own. In harvest_cache_accounts they sit after the result (140 MB or more), and
+    SQLite has to read through the whole result to reach them: every status poll and page load cost about 8 seconds on the single-threaded server."""
+    _ensure_cache_meta_table(db)
+    db.execute("INSERT OR REPLACE INTO harvest_cache_meta (" + _META_COLS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (
+        account_id, account_label, harvested_at, duration_ms, result.get("totalSystems", 0), result.get("totalClusters", 0),
+        result.get("totalRisks", 0), result.get("totalCases", 0), result.get("totalRiskInstances", result.get("riskInstances", 0))))
+
+
 def _load_all_accounts_meta(db):
     """Load every account's harvest METADATA only -- no result_json, no
     JSON parsing. Use this instead of _load_all_accounts_cached() whenever
@@ -1044,13 +1090,22 @@ def _load_all_accounts_meta(db):
     separately) was the dominant cost of every /api/sync-status poll.
     Returns list of (account_id, meta) -- no result payload.
     """
-    rows = db.execute(
-        "SELECT account_id, account_label, harvested_at, duration_ms, "
-        "system_count, cluster_count, risk_count, case_count, risk_instance_count "
-        "FROM harvest_cache_accounts"
-    ).fetchall()
+    _ensure_cache_meta_table(db)
+    ids = {r[0] for r in db.execute("SELECT account_id FROM harvest_cache_accounts").fetchall()}   # the first column: cheap
+    have = {r[0] for r in db.execute("SELECT account_id FROM harvest_cache_meta").fetchall()}
+    if ids - have:
+        # first run after this change (or a row written by older code): read the slow way once and keep the answer
+        for row in db.execute(
+            "SELECT account_id, account_label, harvested_at, duration_ms, system_count, cluster_count, risk_count, case_count, risk_instance_count "
+            "FROM harvest_cache_accounts"
+        ).fetchall():
+            db.execute("INSERT OR REPLACE INTO harvest_cache_meta (" + _META_COLS + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+        db.commit()
+    rows = db.execute("SELECT " + _META_COLS + " FROM harvest_cache_meta").fetchall()
     out = []
     for row in rows:
+        if row[0] not in ids:
+            continue
         meta = {
             "accountId": row[0], "accountLabel": row[1], "harvested_at": row[2],
             "duration_ms": row[3], "system_count": row[4], "cluster_count": row[5],
@@ -1867,6 +1922,14 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                 watchlist_ids.append(_wl)
 
     start_time = time.time()
+
+    _phases, _ph = [], [time.time(), 'start']
+
+    def _phase(label):
+
+        """Closes the previous phase of this harvest and starts the next: the seconds per phase end up in the log and in the result, so a slow harvest can be explained."""
+
+        _now = time.time(); _phases.append([_ph[1], round(_now - _ph[0], 1)]); _ph[0] = _now; _ph[1] = str(label)[:60]
     try:
         # 1. Read refresh token — from the account override if given, else the
         # legacy top-level aiq_config.json fields (unchanged single-account path).
@@ -1910,6 +1973,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         summary = {}  # initialise here so it's always defined even if summary query is skipped
         try:
             print("  [HARVEST] Fetching summary...", flush=True)
+            _phase("Fetching summary...")
             # Use watchlist-scoped summary when watchlists are configured
             # (use only the first ID for the summary count — it's informational only)
             sum_query = _Q("summary_watchlist", watchlist_id=watchlist_ids[0]) if watchlist_ids else _Q("summary")
@@ -1937,6 +2001,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         #    entire query, causing the harvest to fall through to MINIMAL tier
         #    (which has no capacity/efficiency data). See commit e106562.
         print("  [HARVEST] Fetching systems (full details)...", flush=True)
+        _phase("Fetching systems (full details)...")
 
 
         # ── ORIGINAL (proven, from git commit b318118) ──
@@ -2156,6 +2221,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
 
         if watchlist_ids:
             print(f"  [HARVEST] Fetching systems across {len(watchlist_ids)} configured watchlist(s)...", flush=True)
+            _phase(f"Fetching systems across {len(watchlist_ids)} configured watchlist(s)...")
             seen_serials = set()
             _min_attempt_used = None
             for wl_id_cfg in watchlist_ids:
@@ -2699,6 +2765,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
 
         # 5. Fetch clusters with full details (including switches and shelves)
         print("  [HARVEST] Fetching clusters...", flush=True)
+        _phase("Fetching clusters...")
         all_clusters = []
         cursor = None
         while True:
@@ -2779,6 +2846,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         # systems, 0 risks) that only succeeds when watchlistId is passed.
         # Scope per configured watchlist when present, same as systems/clusters.
         print("  [HARVEST] Fetching risk instances...", flush=True)
+        _phase("Fetching risk instances...")
 
         def _fetch_risk_instances_for_scope(scope_wl_id=None):
             items = []
@@ -2832,6 +2900,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         # 7. Fetch all support cases — paginated + fallback without productTypes if the
         #    corp-network GQL proxy rejects the enum value.
         print("  [HARVEST] Fetching support cases...", flush=True)
+        _phase("Fetching support cases...")
         all_cases = []
 
         def _fetch_cases_pages(with_product_types=True, scope_wl_id=None):
@@ -2943,6 +3012,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_recommendations = []
         try:
             print("  [HARVEST] Fetching TAM recommendations...", flush=True)
+            _phase("Fetching TAM recommendations...")
             _rec_seen = set()
             for _w in _all_scopes:
                 _, rec_resp = _gql(token, _Q("recommendations", scope=_scope_arg(_w)))
@@ -2958,6 +3028,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_sites = []
         try:
             print("  [HARVEST] Fetching TAM sites...", flush=True)
+            _phase("Fetching TAM sites...")
             _site_seen = set()
             for _w in _all_scopes:
                 _after, _guard = "", 0
@@ -2981,6 +3052,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_sustainability = []
         try:
             print("  [HARVEST] Fetching sustainability score...", flush=True)
+            _phase("Fetching sustainability score...")
             # a score is per scope, not additive: use the first watchlist that reports one
             for _w in _all_scopes:
                 _, sust_resp = _gql(token, _Q("sustainability_score", call=(_A("sustainability_call_scoped", _w) if _w else _A("sustainability_call", True))))
@@ -3002,6 +3074,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_official_health_score = []
         try:
             print("  [HARVEST] Fetching official Active IQ health score...", flush=True)
+            _phase("Fetching official Active IQ health score...")
             _hs = None
             for _w in _all_scopes:
               _, hs_resp = _gql(token, _Q("health_score_scope", scope=_scope_arg(_w)))
@@ -3062,6 +3135,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_success_plans = []
         try:
             print("  [HARVEST] Fetching Success Plans (real Active IQ CSP data)...", flush=True)
+            _phase("Fetching Success Plans (real Active IQ CSP data)...")
             _sp_details, _sp_after, _sp_guard = [], "", 0
             while _sp_guard < 100:   # page with the cursor; was a single page of 200 customers
                 _sp_guard += 1
@@ -3089,6 +3163,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_os_versions = []
         try:
             print("  [HARVEST] Fetching OS version catalog...", flush=True)
+            _phase("Fetching OS version catalog...")
             tam_os_versions, _osv_after, _osv_guard = [], "", 0
             while _osv_guard < 100:   # page with the cursor; was one page of 500
                 _osv_guard += 1
@@ -3129,6 +3204,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_renewals = []
         try:
             print("  [HARVEST] Fetching contract renewals...", flush=True)
+            _phase("Fetching contract renewals...")
             _ren_seen = set()
             for _w in _all_scopes:
               # page through the whole result (the query returns a totalCount and an `after` cursor); it used to stop at the first 200
@@ -4371,6 +4447,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         _agg_targets = [s for s in systems_out if "ONTAP" in (s.get("platform") or "").upper() and s.get("serialNumber")]
         if _agg_targets:
             print(f"  [HARVEST] Fetching per-aggregate detail for {len(_agg_targets)} ONTAP system(s)...", flush=True)
+            _phase(f"Fetching per-aggregate detail for {len(_agg_targets)} ONTAP system(s)...")
             _agg_ok = 0
 
             def _fetch_aggregates(_sys):
@@ -4437,6 +4514,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_customer_health_scores = []
         if _customer_nagps:
             print(f"  [HARVEST] Fetching per-customer health score for {len(_customer_nagps)} customer(s)...", flush=True)
+            _phase(f"Fetching per-customer health score for {len(_customer_nagps)} customer(s)...")
             _hs_ok = 0
 
             def _fetch_customer_health_score(_item):
@@ -4476,6 +4554,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         tam_customer_recommendations = []
         if _customer_ids:
             print(f"  [HARVEST] Fetching per-customer recommendations for {len(_customer_ids)} customer(s)...", flush=True)
+            _phase(f"Fetching per-customer recommendations for {len(_customer_ids)} customer(s)...")
             _rec_ok = 0
 
             def _fetch_customer_recommendations(_item):
@@ -4656,6 +4735,9 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                 pass
 
         duration_ms = int((time.time() - start_time) * 1000)
+        _phase('end')
+        _slow = sorted((x for x in _phases if x[1] >= 1), key=lambda x: -x[1])
+        print("  [HARVEST] Time per phase (seconds): " + "; ".join(f"{n.strip()[:38]} {s:.0f}" for n, s in _slow[:12]), flush=True)
 
         try:
             import sys as _sys_de
@@ -4675,6 +4757,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
 
         result = {
             "status": "success",
+            "phaseSeconds": _phases,
             "systems": systems_out,
             "clusters": all_clusters,
             "risks": all_risks,
@@ -9872,54 +9955,72 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             # ?account=<id> scopes to just one.
             db = _init_db()
             try:
-                cached_result, metas = _get_merged_harvest(db, account_id_param)
+                _mk = tuple(sorted((str(aid), str(m.get("harvested_at"))) for aid, m in _load_all_accounts_meta(db))) + (account_id_param,)
+                memo = _HARVEST_RESP if (_HARVEST_RESP.get("key") == _mk and _HARVEST_RESP.get("gz")) else None
+                cached_result, metas = (None, None) if memo else _get_merged_harvest(db, account_id_param)
             finally:
                 db.close()
 
-            if cached_result:
-                # Serve cached data immediately
-                last_sync = max((m.get("harvested_at") or "" for m in metas), default="unknown") or "unknown"
-                sys_count = sum(m.get("system_count", 0) for m in metas)
-                print(f"  [CACHE] Serving cached data ({sys_count} systems across {len(metas)} account(s), synced: {last_sync})", flush=True)
+            if memo or cached_result:
+                if memo:
+                    last_sync = memo["last_sync"]
+                    gz_bytes = memo["gz"]
+                else:
+                    # Serve cached data immediately
+                    last_sync = max((m.get("harvested_at") or "" for m in metas), default="unknown") or "unknown"
+                    sys_count = sum(m.get("system_count", 0) for m in metas)
+                    print(f"  [CACHE] Serving cached data ({sys_count} systems across {len(metas)} account(s), synced: {last_sync})", flush=True)
 
-                # Inject cache metadata into response
-                cached_result["_cache"] = {
-                    "hit": True,
-                    "lastSync": last_sync,
-                    "durationMs": sum(m.get("duration_ms", 0) for m in metas),
-                    "accounts": [{"id": m.get("accountId"), "label": m.get("accountLabel"),
-                                  "lastSync": m.get("harvested_at"), "systemCount": m.get("system_count", 0)} for m in metas],
-                }
+                    # Inject cache metadata into response
+                    cached_result["_cache"] = {
+                        "hit": True,
+                        "lastSync": last_sync,
+                        "durationMs": sum(m.get("duration_ms", 0) for m in metas),
+                        "accounts": [{"id": m.get("accountId"), "label": m.get("accountLabel"),
+                                      "lastSync": m.get("harvested_at"), "systemCount": m.get("system_count", 0)} for m in metas],
+                    }
+                    res_bytes = json.dumps(cached_result, default=str).encode("utf-8")
+                    gz_bytes = gzip.compress(res_bytes, 3)
+                    del res_bytes
+                    _HARVEST_RESP.update({"key": _mk, "gz": gz_bytes, "last_sync": last_sync})
+                    print(f"  [CACHE] Response compressed once for this cache version ({len(gz_bytes) / 1e6:.1f} MB)", flush=True)
 
-                res_bytes = json.dumps(cached_result, default=str).encode("utf-8")
+                accepts_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+                body = gz_bytes if accepts_gzip else gzip.decompress(gz_bytes)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
+                if accepts_gzip:
+                    self.send_header("Content-Encoding", "gzip")
+                self.send_header("Content-Length", str(len(body)))
                 self.send_header("X-Cache", "HIT")
                 self.send_header("X-Last-Sync", last_sync)
                 self.end_headers()
-                self.wfile.write(res_bytes)
+                self.wfile.write(body)
 
-                # Trigger background re-sync (non-blocking)
-                if not _is_syncing:
+                # Re-sync in the background only when the cache is older than the auto-refresh interval. Every page load used to start a full harvest
+                # (about 19 minutes and 140 MB per account), so opening or reloading the app kept the server harvesting.
+                age = _cache_age_seconds(last_sync)
+                if age <= _resync_after_seconds():
+                    print(f"  [CACHE] Cache is {age / 60:.0f} min old: no re-sync needed", flush=True)
+                elif not _is_syncing:
                     t = threading.Thread(target=_background_sync, daemon=True)
                     t.start()
-                    print("  [CACHE] Background re-sync thread started", flush=True)
+                    print(f"  [CACHE] Cache is {age / 3600:.1f} h old: background re-sync thread started", flush=True)
                 else:
                     print("  [CACHE] Sync already in progress, skipping background sync", flush=True)
 
-                # Also trigger version enrichment for cached systems if needed.
-                # If enrichment cache is empty/stale, this populates it so version
-                # intel is available immediately rather than only after a full re-sync.
-                try:
-                    t2 = threading.Thread(
-                        target=_enrich_all_versions,
-                        args=(cached_result,),
-                        daemon=True
-                    )
-                    t2.start()
-                    print("  [CACHE] Version enrichment thread started for cached data", flush=True)
-                except Exception:
-                    pass
+                # Version enrichment for cached systems (only when the cache has just been loaded; a memoised answer has no parsed copy)
+                if cached_result:
+                    try:
+                        t2 = threading.Thread(
+                            target=_enrich_all_versions,
+                            args=(cached_result,),
+                            daemon=True
+                        )
+                        t2.start()
+                        print("  [CACHE] Version enrichment thread started for cached data", flush=True)
+                    except Exception:
+                        pass
                 return
 
             # No cache -- fire background harvest and return 202
