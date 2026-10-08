@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.294 (2026-10-08)
+
+### Added
+- ONTAP release highlights are built from docs.netapp.com What's new pages by ARIA itself (`tools/ontap_release_notes.py`).
+- ARIA's scanner data is applied over `data/reference_library.js` at load (release list, EOA dates, IMT versions, switch firmware baselines, release highlights), so a fresh install does not start with empty tables.
+- Harvest guard: three attempts at the watchlist lookup; customers and sites lost in a result that dropped 10% or more are kept from the previous harvest; warnings are shown in Settings > Data & Sync.
+
 ## 5.6.293 (2026-10-08)
 
 ### Fixed

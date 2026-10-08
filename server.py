@@ -928,6 +928,44 @@ def _save_harvest_account(db, account_id, account_label, result, duration_ms=0):
         _save_harvest(db, result, duration_ms)
 
 
+def _harvest_guard(db, account_id, label, result, prev_result, notes=None):
+    """A harvest that comes back much smaller than the one before is almost always a partial one (a failed lookup, a rate limit, a dropped
+    connection), not customers that vanished. Customer and site lists are reference data keyed by id, so entries the new harvest lacks are
+    kept from the previous one when the drop is 10% or more; every such case, and a large drop in systems, is saved as a warning the UI shows."""
+    warnings = [f"{label}: {n}" for n in (notes or [])]
+    try:
+        old_all = prev_result or {}
+        for key, name in (('customers', 'customers'), ('tamSites', 'sites')):
+            new, old = result.get(key) or [], old_all.get(key) or []
+            if len(old) >= 5 and len(new) <= 0.9 * len(old):
+                seen = {x.get('id') for x in new if isinstance(x, dict)}
+                keep = [x for x in old if isinstance(x, dict) and x.get('id') not in seen]
+                if keep:
+                    result[key] = list(new) + keep
+                    warnings.append(f"{label}: {name} fell from {len(old)} to {len(new)}; {len(keep)} kept from the previous harvest")
+        ns, os_ = len(result.get('systems') or []), len(old_all.get('systems') or [])
+        if os_ >= 10 and ns <= 0.8 * os_:
+            warnings.append(f"{label}: systems fell from {os_} to {ns}; check the harvest log for errors")
+        if warnings:
+            db.execute("CREATE TABLE IF NOT EXISTS harvest_warnings (account_id TEXT, created_at TEXT, message TEXT)")
+            now = datetime.now(timezone.utc).isoformat()
+            for w in warnings:
+                db.execute("INSERT INTO harvest_warnings (account_id, created_at, message) VALUES (?, ?, ?)", (account_id, now, w))
+                print(f"  [HARVEST] WARNING: {w}", flush=True)
+            db.commit()
+    except Exception as e:
+        print(f"  [HARVEST] guard skipped: {e}", flush=True)
+
+
+def _recent_harvest_warnings(db, days=14):
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = db.execute("SELECT account_id, created_at, message FROM harvest_warnings WHERE created_at > ? ORDER BY created_at DESC LIMIT 20", (cutoff,)).fetchall()
+        return [{'account': r[0], 'at': r[1], 'message': r[2]} for r in rows]
+    except Exception:
+        return []
+
+
 def _load_cached_account(db, account_id):
     """Load one account's cached harvest result. Returns (result, meta) or (None, None)."""
     row = db.execute(
@@ -1933,22 +1971,34 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         # snake_case fields (watchlist_id/watchlist_name), not the camelCase guessed
         # here before.
         _early_watchlists = []  # list of watchlist id strings
-        try:
-            wl_st, wl_raw = _rest("watchlist_list", token=token)
-            if wl_st == 200:
-                wl_data = json.loads(wl_raw.decode("utf-8", errors="replace"))
-                wl_list = ((wl_data.get("results") or {}).get("watchlist")) or []
-                for wl in wl_list:
-                    if isinstance(wl, dict):
-                        wid = wl.get("watchlist_id") or ""
-                        if wid:
-                            _early_watchlists.append(wid)
-                if _early_watchlists:
-                    print(f"  [HARVEST] Auto-discovered {len(_early_watchlists)} watchlist(s) via REST (GET /v2/watchlist/list)", flush=True)
-            else:
-                print(f"  [HARVEST] Watchlist REST pre-discovery: GET /v2/watchlist/list returned HTTP {wl_st}", flush=True)
-        except Exception as _wl_disc_err:
-            print(f"  [HARVEST] Watchlist REST pre-discovery skipped: {_wl_disc_err}", flush=True)
+        _harvest_notes = []     # problems this harvest ran into; saved as warnings so a partial result is never silent
+        # One failed call here used to be logged and forgotten, and a watchlist-scoped account then fetched its customers with the wrong scope
+        # (fewer customers, no error). Try three times before giving up, and record it if it never worked.
+        _wl_problem = ''
+        for _wl_try in range(3):
+            try:
+                wl_st, wl_raw = _rest("watchlist_list", token=token)
+                if wl_st == 200:
+                    wl_data = json.loads(wl_raw.decode("utf-8", errors="replace"))
+                    wl_list = ((wl_data.get("results") or {}).get("watchlist")) or []
+                    for wl in wl_list:
+                        if isinstance(wl, dict):
+                            wid = wl.get("watchlist_id") or ""
+                            if wid:
+                                _early_watchlists.append(wid)
+                    if _early_watchlists:
+                        print(f"  [HARVEST] Auto-discovered {len(_early_watchlists)} watchlist(s) via REST (GET /v2/watchlist/list)", flush=True)
+                    _wl_problem = ''
+                    break
+                _wl_problem = f"HTTP {wl_st}"
+                print(f"  [HARVEST] Watchlist REST pre-discovery: GET /v2/watchlist/list returned HTTP {wl_st} (attempt {_wl_try + 1} of 3)", flush=True)
+            except Exception as _wl_disc_err:
+                _wl_problem = str(_wl_disc_err)[:120]
+                print(f"  [HARVEST] Watchlist REST pre-discovery failed (attempt {_wl_try + 1} of 3): {_wl_disc_err}", flush=True)
+            if _wl_try < 2:
+                time.sleep(2 + 3 * _wl_try)
+        if _wl_problem:
+            _harvest_notes.append(f"watchlist lookup failed after 3 attempts ({_wl_problem}); customers and sites may be incomplete")
 
         # 2. Fallback: try GraphQL watchlists query
         # NOTE: verified via live schema introspection (2026-08-10) that "watchlists"
@@ -4638,6 +4688,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
 
             _acct_id = account.get("id") if account else "default"
             _acct_label = (account.get("label") or account.get("id")) if account else "Default Account"
+            _harvest_guard(db, _acct_id or "default", _acct_label or "default", result, prev_result, _harvest_notes)
             if account:
                 _save_harvest_account(db, _acct_id or "default", _acct_label or "default", result, duration_ms)
             else:
@@ -5815,7 +5866,8 @@ class EnrichmentScheduler:
         scan_start = time.time()
         results = {}
         try:
-            interval_h = 0 if getattr(self, '_force_kb', False) else self._kb_interval / 3600
+            self._forced_now = bool(getattr(self, '_force_kb', False))
+            interval_h = 0 if self._forced_now else self._kb_interval / 3600
             self._force_kb = False
 
             kb_age = self._file_age_hours(self._KB_STALENESS_FILE)
@@ -8063,7 +8115,61 @@ class EnrichmentScheduler:
         except Exception as _ref_err:
             print(f'  [ENRICH]   Reference library harvest failed: {_ref_err}', flush=True)
 
+        # ── 7c. ONTAP release highlights, read straight from docs.netapp.com "What's new" pages (no AI, no hand-kept table) ──
+        try:
+            import sys as _sys7c
+            _tools7c = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools')
+            if _tools7c not in _sys7c.path:
+                _sys7c.path.insert(0, _tools7c)
+            import ontap_release_notes as _orn
+            try:
+                _rels = list((json.loads((SCRIPT_DIR / 'data' / 'version_catalog.json').read_text(encoding='utf-8')) or {}).get('ontap') or [])
+            except Exception:
+                _rels = []
+            _orn_res = _orn.harvest(_data_dir, _rels, lambda u: _enrich_fetch(u, timeout=30), force=bool(getattr(self, '_forced_now', False)))
+            if _orn_res.get('added') or _orn_res.get('updated'):
+                changes['ontap_release_notes'] = _orn_res
+            print(f'  [ENRICH]   ONTAP release notes: {_orn_res}', flush=True)
+        except Exception as _orn_err:
+            print(f'  [ENRICH]   ONTAP release notes harvest failed: {_orn_err}', flush=True)
+
         return changes
+
+
+def _reference_overlay_js():
+    """The reference tables ARIA keeps current itself, as a script that runs AFTER data/reference_library.js and wins over it.
+    A machine with no hand-compiled file (a fresh install) therefore still gets the release list, end-of-availability dates, interoperability
+    versions, switch firmware baselines and ONTAP release highlights from ARIA's own scanners, and a stale hand-compiled value is
+    replaced by the live one. Curated tables ARIA cannot derive (platform replacements, upgrade caveats, best practices) stay in the file."""
+    d = SCRIPT_DIR / 'data'
+    def load(name):
+        try:
+            return json.loads((d / name).read_text(encoding='utf-8'))
+        except Exception:
+            return None
+    live = {}
+    vc = load('version_catalog.json') or {}
+    live['versions'] = {k: v for k, v in vc.items() if k in ('ontap', 'storagegrid', 'santricity') and isinstance(v, list) and v}
+    eoa = load('eoa_database.json') or {}
+    live['eoa'] = {'platforms': eoa.get('platforms') or [], 'dates': eoa.get('dates') or {}, 'switches': eoa.get('switches') or []}
+    imt = load('imt_interop.json') or {}
+    live['imt'] = {k: v for k, v in imt.items() if not k.startswith('_') and isinstance(v, dict)}
+    fw = load('firmware_baselines.json') or {}
+    live['fwSwitches'] = {k: v for k, v in (fw.get('switches') or {}).items() if not str(k).startswith('_') and isinstance(v, dict)}
+    notes = load('ontap_release_notes.json') or {}
+    live['highlights'] = {k: v.get('summary') for k, v in (notes.get('releases') or {}).items() if isinstance(v, dict) and v.get('summary')}
+    return (";(function(){var R=(window.ARIA_REF=window.ARIA_REF||{});var L=" + json.dumps(live).replace('</', '<\\/') + ";"
+            "function vk(v){return String(v).split('.').map(function(p){return parseInt(p)||0;});}"
+            "function vc(a,b){var x=vk(a),y=vk(b);for(var i=0;i<Math.max(x.length,y.length);i++){var q=(x[i]||0)-(y[i]||0);if(q)return q;}return 0;}"
+            "var S=(R.SOFTWARE_VERSION_DATABASES=R.SOFTWARE_VERSION_DATABASES||{});"
+            "Object.keys(L.versions).forEach(function(k){var c=(S[k]=S[k]||[]);L.versions[k].forEach(function(v){if(c.indexOf(v)<0)c.push(v);});c.sort(vc);});"
+            "var P=(R.REFERENCE_LIBRARY_EOA_PLATFORMS=R.REFERENCE_LIBRARY_EOA_PLATFORMS||[]);L.eoa.platforms.forEach(function(p){if(P.indexOf(p)<0)P.push(p);});"
+            "var D=(R.REFERENCE_LIBRARY_EOA_DATES=R.REFERENCE_LIBRARY_EOA_DATES||{});Object.keys(L.eoa.dates).forEach(function(k){D[k]=Object.assign({},D[k],L.eoa.dates[k]);});"
+            "var W=(R.REFERENCE_LIBRARY_EOA_SWITCHES=R.REFERENCE_LIBRARY_EOA_SWITCHES||[]);L.eoa.switches.forEach(function(s){var i=W.findIndex(function(x){return x.model===s.model;});if(i<0)W.push(s);else W[i]=Object.assign({},W[i],s);});"
+            "var M=(R.IMT_INTEROP_MATRIX=R.IMT_INTEROP_MATRIX||{});Object.keys(L.imt).forEach(function(k){M[k]=Object.assign({},M[k],L.imt[k]);});"
+            "var F=(R.REFERENCE_LIBRARY_FIRMWARE_BASELINES=R.REFERENCE_LIBRARY_FIRMWARE_BASELINES||{});Object.keys(L.fwSwitches).forEach(function(k){F[k]=Object.assign({},F[k],L.fwSwitches[k]);});"
+            "var H=(R.REFERENCE_LIBRARY_ONTAP_HIGHLIGHTS=R.REFERENCE_LIBRARY_ONTAP_HIGHLIGHTS||{});Object.keys(L.highlights).forEach(function(k){H[k]=L.highlights[k];});"
+            "})();")
 
 
 def _infer_affected_products(adv_id, title):
@@ -9439,10 +9545,21 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_perf('GET')
         elif self.path.startswith('/api/'):
             self.handle_proxy('GET')
-        elif self.path.split('?', 1)[0] == '/data/reference_library.js' and not (SCRIPT_DIR / 'data' / 'reference_library.js').exists():
-            # The reference library is built on this machine and is not part of the repository: without it the app starts with empty tables.
-            body = b'window.ARIA_REF = {};'
+        elif self.path.split('?', 1)[0] == '/data/reference_library.js':
+            # The hand-compiled file is built on one machine and is not part of the repository; ARIA's own scanner data is applied over it
+            # (or over an empty table on a fresh install), so no machine depends on that file for what the scanners already keep current.
+            _f = SCRIPT_DIR / 'data' / 'reference_library.js'
+            try:
+                base = _f.read_text(encoding='utf-8') if _f.exists() else 'window.ARIA_REF = {};'
+            except Exception:
+                base = 'window.ARIA_REF = {};'
+            try:
+                body = (base + '\n' + _reference_overlay_js()).encode('utf-8')
+            except Exception as _ov_err:
+                print(f'  [REF] overlay failed: {_ov_err}', flush=True)
+                body = base.encode('utf-8')
             self.send_response(200)
+            self.send_header('Cache-Control', 'no-store')
             self.send_header('Content-Type', 'application/javascript; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
@@ -10444,7 +10561,12 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 lib = _lm.library_status(found['path']) if found.get('path') else {'found': False}
                 lib['source'] = found.get('source'); lib['configured'] = (cfg.get('libraryPath') or '').strip()
                 sch = _enrichment_scheduler.status() if _enrichment_scheduler else {}
-                self._send_json(200, {'library': lib, 'data': _lm.data_freshness(str(SCRIPT_DIR / 'data')),
+                _wdb = _init_db()
+                try:
+                    _warns = _recent_harvest_warnings(_wdb)
+                finally:
+                    _wdb.close()
+                self._send_json(200, {'harvestWarnings': _warns, 'library': lib, 'data': _lm.data_freshness(str(SCRIPT_DIR / 'data')),
                                       'scanner': {'running': bool(sch.get('isRunning') or sch.get('isKbRunning')), 'lastScan': sch.get('lastScan'), 'lastKbScan': sch.get('lastKbScan')}})
             elif method == 'GET' and route == '/api/library/search':
                 root = _lm.find_library(cfg).get('path')
