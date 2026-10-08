@@ -1,5 +1,5 @@
 {
-  "_readme": "Rules ARIA uses to decide what each finding needs, with no code change. The advisory data itself (affected products, fixed releases, workarounds) is fetched automatically from NetApp for every advisory a finding refers to; this file only says how to read it. Edit and reload the page (no restart). A copy in data/resolution_rules.json overrides this file. Patterns are JavaScript regular expressions, matched case-insensitively; the first class whose pattern matches a product name wins.",
+  "_readme": "Rules ARIA uses to decide what each finding needs, with no code change. The advisory data itself (affected products, fixed releases, workarounds) is fetched automatically from NetApp for every advisory a finding refers to; this file only says how to read it. Edit and reload the page (no restart). A copy in data/resolution_rules.json overrides this file. Patterns are JavaScript regular expressions, matched case-insensitively; the first class whose pattern matches a product name wins. firmwareKnownIssues: known issues of a firmware version, by model family and version (exact list or minimum); shown beside the firmware drift list. upgradePathKnownIssues: known issues of one upgrade path (from a release, to a release line), shown with that path in the upgrade roadmap.",
   "productClasses": [
     {
       "class": "aiqum",
@@ -61,6 +61,63 @@
       "pattern": "reached end[- ]of[- ](availability|support|sale)|\\bEOA\\b|\\bEOS\\b|end of (availability|support)",
       "kind": "hardware",
       "summary": "Plan a hardware refresh: this platform is past end of availability, so check its end-of-support date and keep a support contract in place until it is replaced"
+    }
+  ],
+  "firmwareKnownIssues": [
+    {
+      "id": "CFBMC-8277",
+      "component": "BMC",
+      "families": [
+        "A400",
+        "C400",
+        "FAS8700",
+        "FAS8300"
+      ],
+      "versions": [
+        "13.12"
+      ],
+      "summary": "The BMC can report 'heartbeat stopped', which leads to sp.ipmi.lost.shutdown and an emergency node shutdown (an HA takeover event)",
+      "note": "NetApp keeps the fixed release behind the support login, so confirm it in the KB. Before a planned BMC update, confirm HA health with 'storage failover show'.",
+      "url": "https://kb.netapp.com/on-prem/ontap/OHW/OHW-Issues/CFBMC-8277",
+      "source": "NetApp KB CFBMC-8277 (updated 2026-10-04), recorded in the NetApp Reference Library on 2026-10-08"
+    },
+    {
+      "id": "CFBMC-6454",
+      "component": "BMC",
+      "families": [
+        "A400",
+        "C400",
+        "FAS8700",
+        "FAS8300"
+      ],
+      "minVersion": "13.10",
+      "summary": "The BMC can reboot after a hardware watchdog timeout",
+      "note": "NetApp keeps the fixed release behind the support login, so confirm it in the KB.",
+      "url": "https://kb.netapp.com/on-prem/ontap/OHW/OHW-Issues/CFBMC-6454",
+      "source": "NetApp KB CFBMC-6454 (updated 2026-10-06), recorded in the NetApp Reference Library on 2026-10-08"
+    },
+    {
+      "id": "CFBMC-2358",
+      "component": "BMC",
+      "families": [
+        "A250"
+      ],
+      "minVersion": "15.90",
+      "summary": "After an AC power cycle the BMC can boot its backup image (for example 15.95P1); that is not a newer production version than the current one",
+      "note": "Check the installed and backup images before judging the system as ahead of the recommended version.",
+      "url": "https://kb.netapp.com/on-prem/ontap/OHW/OHW-Issues/CFBMC-2358",
+      "source": "NetApp KB CFBMC-2358, recorded in the NetApp Reference Library on 2026-10-08"
+    }
+  ],
+  "upgradePathKnownIssues": [
+    {
+      "id": "CONTAP-799924",
+      "fromVersion": "9.16.1P1",
+      "toLine": "9.19.1",
+      "summary": "During an automated non-disruptive upgrade from 9.16.1P1 to 9.19.1, giveback can fail repeatedly after an HA RDMA queue-pair reject (code 38)",
+      "note": "If giveback keeps failing, stop, stay in takeover and open a support case.",
+      "url": "https://kb.netapp.com/on-prem/ontap/OHW/OHW-Issues/CONTAP-799924",
+      "source": "NetApp KB CONTAP-799924 (2026-09-22), recorded in the NetApp Reference Library on 2026-10-08"
     }
   ]
 }

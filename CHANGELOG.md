@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.6.300 (2026-10-08)
+
+### Added
+- The minimum safe release per ONTAP line is used: fleet and per-system checklist item, Minimum safe column and summary in the OS Upgrade Roadmap, a note on the upgrade card and a text-report section. Upgrade targets are never below it (125 raised, including systems Active IQ reports as up to date).
+- Firmware and upgrade-path known issues in `resolution_rules.json` (`firmwareKnownIssues`, `upgradePathKnownIssues`): CFBMC-8277, CFBMC-6454, CFBMC-2358, CONTAP-799924, from the NetApp Reference Library.
+- `docs/LIBRARY_HARVEST_ROUTINE.md` and a weekly scheduled job; `tools/library_manager.py --unharvested / --mark-harvested`; Settings > Data & Sync shows the library entries not yet harvested.
+
+### Fixed
+- The "recommended is never below the highest installed" firmware rule ignores a lone far-higher backup-image reading.
+
 ## 5.6.299 (2026-10-08)
 
 ### Fixed

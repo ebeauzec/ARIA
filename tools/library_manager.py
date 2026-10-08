@@ -77,7 +77,53 @@ def _parse_date(s):
         return None
 
 
-def library_status(root):
+STATE_NAME = 'library_harvest_state.json'
+
+
+def changelog_headings(root):
+    """Headings of the library's CHANGELOG.md entries, newest first."""
+    text = _read(os.path.join(root, 'CHANGELOG.md'))
+    return [l[3:].strip() for l in text.split('\n') if re.match(r'^##\s+\d{4}-\d{2}-\d{2}', l)]
+
+
+def changelog_entry(root, heading):
+    """Full text of one CHANGELOG entry."""
+    text = _read(os.path.join(root, 'CHANGELOG.md'))
+    start = text.find('## ' + heading)
+    if start < 0:
+        return ''
+    end = text.find('\n## ', start + 5)
+    return text[start:end if end > 0 else len(text)].strip()
+
+
+def harvest_state(data_dir):
+    try:
+        with open(os.path.join(data_dir, STATE_NAME), 'r', encoding='utf-8') as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def unharvested(root, data_dir):
+    """Library CHANGELOG entries not yet harvested into ARIA; None when no harvest has ever been recorded."""
+    state = harvest_state(data_dir)
+    if not state.get('harvested'):
+        return None
+    done = set(state['harvested'])
+    return [h for h in changelog_headings(root) if h not in done]
+
+
+def mark_harvested(root, data_dir, note=''):
+    """Record that every CHANGELOG entry now in the library has been read and its ARIA-relevant facts applied (or rejected, with the reason in the report)."""
+    state = {'harvested': changelog_headings(root), 'lastRun': datetime.now(timezone.utc).isoformat(), 'note': note}
+    tmp = os.path.join(data_dir, STATE_NAME + '.tmp')
+    with open(tmp, 'w', encoding='utf-8') as fh:
+        json.dump(state, fh, indent=1, ensure_ascii=False)
+    os.replace(tmp, os.path.join(data_dir, STATE_NAME))
+    return state
+
+
+def library_status(root, data_dir=None):
     """Freshness and size of the library at `root`."""
     if not root or not os.path.isdir(root):
         return {'found': False}
@@ -106,6 +152,7 @@ def library_status(root):
         'found': True, 'path': root, 'compiled': compiled, 'lastEntry': last_entry, 'docs': n_docs, 'categories': cats,
         'newestFile': datetime.fromtimestamp(newest_file, timezone.utc).strftime('%Y-%m-%d') if newest_file else '',
         'ageDays': age, 'stale': age is None or age > STALE_LIBRARY_DAYS, 'staleAfterDays': STALE_LIBRARY_DAYS,
+        'harvest': ({'lastRun': harvest_state(data_dir).get('lastRun', ''), 'unharvested': unharvested(root, data_dir)} if data_dir else None),
     }
 
 
@@ -235,3 +282,35 @@ def data_freshness(data_dir):
         out.append({'label': label, 'file': fname, 'refreshedBy': by, 'present': True, 'updated': datetime.fromtimestamp(mt, timezone.utc).strftime('%Y-%m-%d %H:%M'),
                     'ageHours': round(age_h, 1), 'staleAfterHours': stale_h, 'stale': bool(stale_h and age_h > stale_h), 'static': stale_h is None, 'note': note})
     return out
+
+
+if __name__ == '__main__':
+    # python tools/library_manager.py --unharvested     print the library CHANGELOG entries not yet harvested into ARIA
+    # python tools/library_manager.py --mark-harvested  record that every entry now in the library has been dealt with
+    import argparse
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--unharvested', action='store_true')
+    ap.add_argument('--mark-harvested', action='store_true')
+    ap.add_argument('--note', default='')
+    args = ap.parse_args()
+    try:
+        with open(os.path.join(here, 'aiq_config.json'), 'r', encoding='utf-8') as fh:
+            cfg = json.load(fh)
+    except (OSError, ValueError):
+        cfg = {}
+    found = find_library(cfg)
+    if not found.get('path'):
+        raise SystemExit('Library folder not found: set libraryPath in aiq_config.json or ARIA_LIBRARY_PATH')
+    data_dir = os.path.join(here, 'data')
+    if args.mark_harvested:
+        s = mark_harvested(found['path'], data_dir, args.note)
+        print(f"Recorded {len(s['harvested'])} entries as harvested ({s['lastRun']}).")
+    else:
+        todo = unharvested(found['path'], data_dir)
+        if todo is None:
+            print('No harvest has been recorded yet: every entry counts as new. Read the newest ones, then run --mark-harvested.')
+            todo = changelog_headings(found['path'])[:5]
+        print(f"Library: {found['path']}  ({len(todo)} entr{'y' if len(todo) == 1 else 'ies'} to harvest)\n")
+        for h in todo:
+            print(changelog_entry(found['path'], h)); print('\n' + '=' * 100 + '\n')
