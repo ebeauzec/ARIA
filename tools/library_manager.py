@@ -139,6 +139,8 @@ def _build_index(root):
             rel = os.path.relpath(full, root).replace('\\', '/')
             title = (re.search(r'^#\s+(.+)$', text, flags=re.M) or [None, os.path.splitext(f)[0]])[1].strip()
             src = (re.search(r'^Source:\s*(\S+)', text, flags=re.M) or [None, ''])[1]
+            if not re.match(r'^https?://', src, re.I):   # a link in the app: only web addresses, never javascript: or file:
+                src = ''
             fetched = (re.search(r'^Fetched:\s*(\d{4}-\d{2}-\d{2})', text, flags=re.M) or [None, ''])[1]
             docs.append({'path': rel, 'title': title, 'category': rel.split('/')[0] if '/' in rel else 'General', 'source': src, 'fetched': fetched,
                          'modified': datetime.fromtimestamp(os.path.getmtime(full), timezone.utc).strftime('%Y-%m-%d'),
@@ -192,7 +194,11 @@ def read_doc(root, rel):
         return None
     full = os.path.realpath(os.path.join(root, rel))
     base = os.path.realpath(root)
-    if os.path.commonpath([full, base]) != base or not os.path.isfile(full):
+    try:
+        inside = os.path.commonpath([full, base]) == base   # raises when the two are on different drives
+    except ValueError:
+        return None
+    if not inside or not os.path.isfile(full):
         return None
     return _read(full)
 

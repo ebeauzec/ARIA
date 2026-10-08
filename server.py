@@ -4028,7 +4028,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                         _candidates = [(k[0], v) for k, v in _fw_by_os_model.items()
                                        if k[1] == _sys_model and k[0].startswith(_pfx)]
                         if _candidates:
-                            _candidates.sort(key=lambda x: x[0])
+                            _candidates.sort(key=lambda x: _fw_ver_key(x[0]))   # numeric order: as text, 9.16.1P9 sorted above 9.16.1P11
                             _bundled = _candidates[-1][1]
                             break
                 # Final fallback: use the latest known firmware for this model from ANY version
@@ -4070,7 +4070,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                     _rec_dqp_ver = _sys_os  # default: current version IS recommended
                     if _major_match:
                         _major = _major_match.group(1)
-                        _branch_versions = sorted([v for v in _drive_fw_by_os.keys() if v.startswith(_major)])
+                        _branch_versions = sorted([v for v in _drive_fw_by_os.keys() if v.startswith(_major)], key=_fw_ver_key)
                         if _branch_versions:
                             _rec_dqp_ver = _branch_versions[-1]
                     _raw_dqp = {
@@ -9344,16 +9344,6 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             return ctype + '; charset=utf-8'
         return ctype
 
-    def end_headers(self):
-        # Inject CORS headers for local origin access
-        pass  # same-origin only
-        pass
-        pass
-        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-        self.send_header('Pragma', 'no-cache')
-        self.send_header('Expires', '0')
-        super().end_headers()
-
     def do_OPTIONS(self):
         # No cross-origin access is offered: a preflight gets an empty answer without any CORS allowance.
         self.send_response(204)
@@ -9561,9 +9551,18 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         return True
 
     def end_headers(self):
-        # Files of the program itself are re-checked on every load (a cheap 304 when unchanged), so a browser never keeps showing an old
-        # style sheet or script after ARIA has been updated.
-        if not self.path.startswith('/api/') and not any(b.lower().startswith(b'cache-control') for b in getattr(self, '_headers_buffer', [])):
+        # (This method was defined twice; the first copy, which gave every API response no-store, was silently replaced by this one, so API
+        # answers carried no cache header at all. One method now does both.)
+        has_cc = any(b.lower().startswith(b'cache-control') for b in getattr(self, '_headers_buffer', []))
+        if self.path.startswith('/api/'):
+            # Data answers (configuration, harvest results, sign-in state) are never kept by a browser or a proxy.
+            if not has_cc:
+                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                self.send_header('Pragma', 'no-cache')
+                self.send_header('Expires', '0')
+        elif not has_cc:
+            # Files of the program itself are re-checked on every load (a cheap 304 when unchanged), so a browser never keeps showing an old
+            # style sheet or script after ARIA has been updated.
             self.send_header('Cache-Control', 'no-cache')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'SAMEORIGIN')

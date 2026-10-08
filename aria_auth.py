@@ -42,7 +42,7 @@ _VIEWER_GET_PREFIXES = (
     "/api/harvest", "/api/sync-status", "/api/config", "/api/watchlists", "/api/resolve-watchlist", "/api/eoa-database", "/api/imt-interop",
     "/api/reference-library/status", "/api/knowledge-base", "/api/enrich", "/api/auto-harvest/status", "/api/bulletins", "/api/history/",
     "/api/asup/imports", "/api/asup/customers", "/api/tracker", "/api/plan-progress", "/api/perf/latest", "/api/perf/snapshots",
-    "/api/auth/me",
+    "/api/auth/me", "/api/library/status", "/api/library/search", "/api/library/doc",   # read-only: freshness, search and viewing of the reference library
 )
 _VIEWER_GET_BLOCKED = ("/api/bulletins/scan", "/api/enrich/scan")
 _VIEWER_POSTS = ("/api/history/trend",)

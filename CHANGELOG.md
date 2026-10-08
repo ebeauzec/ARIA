@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.299 (2026-10-08)
+
+### Fixed
+- Code audit (ESLint, pyflakes, tests, a smoke run of all 21 documents): StorageGRID software node rear panel ReferenceError; duplicated `end_headers` (API answers had no cache header); version text sorted as text in two firmware lookups and several version lists; viewers can use the library status, search and document routes; library `Source:` links accept only http(s); dead fix-floor code and a duplicate field removed.
+
 ## 5.6.298 (2026-10-08)
 
 ### Added

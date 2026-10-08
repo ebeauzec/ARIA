@@ -45,9 +45,29 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.298";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.299";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.299",
+    date: "8 October 2026",
+    title: "Code Audit Fixes",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The rear-panel drawing threw an error for a StorageGRID node that is not a known appliance model (a software node): it read a variable that was only declared in another function.",
+          "API answers carried no cache header: the server defined its header method twice and the second definition replaced the first, which had given every API answer no-store. One method now does both, so configuration and harvest data are never cached by a browser or proxy.",
+          "Two places chose the 'latest' release or firmware by sorting version text, so 9.16.1P9 ranked above 9.16.1P11 (the drive qualification package and the bundled firmware of a system). Both compare numerically now, as do the version lists in the lifecycle table and the document headers.",
+          "Viewers could not use the reference-library freshness and search: the three read-only routes are on their allowed list now.",
+          "A 'Source:' line in a library document could carry a javascript: address that became a clickable link. Only web addresses are accepted now, and a library path check no longer fails on Windows when two drives are involved.",
+          "Removed a block of dead code that could never run (an older fix-floor calculation left after its replacement) and a duplicated field in the system record.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.298",
     date: "8 October 2026",
@@ -19773,6 +19793,8 @@ function _dfVerParse(v) {
   return { n, p: m[3] ? +m[3] : 0, text: m[1] + (m[3] ? m[2].toUpperCase() + m[3] : ''), major: n[0] };
 }
 function _dfVerCmp(a, b) { for (let i = 0; i < 4; i++) if (a.n[i] !== b.n[i]) return a.n[i] - b.n[i]; return a.p - b.p; }
+// numeric order for release strings (as text, 9.16.1P11 sorts before 9.16.1P2); strings that are not versions fall back to text order
+function _cmpVersionText(a, b) { const x = _dfVerParse(a), y = _dfVerParse(b); return x && y ? _dfVerCmp(x, y) : String(a).localeCompare(String(b)); }
 function _dfSameBranch(a, b) { const k = a.major === 9 ? 3 : 2; for (let i = 0; i < k; i++) if (a.n[i] !== b.n[i]) return false; return true; }
 // fixed releases the advisory data lists for one CVE, grouped by product family
 function _dfFixedReleases(cveId, advisoryUrl) {
@@ -19860,32 +19882,6 @@ function _dfCriticalHighFixFloor(sys) {
   { const t = _sysFixTarget(sys, { sev: ['critical', 'high'], security: true });
     if (!t) return null;
     return { product: t.product, version: t.vtext, cveIds: t.drivers.map(r => _rrCveOf(r) || String(r.advisoryId || '').toUpperCase() || String(r.description || '').slice(0, 60)).filter(Boolean), alreadyMet: false }; }
-  const fam = _platformFamily(sys), key = fam === 'storagegrid' ? 'storagegrid' : fam === 'eseries' ? 'eseries' : fam === 'ontap' ? 'ontap' : null;
-  if (!key) return null;
-  const cur = _dfVerParse(fam === 'eseries' ? (sys.santricityVersion || sys.ontapVersion) : sys.ontapVersion);
-  const ids = new Map();   // CVE id -> {link}
-  (sys.securityBulletins || []).forEach(b => {
-    if (!/^(critical|high)$/i.test(String(b.severity || ''))) return;
-    const found = new Set([...(String(b.cve || '').match(/CVE-\d{4}-\d{4,}/gi) || []), ...(String(b.cveId || b.id || '').match(/CVE-\d{4}-\d{4,}/gi) || []), ...(String(b.title || '').match(/CVE-\d{4}-\d{4,}/gi) || [])]);
-    found.forEach(id => { if (!ids.has(id.toUpperCase())) ids.set(id.toUpperCase(), b.link); });
-  });
-  (sys.risks || []).forEach(r => (r.cveDetails || []).forEach(d => {
-    if (!d || !d.id || !/^(critical|high)$/i.test(String(d.severity || r.severity || ''))) return;
-    const id = String(d.id).toUpperCase();
-    if (!ids.has(id)) ids.set(id, r.url || r.advisoryUrl || r.kbLink);
-  }));
-  if (!ids.size) return null;
-  let best = null, drivers = [];
-  ids.forEach((link, id) => {
-    const rel = _dfFixedReleases(id, link);
-    const cands = (rel[key] || []).map(x => x.v);
-    if (!cands.length) return;
-    const target = cands.sort((a, b) => _dfVerCmp(a, b))[cands.length - 1];   // highest fixed-in release listed for this CVE
-    if (!best || _dfVerCmp(target, best) > 0) { best = target; drivers = [id]; }
-    else if (_dfVerCmp(target, best) === 0) drivers.push(id);
-  });
-  if (!best) return null;
-  return { version: best.text, cveIds: drivers, alreadyMet: !!(cur && _dfVerCmp(cur, best) >= 0) };
 }
 
 // Fleet-level rollup of _dfCriticalHighFixFloor(), plus the Customer Qualified
@@ -22669,8 +22665,7 @@ function enrichSystemTelemetry(s) {
     capacityUsedKB:    s.capacityUsedKB || 0,
     capacityAvailableKB: s.capacityAvailableKB || 0,
     dataReductionRatio: s.dataReductionRatio,
-    // ── Shelves, Ports, vCenters ──
-    shelves:           s.shelves || [],
+    // ── Ports, vCenters ──  (shelves: set above)
     portInterface:     s.portInterface || {},
     networkPorts:      s.networkPorts || {},
     vcenters:          s.vcenters || [],
@@ -24686,7 +24681,7 @@ function getFleetEnrichmentSections(targetSystems) {
     if ((s.protocols || []).some(p => /nfs|cifs|smb/i.test(p))) nasCount++;
   });
 
-  const versStr = [...fleetVersions].sort().join(', ') || 'N/A';
+  const versStr = [...fleetVersions].sort(_cmpVersionText).join(', ') || 'N/A';
   const platStr = [...fleetPlatforms].join(', ') || 'N/A';
   const modelStr = [...fleetModels].join(', ') || 'N/A';
   const ontapClause = ontapCount > 0
@@ -29271,7 +29266,7 @@ function compileCustomerReport(targetSystems, allRisks, expiringContracts, openC
   const vKeys = Object.keys(verGroups);
   if (vKeys.length) {
     o += `**Software versions and support windows**\n\n| Version | Systems | End of full support | End of limited support | Recommended target | Status |\n|---|---|---|---|---|---|\n`;
-    vKeys.sort().forEach(v => { const g = verGroups[v]; const _f = daysTo(g.full), _l = daysTo(g.lim); const _st = _l != null && _l < 0 ? 'Past end of limited support' : _f != null && _f < 0 ? 'Past end of full support' : _f == null ? 'support dates not reported' : 'In full support'; o += `| ${v} | ${g.n} | ${fmtD(g.full)} | ${fmtD(g.lim)} | ${(g.rec && g.rec !== v && !versionLt(g.rec, v)) ? g.rec : (g.rec && versionLt(g.rec, v) ? 'move to a supported release' : 'not reported')} | ${_st} |\n`; });
+    vKeys.sort(_cmpVersionText).forEach(v => { const g = verGroups[v]; const _f = daysTo(g.full), _l = daysTo(g.lim); const _st = _l != null && _l < 0 ? 'Past end of limited support' : _f != null && _f < 0 ? 'Past end of full support' : _f == null ? 'support dates not reported' : 'In full support'; o += `| ${v} | ${g.n} | ${fmtD(g.full)} | ${fmtD(g.lim)} | ${(g.rec && g.rec !== v && !versionLt(g.rec, v)) ? g.rec : (g.rec && versionLt(g.rec, v) ? 'move to a supported release' : 'not reported')} | ${_st} |\n`; });
     o += '\n';
   }
   // hardware lifecycle by model
@@ -43212,6 +43207,7 @@ function _buildControllerBackplate(sys, ports, _plat, isEseries, isCloud, isStor
   const _ctrlAB = _bpNodePos(sys);
   const _plat2 = _plat.replace(/\s+/g, '');
   if (isStorageGrid) {
+    const _sgNodeRec = _sgNodeRecord(sys);   // was read below without being declared in this function: a ReferenceError for any node that is not a known appliance model
     let inner2 = '', sub2 = '';
     if (/^sg(100|1000)$/.test(_plat2)) { sub2 = 'StorageGRID SG100/SG1000 1U services appliance: 2 PSUs, 4 network ports, BMC, admin ports'; inner2 = _one(_SG_1U, 'SERVICES APPLIANCE (1U)'); }
     else if (/^sg(110|1100|120|1200)$|^sgf(6112|6212)/.test(_plat2)) { sub2 = 'StorageGRID 1U appliance (SG110/SG1100/SG120/SG1200/SGF6112/SGF6212): 2 PSUs, 4 network ports, BMC, 2 admin RJ-45 ports'; inner2 = _one(_SG_1UB, 'APPLIANCE (1U)'); }
