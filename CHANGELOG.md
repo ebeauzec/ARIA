@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.6.292 (2026-10-08)
+
+### Added
+- Settings > Data & Sync: Reference Data & NetApp Library card with the age of every reference source, a stale warning, a refresh-everything-now button, and a keyword search over the NetApp Reference Library folder (auto-detected on Windows and macOS or set by path; read-only; no AI, no network, no sign-in). New `tools/library_manager.py`.
+
+### Fixed
+- The browser's release list came from a cache row that never expired (no ONTAP 9.19.1 for weeks); the newer of the cache and the scanner's file is used.
+- The enrichment and auto-refresh schedulers were locals of `main()`, so handlers saw none (status "disabled", manual scan failed). They are module-level now, and a manual refresh ignores the fresh-file skips.
+
 ## 5.6.291 (2026-10-07)
 
 ### Changed

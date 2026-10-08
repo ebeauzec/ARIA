@@ -45,7 +45,7 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.291";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.292";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
   {
@@ -38990,6 +38990,57 @@ async function triggerEnrichmentScan() {
   }
 }
 
+// ── Reference data freshness + NetApp Reference Library (read from a folder; no AI, no internet) ──
+async function loadReferenceStatus() {
+  const tbl = document.getElementById('refDataTable'), ban = document.getElementById('refDataBanner');
+  if (!tbl) return;
+  try {
+    const r = await fetch('/api/library/status', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json(), lib = d.library || {};
+    const age = h => h == null ? '' : h < 1 ? '< 1 h' : h < 48 ? Math.round(h) + ' h' : Math.round(h / 24) + ' days';
+    let rows = (d.data || []).map(x => `<tr><td style="padding:3px 8px 3px 0;">${_esc(x.label)}</td><td style="padding:3px 8px;color:var(--text-muted);">${x.present ? _esc(x.updated) + ' (' + age(x.ageHours) + ' ago)' : _esc(x.note || 'not present')}</td><td style="padding:3px 0;color:${x.stale ? '#f59e0b' : (x.static ? 'var(--text-muted)' : 'var(--accent-green)')};">${x.stale ? 'stale' : (x.static ? 'static (manual)' : (x.present ? 'current' : 'missing'))}</td></tr>`).join('');
+    if (lib.found) rows += `<tr><td style="padding:3px 8px 3px 0;">NetApp Reference Library (${lib.docs} documents)</td><td style="padding:3px 8px;color:var(--text-muted);">compiled ${_esc(lib.compiled || '?')}, newest file ${_esc(lib.newestFile || '?')}</td><td style="padding:3px 0;color:${lib.stale ? '#f59e0b' : 'var(--accent-green)'};">${lib.stale ? 'stale' : 'current'}</td></tr>`;
+    tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;">${rows}</table>`;
+    const stale = (d.data || []).filter(x => x.stale && x.present).map(x => x.label);
+    const msgs = [];
+    if (stale.length) msgs.push(`Not refreshed recently: ${stale.join(', ')}. Use "Refresh all reference data now".`);
+    if (lib.found && lib.stale) msgs.push(`The NetApp Reference Library was last compiled ${lib.compiled || 'on an unknown date'} (${lib.ageDays == null ? 'age unknown' : lib.ageDays + ' days ago'}). ARIA reads that folder but does not update it.`);
+    if (!lib.found) msgs.push('The NetApp Reference Library folder was not found on this machine. Enter its path below to enable the library search.');
+    ban.style.display = msgs.length ? '' : 'none'; ban.style.background = 'rgba(245,158,11,0.10)'; ban.style.border = '1px solid rgba(245,158,11,0.35)'; ban.innerHTML = msgs.map(m => _esc(m)).join('<br>');
+    const inp = document.getElementById('libraryPathInput'); if (inp && document.activeElement !== inp) inp.value = lib.configured || '';
+    const info = document.getElementById('libraryPathInfo'); if (info) info.textContent = lib.found ? `Using ${lib.path} (${lib.source}).` : 'Not found.';
+  } catch (e) { tbl.textContent = 'Could not load reference status: ' + e.message; }
+}
+async function refreshReferenceNow() {
+  const btn = document.getElementById('refRefreshBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  try {
+    const r = await fetch('/api/library/refresh', { method: 'POST' });
+    showToast(r.ok ? 'Reference refresh started; it runs in the background and can take several minutes.' : 'Could not start the refresh (' + r.status + ').', r.ok ? 'success' : 'error');
+  } catch (e) { showToast('Could not start the refresh: ' + e.message, 'error'); }
+  if (btn) setTimeout(() => { btn.disabled = false; btn.textContent = 'Refresh all reference data now'; loadReferenceStatus(); }, 4000);
+}
+async function saveLibraryPath() {
+  const v = (document.getElementById('libraryPathInput') || {}).value || '';
+  const r = await fetch('/api/library/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ libraryPath: v }) });
+  const d = await r.json().catch(() => ({}));
+  showToast(r.ok ? 'Library folder saved.' : (d.error || 'Could not save.'), r.ok ? 'success' : 'error');
+  loadReferenceStatus();
+}
+async function librarySearch(q) {
+  const box = document.getElementById('librarySearchResults'); if (!box) return;
+  q = q != null ? q : ((document.getElementById('librarySearchInput') || {}).value || '').trim(); if (!q) return;
+  const inp = document.getElementById('librarySearchInput'); if (inp && q !== inp.value) inp.value = q;
+  box.textContent = 'Searching…';
+  const r = await fetch('/api/library/search?q=' + encodeURIComponent(q) + '&limit=15'); const d = await r.json().catch(() => ({}));
+  if (!r.ok) { box.textContent = d.error || 'Search failed.'; return; }
+  box.innerHTML = (d.results || []).length ? `<div style="color:var(--text-muted);margin-bottom:6px;">${d.total} document(s) match${d.total > 15 ? '; showing the best 15' : ''}.</div>` + d.results.map(x => `<div style="padding:8px 0;border-top:1px solid var(--border-color);"><a href="#" onclick="openLibraryDoc(${_esc(JSON.stringify(x.path)).replace(/&quot;/g, '&quot;')});return false;" style="color:#38bdf8;font-weight:600;">${_esc(x.title)}</a> <span style="color:var(--text-muted);font-size:0.7rem;">${_esc(x.category)} · ${_esc(x.fetched ? 'fetched ' + x.fetched : 'modified ' + x.modified)}</span><div style="color:var(--text-secondary);margin-top:2px;">${_esc(x.snippet)}</div>${x.source ? `<div><a href="${_esc(x.source)}" target="_blank" rel="noopener" style="color:var(--text-muted);font-size:0.7rem;">${_esc(x.source)}</a></div>` : ''}</div>`).join('') : 'No document contains all of those words.';
+}
+async function openLibraryDoc(path) {
+  const r = await fetch('/api/library/doc?path=' + encodeURIComponent(path)); const d = await r.json().catch(() => ({}));
+  const w = window.open('', '_blank'); if (!w) { showToast('The browser blocked the pop-up.', 'error'); return; }
+  w.document.write('<title>' + _esc(path) + '</title><pre style="white-space:pre-wrap;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;max-width:900px;margin:24px auto;padding:0 16px;">' + _esc(r.ok ? d.text : (d.error || 'Not found')) + '</pre>'); w.document.close();
+}
 async function refreshEnrichmentStatus() {
   const statusText = document.getElementById("enrichStatusText");
   const statusLed = document.getElementById("enrichStatusLed");
@@ -41890,6 +41941,7 @@ function switchTab(tabId) {
 
     // Load and display enrichment scanner status
     refreshEnrichmentStatus();
+    loadReferenceStatus();
     // Load and display auto-refresh (harvest scheduler) status
     refreshAutoHarvestStatus();
     // Load enrichment + auto-refresh config from server

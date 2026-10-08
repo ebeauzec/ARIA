@@ -47,6 +47,7 @@ Notes:
 | **AutoSupport exports** you import (Action Planner, offline import) | Per-system detail for systems that are not reachable through Active IQ |
 | **A StoragePerf instance or export** you connect (Settings > StoragePerf) | Measured performance next to the Active IQ view |
 | **A disk-qualification package file** you place in `data/` (optional) | Drive firmware baselines. ARIA does not download it |
+| **A NetApp Reference Library folder** (optional, read-only) | Searchable from Settings > Data & Sync, with its freshness shown. ARIA finds the folder itself (config `libraryPath`, environment `ARIA_LIBRARY_PATH`, or the usual Google Drive locations on Windows and macOS) and only reads it; whatever maintains the folder keeps it current. No sign-in, no network, no AI |
 | **`data/reference_library.js`** (optional, local) | Extra reference tables on your machine; without it ARIA runs with empty tables |
 | **Settings** | Your Active IQ tokens, SLA policy, notification webhook, subgroups |
 
