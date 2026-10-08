@@ -13929,7 +13929,9 @@ function _getImtInterop() {
 //     distance limit per switch model via the IMT/Hardware Universe rather
 //     than rely on a blanket "non-Brocade" figure — treat fc_other as
 //     UNCONFIRMED, not as a verified NetApp-stated number.
-const REFERENCE_LIBRARY_MC_REQUIREMENTS = (window.ARIA_REF && window.ARIA_REF.REFERENCE_LIBRARY_MC_REQUIREMENTS) || { isl: {} };   // reference data: loaded from the local data/reference_library.js, not stored in the repository
+const REFERENCE_LIBRARY_MC_REQUIREMENTS = (window.ARIA_REF && window.ARIA_REF.REFERENCE_LIBRARY_MC_REQUIREMENTS) || {};
+REFERENCE_LIBRARY_MC_REQUIREMENTS.isl = REFERENCE_LIBRARY_MC_REQUIREMENTS.isl || {};   // server.py can inject an object without isl when the local reference library is absent
+// reference data: loaded from the local data/reference_library.js, not stored in the repository
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ONTAP Version Highlights — key features and upgrade justification per version
