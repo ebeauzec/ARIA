@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.298 (2026-10-08)
+
+### Added
+- `tools/netapp_docs_versions.py` also reads the newest ONTAP tools for VMware vSphere version (10.6) from NetApp's release-notes page; Settings > Data & Sync lists it as ahead of the compatibility table (10.3).
+
 ## 5.6.297 (2026-10-08)
 
 ### Fixed

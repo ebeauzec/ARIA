@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.297";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.298";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.298",
+    date: "8 October 2026",
+    title: "ONTAP Tools Version Read From NetApp",
+    sections: [
+      {
+        icon: "🧭",
+        label: "Added",
+        color: "#38bdf8",
+        items: [
+          "ARIA reads the newest ONTAP tools for VMware vSphere version from NetApp's release-notes page (10.6; the compatibility table recommends 10.3) and lists it with the other integrations whose newest release is ahead of the table. Found while cross-checking ARIA against the NetApp Reference Library.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.297",
     date: "8 October 2026",
