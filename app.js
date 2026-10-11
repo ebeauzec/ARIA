@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.306";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.307";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.307",
+    date: "11 October 2026",
+    title: "New Install Sync Failure",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "A new install failed its first sync with “Cannot read properties of undefined (reading 'maxPacketLoss')”. Without the local reference file, the server supplies only part of the MetroCluster requirements (no ISL block), and the remediation text for a MetroCluster ISL risk read the missing block. The ISL block now always exists, and the text falls back to the figures it already states (0.01% packet loss, 3 ms jitter, MTU 9216). Checked by loading the app with no local reference file and building the remediation plan for every risk of the fleet (28,781 risks, no errors).",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.306",
     date: "11 October 2026",
@@ -14027,6 +14042,7 @@ function _getImtInterop() {
 //     than rely on a blanket "non-Brocade" figure — treat fc_other as
 //     UNCONFIRMED, not as a verified NetApp-stated number.
 const REFERENCE_LIBRARY_MC_REQUIREMENTS = (window.ARIA_REF && window.ARIA_REF.REFERENCE_LIBRARY_MC_REQUIREMENTS) || { isl: {} };   // reference data: loaded from the local data/reference_library.js, not stored in the repository
+if (!REFERENCE_LIBRARY_MC_REQUIREMENTS.isl) REFERENCE_LIBRARY_MC_REQUIREMENTS.isl = {};   // the server overlay on a fresh install adds featureVersions only
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ONTAP Version Highlights — key features and upgrade justification per version
@@ -23525,9 +23541,9 @@ function generateDynamicRemediationPlan(risk, sys) {
     } else if (desc.includes("isl") || desc.includes("interconnect")) {
       cause  = "MetroCluster ISL (Inter-Switch Link) or back-end interconnect is degraded.";
       impact = "ISL degradation reduces MetroCluster mirroring throughput. Sustained packet loss >0.01% or jitter >3ms risks triggering an automatic unplanned switchover.";
-      const mcReq = REFERENCE_LIBRARY_MC_REQUIREMENTS || { isl: { maxPacketLoss: 0.01, maxJitter: 3 } };
+      const mcIsl = (REFERENCE_LIBRARY_MC_REQUIREMENTS && REFERENCE_LIBRARY_MC_REQUIREMENTS.isl) || {};
       steps  = [
-        `1. ISL requirements: max packet loss ${mcReq.isl.maxPacketLoss}%, max RTT jitter ${mcReq.isl.maxJitter}ms, MTU ${mcReq.isl.requiredMTU} bytes.`,
+        `1. ISL requirements: max packet loss ${mcIsl.maxPacketLoss != null ? mcIsl.maxPacketLoss : 0.01}%, max RTT jitter ${mcIsl.maxJitter != null ? mcIsl.maxJitter : 3}ms, MTU ${mcIsl.requiredMTU != null ? mcIsl.requiredMTU : 9216} bytes.`,
         "2. Check ISL status: FC-MCC: 'metrocluster interconnect show' | IP-MCC: 'metrocluster configuration-settings interface show'",
         "3. Run ISL health diagnostics on FC switches (Brocade): 'islshow', 'portperfshow', 'diagshow'",
         "4. For Cisco MDS ISL: 'show interface fc <port> counters' — check for CRC errors, link resets.",

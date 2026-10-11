@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.307 (2026-10-11)
+
+### Fixed
+- A new install failed its first sync with "Cannot read properties of undefined (reading 'maxPacketLoss')". Without the local reference file, the server supplies only part of the MetroCluster requirements (no ISL block), and the remediation text for a MetroCluster ISL risk read the missing block. The ISL block now always exists, and the text falls back to the figures it already states (0.01% packet loss, 3 ms jitter, MTU 9216). Checked by loading the app with no local reference file and building the remediation plan for every risk of the fleet (28,781 risks, no errors).
+
 ## 5.6.306 (2026-10-11)
 
 ### Fixed
