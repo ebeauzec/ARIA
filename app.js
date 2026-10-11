@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.307";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.308";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.308",
+    date: "11 October 2026",
+    title: "StorageGRID/SANtricity Upgrade-Path Crash on a Partial Reference File",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Action Plan generation crashed with “Cannot read properties of undefined (reading 'findIndex')” in calculateUpgradePath, for the same reason as the v5.6.307 MetroCluster ISL fix: the server's reference-file overlay only adds a platform's version catalog once version_catalog.json has entries for it, so on a new or early install, StorageGRID or SANtricity can be present in Active IQ's fleet while completely absent from SOFTWARE_VERSION_DATABASES — not an empty list, but a missing key outright. Any StorageGRID or SANtricity system in scope then crashed the whole Action Plan, not just that system's upgrade path. Fixed the same way: ontap/storagegrid/santricity now always exist as arrays, so a platform with no catalog yet falls back to the existing generic upgrade-steps text instead of throwing. Verified by reproducing the exact missing-key state and confirming calculateUpgradePath's StorageGRID branch now returns its fallback object instead of throwing.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.307",
     date: "11 October 2026",
@@ -13886,6 +13901,13 @@ function updateTAMSelectLabel() {
 }
 
 let SOFTWARE_VERSION_DATABASES = (window.ARIA_REF && window.ARIA_REF.SOFTWARE_VERSION_DATABASES) || { ontap: [], storagegrid: [], santricity: [] };   // reference data: loaded from the local data/reference_library.js, not stored in the repository
+// The server overlay on a fresh/early install only adds a platform's key once its
+// version_catalog.json entry is non-empty (server.py's _reference_overlay_js) — if
+// StorageGRID or SANtricity hasn't been scraped yet, that key is simply absent here,
+// not an empty array, so the object-level fallback above never catches it.
+if (!SOFTWARE_VERSION_DATABASES.ontap) SOFTWARE_VERSION_DATABASES.ontap = [];
+if (!SOFTWARE_VERSION_DATABASES.storagegrid) SOFTWARE_VERSION_DATABASES.storagegrid = [];
+if (!SOFTWARE_VERSION_DATABASES.santricity) SOFTWARE_VERSION_DATABASES.santricity = [];
 
 // ── NetApp Reference Library Data (synced 2026-07-30) ─────────────────────
 // Source: local reference library

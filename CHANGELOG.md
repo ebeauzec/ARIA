@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.308 (2026-10-11)
+
+### Fixed
+- Action Plan generation crashed with "Cannot read properties of undefined (reading 'findIndex')" in calculateUpgradePath — same root cause as 5.6.307's MetroCluster ISL fix: the server's reference-file overlay only adds a platform to SOFTWARE_VERSION_DATABASES once version_catalog.json has entries for it, so on a new/early install a StorageGRID or SANtricity system in the fleet could have no catalog key at all (not an empty list — missing outright), crashing the whole plan. ontap/storagegrid/santricity now always exist as arrays; a platform with no catalog yet falls back to the existing generic upgrade-steps text instead of throwing.
+
 ## 5.6.307 (2026-10-11)
 
 ### Fixed

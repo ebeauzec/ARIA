@@ -1,8 +1,8 @@
 {
-  "version": "5.6.307",
+  "version": "5.6.308",
   "major": 5,
   "minor": 6,
-  "patch": 307,
+  "patch": 308,
   "date": "2026-10-11",
-  "notes": "Fix new-install sync failure (MetroCluster ISL requirements missing without the local reference file)."
+  "notes": "Fix StorageGRID/SANtricity upgrade-path crash on a new/early install (same missing-reference-key class as 5.6.307's MetroCluster ISL fix)."
 }
