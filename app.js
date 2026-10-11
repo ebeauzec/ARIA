@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.305";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.306";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.306",
+    date: "11 October 2026",
+    title: "First Harvest On A New Install",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "A first harvest on a new install no longer ends in an empty page. The page used to stop watching after 20 minutes; on a large fleet the harvest was still running, the cache was still empty, so it showed nothing and never looked again until the page was reloaded. It now keeps watching with no time limit, shows what the harvest is doing (account N of M, current step, elapsed time), loads the first account as soon as it is cached, and refreshes itself when the remaining accounts finish. /api/sync-status carries a progress block for this.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.305",
     date: "11 October 2026",
@@ -40023,6 +40038,26 @@ function _showSetupBanner(message) {
   setTimeout(() => switchTab("settings"), 400);
 }
 
+// While a harvest is still running after the page has shown the accounts that are already cached, look at the server now and then and load the full data
+// when it finishes, so nobody has to reload the page to see it.
+let _syncWatcher = null;
+function _watchSyncThenReload() {
+  if (_syncWatcher) return;
+  _syncWatcher = setInterval(async () => {
+    try {
+      const sr = await fetch(`/api/sync-status?t=${Date.now()}`, { cache: 'no-store' });
+      const ss = sr.ok ? await sr.json() : {};
+      const lbl = document.getElementById('connectionStatusText'), pr = ss.progress || {};
+      if (ss.isSyncing) {
+        if (lbl && pr.accountTotal > 1) lbl.innerText = `Synced so far: ${(state.systems || []).length} systems · still pulling account ${pr.accountIndex} of ${pr.accountTotal}${pr.phase ? ' · ' + String(pr.phase).replace(/\.+$/, '') : ''}`;
+        return;
+      }
+      clearInterval(_syncWatcher); _syncWatcher = null;
+      loadProductionData(false);
+    } catch (e) { /* the server may be busy; try again on the next tick */ }
+  }, 15000);
+}
+
 async function loadProductionData(forceRefresh = false) {
 
   const textLabel = document.getElementById("connectionStatusText");
@@ -40065,7 +40100,8 @@ async function loadProductionData(forceRefresh = false) {
         // TAM->Efficiency->Minimal fallback tier retries -- routinely well past 6
         // minutes for two accounts. 20 minutes gives real multi-account/many-watchlist
         // harvests room to actually finish instead of the client giving up early.
-        const POLL_TIMEOUT = 20 * 60 * 1000;
+        // No hard time limit (owner report, 2026-10-11: a first harvest on a new install ran past it, the page then showed nothing and never looked again). The
+        // wait ends when the harvest ends, or as soon as the first account's data is in the cache (the page then shows it and watches for the rest).
         const POLL_INTERVAL = 3000;
         let pollDot = 0;
         let _pollTimedOut = false;
@@ -40077,18 +40113,17 @@ async function loadProductionData(forceRefresh = false) {
               pollDot++;
               const dots = ".".repeat((pollDot % 3) + 1);
               const elapsed = Math.round((Date.now() - pollStart) / 1000);
-              if (textLabel) textLabel.innerText = `Syncing with Active IQ${dots} (${elapsed}s)`;
+              const pr = ss.progress || {};
+              const accTxt = pr.accountTotal > 1 ? ` · account ${pr.accountIndex} of ${pr.accountTotal}${pr.account ? ' (' + pr.account + ')' : ''}` : '';
+              const phTxt = pr.phase && pr.phase !== 'start' ? ` · ${String(pr.phase).replace(/\.+$/, '')}` : '';
+              if (textLabel) textLabel.innerText = `Syncing with Active IQ${dots} ${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, '0')}s${accTxt}${phTxt}`;
               if (!ss.isSyncing) {
                 clearInterval(timer);
                 if (ss.lastError) reject(new Error(`Sync error: ${ss.lastError}`));
                 else resolve(ss);
-              } else if (Date.now() - pollStart > POLL_TIMEOUT) {
-                // The harvest itself runs server-side, independent of this browser
-                // tab -- a client poll timeout does NOT mean the sync failed or that
-                // the app isn't running, only that this page gave up watching. Fall
-                // back to whatever's currently cached (a prior completed sync, or
-                // partial data already written) instead of an alarming failure alert
-                // that used to wrongly tell the user to check the launcher.
+              } else if ((ss.systemCount || 0) > 0 && !(state.systems && state.systems.length)) {   // only when the page has nothing to show yet; a forced refresh still waits for the end
+                // The harvest runs server-side, independent of this tab. An account is cached as soon as it finishes, so show what is there now
+                // and keep watching for the rest.
                 clearInterval(timer);
                 _pollTimedOut = true;
                 resolve(ss);
@@ -40101,8 +40136,8 @@ async function loadProductionData(forceRefresh = false) {
         });
 
         if (_pollTimedOut) {
-          console.log("[AIQ] Poll gave up after 20 minutes; sync is still running server-side. Loading current cache.");
-          if (textLabel) textLabel.innerText = "Still syncing in background — showing latest cached data...";
+          console.log("[AIQ] First account(s) are cached; the sync is still running server-side. Loading the cache and watching for the rest.");
+          if (textLabel) textLabel.innerText = "Loading the accounts synced so far — the rest is still being pulled...";
         } else {
           // Sync done — re-fetch the now-populated cache
           console.log("[AIQ] Background sync complete. Re-fetching cached data...");
@@ -40357,8 +40392,9 @@ async function loadProductionData(forceRefresh = false) {
     const cacheStatus = cacheInfo.hit ? (cacheInfo.stale ? 'stale cache' : 'cached') : 'live';
     const lastSyncTime = cacheInfo.lastSync ? new Date(cacheInfo.lastSync).toLocaleTimeString() : '';
     const statusSuffix = cacheInfo.hit ? ` (${cacheStatus}${lastSyncTime ? ', synced ' + lastSyncTime : ''})` : '';
+    if (result._stillSyncingInBackground) _watchSyncThenReload();
     if (textLabel) textLabel.innerText = result._stillSyncingInBackground
-      ? `Synced: ${state.systems.length} systems, ${result.totalClusters || 0} clusters (still refreshing in background — reload in a few minutes for the latest)`
+      ? `Synced: ${state.systems.length} systems, ${result.totalClusters || 0} clusters (the remaining accounts are still being pulled; this page refreshes itself when they are in)`
       : `Synced: ${state.systems.length} systems, ${result.totalClusters || 0} clusters${statusSuffix}`;
     if (indicator)  indicator.className = "indicator connected";
     console.log(`[AIQ] Sync complete: ${state.systems.length} systems [${cacheStatus}]`);

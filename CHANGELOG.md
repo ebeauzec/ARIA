@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.306 (2026-10-11)
+
+### Fixed
+- A first harvest on a new install no longer ends in an empty page. The page used to stop watching after 20 minutes; on a large fleet the harvest was still running, the cache was still empty, so it showed nothing and never looked again until the page was reloaded. It now keeps watching with no time limit, shows what the harvest is doing (account N of M, current step, elapsed time), loads the first account as soon as it is cached, and refreshes itself when the remaining accounts finish. /api/sync-status carries a progress block for this.
+
 ## 5.6.305 (2026-10-11)
 
 ### Added

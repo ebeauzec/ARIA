@@ -172,6 +172,7 @@ def _rest(name, token=None, **params):
 _sync_lock = threading.Lock()
 _is_syncing = False
 _last_sync_error = None
+_harvest_progress = {}   # what the running harvest is doing (account, phase), reported by /api/sync-status so a long first harvest is not a silent wait
 _current_token = None  # Last-used access token for debug probes
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1975,6 +1976,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         """Closes the previous phase of this harvest and starts the next: the seconds per phase end up in the log and in the result, so a slow harvest can be explained."""
 
         _now = time.time(); _phases.append([_ph[1], round(_now - _ph[0], 1)]); _ph[0] = _now; _ph[1] = str(label)[:60]
+        _harvest_progress.update({"phase": _ph[1], "phaseStartedAt": _now})
     try:
         # 1. Read refresh token — from the account override if given, else the
         # legacy top-level aiq_config.json fields (unchanged single-account path).
@@ -4935,8 +4937,10 @@ def _sync_all_accounts(extra_watchlist_ids=None):
         raise Exception("setup_required: No Active IQ accounts configured — open Settings & Config to add at least one")
 
     succeeded, failed = [], {}
-    for acct in accounts:
+    for _i, acct in enumerate(accounts):
         acct_label = acct.get("label") or acct.get("id")
+        _harvest_progress.clear()
+        _harvest_progress.update({"account": acct_label, "accountIndex": _i + 1, "accountTotal": len(accounts), "accountStartedAt": time.time()})
         print(f"  [MULTI-ACCOUNT] Syncing account '{acct_label}' ({acct.get('id')})...", flush=True)
         try:
             _do_full_harvest(watchlist_ids=extra_watchlist_ids, account=acct)
@@ -9912,6 +9916,7 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         db = _init_db()
         try:
             meta = _get_sync_meta(db)
+            meta["progress"] = dict(_harvest_progress) if _is_syncing else {}
             try:
                 all_cached = _load_all_accounts_meta(db)
                 configured_ids = {a["id"] for a in _get_accounts()} | {"default"}
