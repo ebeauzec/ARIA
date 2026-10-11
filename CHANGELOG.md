@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.303 (2026-10-11)
+
+### Fixed
+- The Enrichment Log now shows the date as well as the time each entry was fetched (cached entries date from an earlier day), and under each summary says what was added: the CVE, advisory and bug identifiers, and the first known-issue and what's-new titles. The catalogue entry says what it is.
+
 ## 5.6.302 (2026-10-11)
 
 ### Fixed

@@ -1,8 +1,8 @@
 {
-  "version": "5.6.302",
+  "version": "5.6.303",
   "major": 5,
   "minor": 6,
-  "patch": 302,
-  "date": "2026-10-08",
-  "notes": "Refresh token cleaned before use; token rejection logged; failed accounts shown as warnings; installed cards table."
+  "patch": 303,
+  "date": "2026-10-11",
+  "notes": "Enrichment log shows fetch dates and what was added."
 }

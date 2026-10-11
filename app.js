@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.302";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.303";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.303",
+    date: "11 October 2026",
+    title: "Enrichment Log Shows Dates And Content",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The Enrichment Log now shows the date as well as the time each entry was fetched (cached entries date from an earlier day), and under each summary says what was added: the CVE, advisory and bug identifiers, and the first known-issue and what's-new titles. The catalogue entry says what it is.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.302",
     date: "11 October 2026",
@@ -13303,7 +13318,11 @@ function showEnrichLog() {
   if (log.length === 0) { alert('No enrichment data fetched yet this session.'); return; }
 
   const rows = log.map(e => {
-    const timeStr = e.fetched_at ? new Date(e.fetched_at).toLocaleTimeString() : '—';
+    const _fd = e.fetched_at ? new Date(e.fetched_at) : null;
+    const timeStr = _fd && !isNaN(_fd) ? _fd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) + '<br>' + _fd.toLocaleTimeString() : '—';
+    const _esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const _cut = (s, n) => { s = String(s || ''); return s.length > n ? s.slice(0, n) + '…' : s; };
+    let detail = '';
     const cacheStr = e.cached ? '📦 cached' : '🌐 live';
     let summary = '';
     if (e.type.includes('version') && e.data) {
@@ -13319,26 +13338,41 @@ function showEnrichLog() {
       if (bg  > 0) parts.push(`${bg} bug${bg>1?'s':''}`);
       if (wn  > 0) parts.push(`${wn} what's-new`);
       summary = parts.length ? parts.join(' · ') : '✓ clean';
+      // what was actually added: the identifiers and the first titles, so the log says what the release now carries in ARIA
+      const lines = [];
+      const ids = (e.data.relatedCVEs || []).map(c => (c && c.id) || c).filter(Boolean);
+      if (ids.length) lines.push(`<b>CVEs:</b> ${_esc(ids.slice(0, 6).join(', '))}${ids.length > 6 ? ` +${ids.length - 6} more` : ''}`);
+      const advs = (e.data.relatedAdvisories || []).map(x => (x && (x.id || x.title)) || x).filter(Boolean);
+      if (advs.length) lines.push(`<b>Advisories:</b> ${_esc(advs.slice(0, 4).join(', '))}${advs.length > 4 ? ` +${advs.length - 4} more` : ''}`);
+      const bgs = (e.data.relatedBugs || []).map(x => (x && (x.id || x.title)) || x).filter(Boolean);
+      if (bgs.length) lines.push(`<b>Bugs:</b> ${_esc(bgs.slice(0, 4).join(', '))}${bgs.length > 4 ? ` +${bgs.length - 4} more` : ''}`);
+      (e.data.knownIssues || []).slice(0, 2).forEach(k => lines.push(`<b>Known issue:</b> ${_esc(_cut(k, 110))}`));
+      (e.data.whatsNew || []).slice(0, 2).forEach(k => lines.push(`<b>What's new:</b> ${_esc(_cut(k, 110))}`));
+      detail = lines.join('<br>');
     } else if (e.type === 'cve' && e.data) {
       summary = `CVSS ${e.data.cvss || 'N/A'} ${e.data.severity || ''}`;
+      detail = _esc(_cut(e.data.description || e.data.summary || '', 160));
+    } else if (e.type === '_catalog') {
+      summary = 'Release catalogue refreshed';
+      detail = 'The list of ONTAP, StorageGRID and SANtricity releases ARIA knows about, read from docs.netapp.com.';
     }
     return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
       <td style="padding:5px 8px; color:#2dd4bf; font-family:monospace; font-size:0.75rem;">${e.id}</td>
       <td style="padding:5px 8px; color:var(--text-secondary); font-size:0.72rem;">${e.type}</td>
       <td style="padding:5px 8px; color:var(--text-secondary); font-size:0.72rem;">${e.source}</td>
       <td style="padding:5px 8px; color:var(--text-muted); font-size:0.72rem;">${cacheStr}</td>
-      <td style="padding:5px 8px; color:var(--text-secondary); font-size:0.72rem;">${summary}</td>
-      <td style="padding:5px 8px; color:var(--text-muted); font-size:0.72rem;">${timeStr}</td>
+      <td style="padding:5px 8px; color:var(--text-secondary); font-size:0.72rem;">${summary}${detail ? `<div style="margin-top:3px;font-size:0.66rem;color:var(--text-muted);line-height:1.45;">${detail}</div>` : ''}</td>
+      <td style="padding:5px 8px; color:var(--text-muted); font-size:0.72rem;white-space:nowrap;">${timeStr}</td>
     </tr>`;
   }).join('');
 
   const modal = document.createElement('div');
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
   modal.innerHTML = `
-    <div style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius);padding:24px;max-width:860px;width:95%;max-height:80vh;overflow:auto;position:relative;">
+    <div style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius);padding:24px;max-width:1100px;width:95%;max-height:80vh;overflow:auto;position:relative;">
       <button onclick="this.closest('[style*=fixed]').remove()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer;">✕</button>
       <div style="font-size:1rem;font-weight:700;color:#2dd4bf;margin-bottom:4px;">🔍 Enrichment Log</div>
-      <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:16px;">Data fetched this session from public sources (NVD, docs.netapp.com, security.netapp.com). No customer data was transmitted.</div>
+      <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:16px;">Public data ARIA holds for the versions and CVEs in your fleet (NVD, docs.netapp.com, security.netapp.com), with the date it was fetched. Cached entries were fetched on an earlier day and reused. No customer data was transmitted.</div>
       <table style="width:100%;border-collapse:collapse;">
         <thead>
           <tr style="border-bottom:1px solid rgba(255,255,255,0.1);">
