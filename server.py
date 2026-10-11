@@ -191,6 +191,14 @@ _current_token = None  # Last-used access token for debug probes
 # needs to change to keep working.
 # ─────────────────────────────────────────────────────────────────────
 
+def _clean_token(t):
+    """A refresh token pasted from a browser or a chat often carries a trailing newline, spaces, quotes or a 'Bearer ' prefix; Active IQ answers all of those with 401."""
+    t = str(t or "").strip().strip("\"'`").strip()
+    if t.lower().startswith("bearer "):
+        t = t[7:].strip()
+    return "".join(t.split())
+
+
 def _load_config():
     """Read aiq_config.json, creating a blank template if it doesn't exist."""
     if not CONFIG_PATH.exists():
@@ -218,7 +226,7 @@ def _get_accounts(cfg=None):
             {
                 "id": a.get("id") or a.get("label") or f"account{i}",
                 "label": a.get("label") or a.get("id") or f"Account {i+1}",
-                "refreshToken": a.get("refreshToken") or a.get("refresh_token") or "",
+                "refreshToken": _clean_token(a.get("refreshToken") or a.get("refresh_token")),
                 "watchlistId": a.get("watchlistId", ""),
                 "enabled": a.get("enabled", True),
             }
@@ -230,7 +238,7 @@ def _get_accounts(cfg=None):
         return [{
             "id": "default",
             "label": cfg.get("tamName") or "Default Account",
-            "refreshToken": legacy_token,
+            "refreshToken": _clean_token(legacy_token),
             "watchlistId": cfg.get("watchlistId", ""),
             "enabled": True,
         }]
@@ -1034,6 +1042,43 @@ def _harvest_guard(db, account_id, label, result, prev_result, notes=None):
             db.commit()
     except Exception as e:
         print(f"  [HARVEST] guard skipped: {e}", flush=True)
+
+
+_FAIL_PREFIX = "Harvest failed: "
+
+
+def _record_account_failure(account_id, label, error):
+    """An account whose harvest fails (most often a refresh token Active IQ no longer accepts) used to leave only a line in the log, while the app went on
+    showing that account's old data as if it were current. The failure is kept as a warning, shown in Settings, until a harvest of that account succeeds."""
+    try:
+        err = str(error)
+        if "401" in err or "Token exchange" in err:
+            msg = f"{label}: {_FAIL_PREFIX}Active IQ rejected the refresh token (HTTP 401). Renew the token in Settings > Connection; the account's data stays as it was at its last good harvest."
+        else:
+            msg = f"{label}: {_FAIL_PREFIX}{err[:200]}"
+        db = _init_db()
+        try:
+            db.execute("CREATE TABLE IF NOT EXISTS harvest_warnings (account_id TEXT, created_at TEXT, message TEXT)")
+            db.execute("DELETE FROM harvest_warnings WHERE account_id = ? AND message LIKE ?", (account_id, f"%{_FAIL_PREFIX}%"))
+            db.execute("INSERT INTO harvest_warnings (account_id, created_at, message) VALUES (?, ?, ?)", (account_id, datetime.now(timezone.utc).isoformat(), msg))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"  [HARVEST] could not record the failure of '{account_id}': {e}", flush=True)
+
+
+def _clear_account_failure(account_id):
+    try:
+        db = _init_db()
+        try:
+            db.execute("CREATE TABLE IF NOT EXISTS harvest_warnings (account_id TEXT, created_at TEXT, message TEXT)")
+            db.execute("DELETE FROM harvest_warnings WHERE account_id = ? AND message LIKE ?", (account_id, f"%{_FAIL_PREFIX}%"))
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
 
 
 def _recent_harvest_warnings(db, days=14):
@@ -1934,7 +1979,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         # 1. Read refresh token — from the account override if given, else the
         # legacy top-level aiq_config.json fields (unchanged single-account path).
         if account:
-            refresh_token = account.get("refreshToken")
+            refresh_token = _clean_token(account.get("refreshToken"))
             if not refresh_token:
                 raise Exception(f"setup_required: Account '{account.get('id')}' has no refresh token configured")
         else:
@@ -1945,7 +1990,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                 print("  [HARVEST] Created blank aiq_config.json template", flush=True)
                 raise Exception("setup_required: No Active IQ credentials configured")
             cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            refresh_token = cfg.get("refreshToken") or cfg.get("refresh_token")
+            refresh_token = _clean_token(cfg.get("refreshToken") or cfg.get("refresh_token"))
             if not refresh_token:
                 raise Exception("setup_required: No refresh token configured — open Settings & Config to add your Active IQ refresh token")
 
@@ -1954,6 +1999,8 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         # 2. Get access token
         status, raw = _rest("access_token", refresh_token=refresh_token)
         if status != 200:
+            _why = raw.decode("utf-8", errors="replace").strip()[:160].replace(refresh_token, "<token>")
+            print(f"  [HARVEST] Token exchange rejected: HTTP {status} from {_rest_host()}; token length {len(refresh_token)}; response: {_why or '(empty)'}", flush=True)
             raise Exception(f"Token exchange failed: HTTP {status}")
         token_data = json.loads(raw.decode("utf-8", errors="replace"))
         token = token_data.get("access_token")
@@ -4894,8 +4941,10 @@ def _sync_all_accounts(extra_watchlist_ids=None):
         try:
             _do_full_harvest(watchlist_ids=extra_watchlist_ids, account=acct)
             succeeded.append(acct.get("id"))
+            _clear_account_failure(acct.get("id"))
         except Exception as e:
             print(f"  [MULTI-ACCOUNT] Account '{acct_label}' failed: {e}", flush=True)
+            _record_account_failure(acct.get("id"), acct_label, e)
             import traceback as _tb; _tb.print_exc()
             failed[acct.get("id")] = str(e)
     print(f"  [MULTI-ACCOUNT] Done: {len(succeeded)} succeeded, {len(failed)} failed", flush=True)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.302 (2026-10-11)
+
+### Fixed
+- A refresh token with a trailing newline, spaces, quotes or a 'Bearer ' prefix (easy to pick up when pasting) was sent as it stood and Active IQ answered 401. The token is now cleaned before use.
+- A rejected token exchange now logs the server's reason (status, host, token length, response text, never the token) instead of only 'HTTP 401'.
+- An account whose harvest fails (most often a refresh token Active IQ no longer accepts) is now shown as a warning in Settings > Data & Sync until a harvest of that account succeeds; before, its old data was shown as if it were current.
+- Rear panel: a table of the installed cards from Active IQ's adapter inventory (slot, card, type, ports, firmware, documented role of the slot) with a check where the inventory and the reported ports disagree, or a note when Active IQ reports no inventory.
+
 ## 5.6.301 (2026-10-08)
 
 ### Fixed

@@ -1,8 +1,8 @@
 {
-  "version": "5.6.301",
+  "version": "5.6.302",
   "major": 5,
   "minor": 6,
-  "patch": 301,
+  "patch": 302,
   "date": "2026-10-08",
-  "notes": "Opening the app no longer starts a harvest; faster cache metadata; compressed harvest response."
+  "notes": "Refresh token cleaned before use; token rejection logged; failed accounts shown as warnings; installed cards table."
 }

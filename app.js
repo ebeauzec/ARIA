@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.301";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.302";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.302",
+    date: "11 October 2026",
+    title: "Token Handling, Account Failure Warnings, Installed Cards",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "A refresh token with a trailing newline, spaces, quotes or a 'Bearer ' prefix (easy to pick up when pasting) was sent as it stood and Active IQ answered 401. The token is now cleaned before use.",
+          "A rejected token exchange now logs the server's reason (status, host, token length, response text, never the token) instead of only 'HTTP 401'.",
+          "An account whose harvest fails (most often a refresh token Active IQ no longer accepts) is now shown as a warning in Settings > Data & Sync until a harvest of that account succeeds; before, its old data was shown as if it were current.",
+          "Rear panel: a table of the installed cards from Active IQ's adapter inventory (slot, card, type, ports, firmware, documented role of the slot) with a check where the inventory and the reported ports disagree, or a note when Active IQ reports no inventory.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.301",
     date: "8 October 2026",
@@ -43808,11 +43826,13 @@ function renderNodeVisualLayout(selectedSystems, sys) {
     </div>
     </div>
 
+    <div id="bpCardsPanel"></div>
     <div id="bpDocsPanel"></div>
 
     ${lifTableHtml}
   `;
-  _bpFillDocs(sys.platform);
+  _bpFillCards(sys);
+  _bpFillDocs(sys.platform, sys);
 }
 
 function selectVisualNode(serial) {
@@ -43874,12 +43894,49 @@ function _hwDocsEntry(platform) {
   for (const [dir, e] of Object.entries(_HW_DOCS.platforms)) if ((e.models || []).some(m => norm(m) === code)) return { dir, e };
   return null;
 }
-async function _bpFillDocs(platform) {
+// The cards installed in this system, as Active IQ's adapter inventory reports them (slot, card, type, port count, firmware), set beside what the drawing and
+// the documentation say about each slot. The drawing itself is the platform's standard layout with the ports Active IQ reports; this table is what shows the
+// customer's own configuration, and where the inventory and the reported ports disagree.
+function _bpFillCards(sys) {
+  const el = document.getElementById('bpCardsPanel'); if (!el) return;
+  const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const adapters = ((sys && sys.platformExtras && sys.platformExtras.adapters) || []).filter(x => x && x.slot != null);
+  const note = 'font-size:0.68rem;color:var(--text-muted);margin-top:8px;';
+  const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.72rem;border-bottom:1px solid rgba(255,255,255,0.04);';
+  if (!adapters.length) {
+    el.innerHTML = `<div style="${note}">Active IQ reports no adapter inventory for this system, so the drawing shows the platform's standard layout with the ports Active IQ reports. The installed cards are not known.</div>`;
+    return;
+  }
+  const ports = window._bpCurPorts || [];
+  const slotOf = n => { const m = String(n || '').match(/^e?(\d+)[a-z]$/i); return m ? m[1] : null; };
+  const reported = {}; ports.forEach(pt => { const s = slotOf(pt.name); if (s != null && !(pt.details && pt.details.vlan)) reported[s] = (reported[s] || 0) + 1; });
+  const hit = _hwDocsEntry(sys.platform), docSlots = hit ? (hit.e.slots || {}) : {};
+  const bySlot = {}; adapters.forEach(x => { (bySlot[String(x.slot)] = bySlot[String(x.slot)] || []).push(x); });
+  const slots = Object.keys(bySlot).sort((x, y) => x - y);
+  const issues = [];
+  const rows = slots.map(s => {
+    const cards = bySlot[s].filter(x => !/SERVICE_PROCESSOR/i.test(x.type || '') && !/Internal .*Switch/i.test(x.name || ''));
+    if (!cards.length) return '';
+    const cardPorts = cards.reduce((n, x) => n + (+x.ports || 0), 0), rep = reported[s] || 0;
+    let flag = '';
+    if (cardPorts && rep && rep < cardPorts) flag = `${rep} of ${cardPorts} ports reported by Active IQ`;
+    else if (cardPorts && !rep && s !== '0') { flag = 'no port of this card is reported'; issues.push(`slot ${s}: ${cards.map(x => x.name).join(', ')} has no reported port`); }
+    const role = docSlots[s] ? (docSlots[s].label || (docSlots[s].roles || []).join(', ')) : '';
+    return cards.map(x => `<tr><td style="${td}font-weight:700;">${esc(s === '0' ? 'onboard' : s)}</td><td style="${td}">${esc(x.name)}</td><td style="${td}">${esc(String(x.type || '').toLowerCase().replace(/_/g, ' '))}</td><td style="${td}">${esc(x.ports == null ? '' : x.ports)}</td><td style="${td}">${esc(x.fw || '')}</td><td style="${td}">${esc(role)}</td><td style="${td}color:#f59e0b;">${esc(flag)}</td></tr>`).join('');
+  }).filter(Boolean).join('');
+  Object.keys(reported).forEach(s => { if (!bySlot[s]) issues.push(`slot ${s}: ${reported[s]} port${reported[s] > 1 ? 's' : ''} reported but no card in the inventory`); });
+  el.innerHTML = `<details open style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:rgba(15,22,38,0.3);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.8rem;font-weight:600;">Installed cards (reported by Active IQ)</summary><div style="padding:0 12px 12px;">`
+    + `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Slot</th><th style="${th}">Card</th><th style="${th}">Type</th><th style="${th}">Ports</th><th style="${th}">Firmware</th><th style="${th}">Documentation role of the slot</th><th style="${th}">Check</th></tr></thead><tbody>${rows}</tbody></table>`
+    + (issues.length ? `<div style="${note}color:#f59e0b;">Inventory and reported ports disagree: ${esc(issues.join('; '))}.</div>` : '')
+    + `<div style="${note}">From the adapter inventory in this system's AutoSupport data. The drawing above is the platform's standard layout with the ports Active IQ reports.</div></div></details>`;
+}
+async function _bpFillDocs(platform, sys) {
   const el = document.getElementById('bpDocsPanel'); if (!el) return;
   if (!_HW_DOCS && !_HW_DOCS_LOADING) {
     _HW_DOCS_LOADING = true;
     try { const r = await fetch('data/platform_hardware.json', { cache: 'no-cache' }); if (r.ok) _HW_DOCS = await r.json(); } catch (e) { }
     _HW_DOCS_LOADING = false;
+    if (sys) _bpFillCards(sys);
   }
   const hit = _hwDocsEntry(platform), el2 = document.getElementById('bpDocsPanel'); if (!el2) return;
   if (!hit) { el2.innerHTML = ''; return; }
