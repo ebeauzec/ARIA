@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.304";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.305";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.305",
+    date: "11 October 2026",
+    title: "Network Card Firmware Known Issues",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New check: known issues of network and I/O card firmware. A rule names the card by part number, the model families and the affected firmware (first rule: CFDIAGS-40, the X60132A 4-port CX7 25GbE module on firmware 28.49.1014, where boot_diags fails to initialize the card). The adapter inventory is checked on every system; a match shows in the installed-cards table and in the Firmware Currency deliverable, which also says how many cards were checked and that none was affected when that is the case. Family names match exactly (A30 does not match A300).",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.304",
     date: "11 October 2026",
@@ -20027,6 +20042,72 @@ function _fwKnownIssues(sys) {
   return rules.filter(r => (!r.component || String(r.component).toUpperCase() === type) && (r.families || []).some(f => model.includes(norm(f)))
     && ((r.versions || []).some(v => { const x = _dfVerParse(v); return x && _dfVerCmp(x, cur) === 0; }) || (r.minVersion && (() => { const x = _dfVerParse(r.minVersion); return x && _dfVerCmp(cur, x) >= 0; })())));
 }
+// Known issues of the firmware of a network or I/O card (resolution_rules.json > firmwareKnownIssues with component "CARD"). A rule names the card by its part
+// number (as the adapter inventory reports it), the model families it was seen on and the firmware version(s) affected; a card matches only when all three agree.
+function _cardRuleFamilyMatch(model, families) {
+  const norm = x => String(x || '').toUpperCase().replace(/[-\s]/g, ''), m = norm(model);
+  return (families || []).some(f => { const n = norm(f); return m === n || m === 'AFF' + n || m === 'ASA' + n || m === 'FAS' + n; });   // exact family: A30 must not match A300
+}
+function _cardFwKnownIssues(sys) {
+  const rules = ((typeof RESOLUTION_RULES !== 'undefined' && RESOLUTION_RULES.firmwareKnownIssues) || []).filter(r => String(r.component || '').toUpperCase() === 'CARD');
+  const ad = (sys && sys.platformExtras && sys.platformExtras.adapters) || [];
+  if (!rules.length || !ad.length) return [];
+  const model = (sys.model || sys.platform || ''), out = [];
+  rules.forEach(r => {
+    if (!_cardRuleFamilyMatch(model, r.families)) return;
+    ad.forEach(x => {
+      if (!x || !x.fw || !(r.cardPartNumbers || []).some(pn => String(pn).toUpperCase() === String(x.pn || '').toUpperCase())) return;
+      const cur = _dfVerParse(x.fw); if (!cur) return;
+      if ((r.versions || []).some(v => { const y = _dfVerParse(v); return y && _dfVerCmp(y, cur) === 0; })) out.push({ rule: r, slot: x.slot, card: x.name, pn: x.pn, fw: x.fw });
+    });
+  });
+  return out;
+}
+// Fleet view of the same check: how many of the named cards were examined and which systems carry the affected firmware.
+function _dfCardFwSummary(systems) {
+  const rules = ((typeof RESOLUTION_RULES !== 'undefined' && RESOLUTION_RULES.firmwareKnownIssues) || []).filter(r => String(r.component || '').toUpperCase() === 'CARD');
+  if (!rules.length) return null;
+  const out = rules.map(r => ({ rule: r, checked: 0, systemsChecked: 0, hits: [] }));
+  (systems || []).forEach(s => {
+    if (!s || _platformFamily(s) !== 'ontap') return;
+    const ad = (s.platformExtras && s.platformExtras.adapters) || [];
+    out.forEach(o => {
+      if (!_cardRuleFamilyMatch(s.model || s.platform || '', o.rule.families)) return;
+      const cards = ad.filter(x => x && x.fw && (o.rule.cardPartNumbers || []).some(pn => String(pn).toUpperCase() === String(x.pn || '').toUpperCase()));
+      if (!cards.length) return;
+      o.systemsChecked++; o.checked += cards.length;
+    });
+    _cardFwKnownIssues(s).forEach(h => { const o = out.find(q => q.rule === h.rule); if (o) o.hits.push({ name: s.systemName || s.serialNumber, slot: h.slot, fw: h.fw }); });
+  });
+  const used = out.filter(o => o.checked > 0 || o.hits.length);
+  return used.length ? used : null;
+}
+function _dfCardFwMd(systems) {
+  const sm = _dfCardFwSummary(systems); if (!sm) return '';
+  let o = '## Network and I/O card firmware\n\n';
+  sm.forEach(s => {
+    const r = s.rule;
+    o += `**${r.id}** (${r.cardLabel || r.cardPartNumbers.join(', ')}, firmware ${(r.versions || []).join(', ')}): ${r.summary}.\n\n`;
+    o += s.hits.length
+      ? `**Finding:** ${s.hits.length} card${s.hits.length !== 1 ? 's' : ''} on the affected firmware, of ${s.checked} checked in ${s.systemsChecked} system${s.systemsChecked !== 1 ? 's' : ''}.\n\n| System | Slot | Firmware |\n|---|---|---|\n` + s.hits.map(h => `| ${h.name} | ${h.slot} | ${h.fw} |`).join('\n') + `\n\n${r.note || ''}\n\n`
+      : `**Finding:** none. ${s.checked} card${s.checked !== 1 ? 's' : ''} checked in ${s.systemsChecked} system${s.systemsChecked !== 1 ? 's' : ''}; none runs the affected firmware.\n\n`;
+    o += `Source: ${r.source || r.url}. ${r.url || ''}\n\n`;
+  });
+  return o;
+}
+function _dfCardFwHtml(systems) {
+  const sm = _dfCardFwSummary(systems); if (!sm) return '';
+  const e = (typeof esc === 'function') ? esc : (x => String(x == null ? '' : x).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])));
+  let h = `<h3 style="font-size:0.95rem;margin:22px 0 4px;color:var(--text-primary);">Network and I/O card firmware <span class="rk-tag rk-tag-finding">FINDING</span></h3>`;
+  sm.forEach(s => {
+    const r = s.rule, bad = s.hits.length > 0, col = bad ? '#f59e0b' : '#10b981';
+    h += `<div style="font-size:0.76rem;margin:6px 0;padding:8px 10px;border:1px solid ${col}55;border-radius:6px;background:${col}14;"><b>${e(r.id)}</b> (${e(r.cardLabel || r.cardPartNumbers.join(', '))}, firmware ${e((r.versions || []).join(', '))}): ${e(r.summary)}. `
+      + (bad ? `<b>${s.hits.length} card${s.hits.length !== 1 ? 's' : ''} on the affected firmware</b>, of ${s.checked} checked: ${e(s.hits.map(x => `${x.name} slot ${x.slot}`).join(', '))}. ${e(r.note || '')}`
+             : `None of the ${s.checked} cards checked (${s.systemsChecked} system${s.systemsChecked !== 1 ? 's' : ''}) runs the affected firmware.`)
+      + ` <a href="${e(r.url || '#')}" target="_blank" rel="noopener">NetApp KB</a></div>`;
+  });
+  return h;
+}
 // Known issues of one upgrade path (resolution_rules.json > upgradePathKnownIssues): the installed release and the line it would move to.
 function _upgradePathIssues(fromText, toText) {
   const rules = (typeof RESOLUTION_RULES !== 'undefined' && RESOLUTION_RULES.upgradePathKnownIssues) || [];
@@ -33142,6 +33223,7 @@ function _renderFirmwareCurrencySection(systems, opts) {
   }
 
   html += _dfNonOntapFirmwareHtml(_nonOntapFw);
+  html += _dfCardFwHtml(systems);
   // ── Per-system collapsible cards ──
   html += `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:10px;">Click a system to expand firmware details. ${systems.length} system${systems.length !== 1 ? 's' : ''} shown.</div>`;
   html += systemCards.join('');
@@ -43975,7 +44057,8 @@ function _bpFillCards(sys) {
     else if (cardPorts && rep && rep < cardPorts) flag = `${rep} of ${cardPorts} ports reported by Active IQ`;
     else if (cardPorts && !rep) { flag = 'no port of this card is in the network port list'; issues.push(`slot ${s}: ${cards.map(x => x.name).join(', ')}`); }
     const role = docSlots[s] ? (docSlots[s].label || (docSlots[s].roles || []).join(', ')) : '';
-    return cards.map(x => `<tr><td style="${td}font-weight:700;">${esc(s === '0' ? 'onboard' : s)}</td><td style="${td}">${esc(x.name)}</td><td style="${td}">${esc(String(x.type || '').toLowerCase().replace(/_/g, ' '))}</td><td style="${td}">${esc(x.ports == null ? '' : x.ports)}</td><td style="${td}">${esc(x.fw || '')}</td><td style="${td}">${esc(role)}</td><td style="${td}color:#f59e0b;">${esc(flag)}</td></tr>`).join('');
+    const cardIssue = x => _cardFwKnownIssues(sys).filter(h => String(h.slot) === String(s) && h.card === x.name).map(h => h.rule.id).join(', ');
+    return cards.map(x => `<tr><td style="${td}font-weight:700;">${esc(s === '0' ? 'onboard' : s)}</td><td style="${td}">${esc(x.name)}</td><td style="${td}">${esc(String(x.type || '').toLowerCase().replace(/_/g, ' '))}</td><td style="${td}">${esc(x.ports == null ? '' : x.ports)}</td><td style="${td}">${esc(x.fw || '')}</td><td style="${td}">${esc(role)}</td><td style="${td}color:#f59e0b;">${esc(flag)}${cardIssue(x) ? `${flag ? '<br>' : ''}<span style="color:#ef4444;">Known issue of this firmware: ${esc(cardIssue(x))}</span>` : ''}</td></tr>`).join('');
   }).filter(Boolean).join('');
   Object.keys(reported).forEach(s => { if (!bySlot[s]) issues.push(`slot ${s}: ${reported[s]} port${reported[s] > 1 ? 's' : ''} reported but no card in the inventory`); });
   el.innerHTML = `<details open style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:rgba(15,22,38,0.3);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.8rem;font-weight:600;">Installed cards (reported by Active IQ)</summary><div style="padding:0 12px 12px;">`
@@ -44191,6 +44274,7 @@ function compileFirmwareWordMd(systems, scopeTitle) {
     withData.map(r => [r.name, r.platform, status(r.sp.m), status(r.mb.m), status(r.dqp.m), status(r.drv.m), status(r.shelf.m), r.shelf.count, r.drv.total]));
   if (noData.length) o += `**Systems reporting no firmware data (${noData.length}):** ${noData.slice(0, 60).map(r => r.name).join(', ')}${noData.length > 60 ? `, and ${noData.length - 60} more` : ''}. These are typically StorageGRID, E-Series and similar systems whose firmware Active IQ does not report through this channel.\n\n`;
   o += _dfNonOntapFirmwareMd(_dfNonOntapFirmware(origSystems));
+  o += _dfCardFwMd(origSystems);
   o += `## About this report\n\nCurrent versions come from AutoSupport; recommended versions come from NetApp's firmware baselines${st.blDate ? ` (baselines updated ${String(st.blDate).slice(0, 10)})` : ''}. Active IQ reports shelf module firmware only as an outdated count, so a shelf module's installed version may show as not reported. "Not reported" means Active IQ returned no value, not that the component is current.\n`;
   return o;
 }

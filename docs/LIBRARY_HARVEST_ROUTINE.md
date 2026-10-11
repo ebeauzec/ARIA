@@ -32,6 +32,7 @@ the library folder was not found, set `libraryPath` in `aiq_config.json` (or `AR
 | What the library (or a source) states | Where it goes in ARIA |
 |---|---|
 | A known issue of a firmware version (BMC, SP, shelf module, drive) for a model family | `resolution_rules.json` > `firmwareKnownIssues` (`id`, `component`, `families`, `versions` or `minVersion`, `summary`, `note`, `url`, `source`) |
+| A known issue of a network or I/O card's firmware (part number, model families, firmware version) | `resolution_rules.json` > `firmwareKnownIssues` with `component: "CARD"`, `cardPartNumbers`, `cardLabel`, `families` (exact family names), `versions`; the adapter inventory check (`_cardFwKnownIssues`, `_dfCardFwSummary`) reads it, in the installed-cards table and the Firmware Currency deliverable |
 | A known issue of one upgrade path (from release, to line) | `resolution_rules.json` > `upgradePathKnownIssues` |
 | A newer current SP/BMC firmware version for a model family | `data/firmware_baselines.json` > `spBmc` (`byModel` and `families[].latestKnown`); only ever upward |
 | A newer release of a NetApp-owned integration (Host Utilities, ONTAP tools, SnapCenter, Trident, Harvest) | Nothing by hand: `tools/netapp_docs_versions.py` and the GitHub scan read it. If the product has no source yet, add one to `SOURCES` in `tools/netapp_docs_versions.py` |
@@ -40,7 +41,7 @@ the library folder was not found, set `libraryPath` in `aiq_config.json` (or `AR
 | A new security advisory | Nothing by hand: the advisory scan reads both lists. Check by id that ARIA has every advisory the library names (`data/security_bulletins.json`) |
 | A release-note fact (default changes, removed features, new requirements) | Nothing by hand: `tools/ontap_release_notes.py` and `tools/derived_reference.py` read the What's new pages. Only a fact that is not on those pages goes in the local `data/reference_library.js` (not in the repository) |
 | A change in a best-practice document (a Technical Report revision, ARP or MAV behaviour) | A line in `docs/` or the local reference file; record the revision number and date |
-| A change that needs new logic (a new kind of check) | Describe it in the report as a proposal; do not build it unattended |
+| A change that needs new logic (a new kind of check) | Build it in the same run, without asking (owner, 2026-10-11): rule in the rules file, check in app.js, shown in the report that already carries that kind of finding, tested on the real fleet and with a simulated hit, then released. Only a change that needs a decision (a design choice, a compatibility range) goes to the report as a proposal |
 
 ## 3. Searches beyond the library
 

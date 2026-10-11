@@ -107,6 +107,29 @@
       "note": "Check the installed and backup images before judging the system as ahead of the recommended version.",
       "url": "https://kb.netapp.com/on-prem/ontap/OHW/OHW-Issues/CFBMC-2358",
       "source": "NetApp KB CFBMC-2358, recorded in the NetApp Reference Library on 2026-10-08"
+    },
+    {
+      "id": "CFDIAGS-40",
+      "component": "CARD",
+      "cardLabel": "X60132A 4-port CX7 25GbE I/O module",
+      "cardPartNumbers": [
+        "X60132A"
+      ],
+      "families": [
+        "A50",
+        "A30",
+        "A20",
+        "C60",
+        "C30",
+        "FAS50"
+      ],
+      "versions": [
+        "28.49.1014"
+      ],
+      "summary": "boot_diags fails to initialize the card ('FwInit has failed'; System Test and the card firmware display fail)",
+      "note": "NetApp keeps the resolution behind the support login, so no fixed firmware is recorded; confirm it in the KB before changing the card firmware.",
+      "url": "https://kb.netapp.com/on-prem/ontap/OHW/OHW-Issues/CFDIAGS-40",
+      "source": "NetApp KB CFDIAGS-40 (2026-09-18), recorded in the NetApp Reference Library on 2026-10-11"
     }
   ],
   "upgradePathKnownIssues": [

@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.305 (2026-10-11)
+
+### Added
+- New check: known issues of network and I/O card firmware. A rule names the card by part number, the model families and the affected firmware (first rule: CFDIAGS-40, the X60132A 4-port CX7 25GbE module on firmware 28.49.1014, where boot_diags fails to initialize the card). The adapter inventory is checked on every system; a match shows in the installed-cards table and in the Firmware Currency deliverable, which also says how many cards were checked and that none was affected when that is the case. Family names match exactly (A30 does not match A300).
+
 ## 5.6.304 (2026-10-11)
 
 ### Fixed

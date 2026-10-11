@@ -1,8 +1,8 @@
 {
-  "version": "5.6.304",
+  "version": "5.6.305",
   "major": 5,
   "minor": 6,
-  "patch": 304,
+  "patch": 305,
   "date": "2026-10-11",
-  "notes": "Installed cards table: clearer onboard and missing-port wording."
+  "notes": "Network and I/O card firmware known-issue check (CFDIAGS-40)."
 }
