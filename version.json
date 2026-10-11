@@ -1,8 +1,8 @@
 {
-  "version": "5.6.303",
+  "version": "5.6.304",
   "major": 5,
   "minor": 6,
-  "patch": 303,
+  "patch": 304,
   "date": "2026-10-11",
-  "notes": "Enrichment log shows fetch dates and what was added."
+  "notes": "Installed cards table: clearer onboard and missing-port wording."
 }

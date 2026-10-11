@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.303";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.304";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.304",
+    date: "11 October 2026",
+    title: "Installed Cards Table Wording",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Installed cards table: the onboard devices are no longer each flagged as 'N of M ports reported' (slot 0 is every onboard device together, and storage-shelf, service-processor and internal ports are in the inventory but not in ONTAP's network port list); one note gives the onboard totals. A numbered slot whose card has no port in the network port list is now described as that, not as a disagreement, with the reasons it can be normal.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.303",
     date: "11 October 2026",
@@ -43948,20 +43963,25 @@ function _bpFillCards(sys) {
   const bySlot = {}; adapters.forEach(x => { (bySlot[String(x.slot)] = bySlot[String(x.slot)] || []).push(x); });
   const slots = Object.keys(bySlot).sort((x, y) => x - y);
   const issues = [];
+  let onboardTotal = 0;
   const rows = slots.map(s => {
     const cards = bySlot[s].filter(x => !/SERVICE_PROCESSOR/i.test(x.type || '') && !/Internal .*Switch/i.test(x.name || ''));
     if (!cards.length) return '';
     const cardPorts = cards.reduce((n, x) => n + (+x.ports || 0), 0), rep = reported[s] || 0;
     let flag = '';
-    if (cardPorts && rep && rep < cardPorts) flag = `${rep} of ${cardPorts} ports reported by Active IQ`;
-    else if (cardPorts && !rep && s !== '0') { flag = 'no port of this card is reported'; issues.push(`slot ${s}: ${cards.map(x => x.name).join(', ')} has no reported port`); }
+    // Slot 0 is every onboard device together, so its count cannot be compared card by card (ports used for storage shelves, the service processor and
+    // internal links are in the inventory but not in ONTAP's network port list); a numbered slot is one card and can be compared.
+    if (s === '0') onboardTotal = cardPorts;
+    else if (cardPorts && rep && rep < cardPorts) flag = `${rep} of ${cardPorts} ports reported by Active IQ`;
+    else if (cardPorts && !rep) { flag = 'no port of this card is in the network port list'; issues.push(`slot ${s}: ${cards.map(x => x.name).join(', ')}`); }
     const role = docSlots[s] ? (docSlots[s].label || (docSlots[s].roles || []).join(', ')) : '';
     return cards.map(x => `<tr><td style="${td}font-weight:700;">${esc(s === '0' ? 'onboard' : s)}</td><td style="${td}">${esc(x.name)}</td><td style="${td}">${esc(String(x.type || '').toLowerCase().replace(/_/g, ' '))}</td><td style="${td}">${esc(x.ports == null ? '' : x.ports)}</td><td style="${td}">${esc(x.fw || '')}</td><td style="${td}">${esc(role)}</td><td style="${td}color:#f59e0b;">${esc(flag)}</td></tr>`).join('');
   }).filter(Boolean).join('');
   Object.keys(reported).forEach(s => { if (!bySlot[s]) issues.push(`slot ${s}: ${reported[s]} port${reported[s] > 1 ? 's' : ''} reported but no card in the inventory`); });
   el.innerHTML = `<details open style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:rgba(15,22,38,0.3);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.8rem;font-weight:600;">Installed cards (reported by Active IQ)</summary><div style="padding:0 12px 12px;">`
     + `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Slot</th><th style="${th}">Card</th><th style="${th}">Type</th><th style="${th}">Ports</th><th style="${th}">Firmware</th><th style="${th}">Documentation role of the slot</th><th style="${th}">Check</th></tr></thead><tbody>${rows}</tbody></table>`
-    + (issues.length ? `<div style="${note}color:#f59e0b;">Inventory and reported ports disagree: ${esc(issues.join('; '))}.</div>` : '')
+    + (onboardTotal ? `<div style="${note}">Onboard: the inventory lists ${onboardTotal} ports, Active IQ's network port list has ${reported['0'] || 0}. The difference is normally ports that are not network ports in ONTAP (storage-shelf connections, the service processor, internal links), so it is not by itself a fault.</div>` : '')
+    + (issues.length ? `<div style="${note}color:#f59e0b;">In the adapter inventory but with no port in the network port list: ${esc(issues.join('; '))}. ONTAP does not list ports for a card it has not brought up as a network port (unused, or used for something other than Ethernet networking), so this does not by itself mean a missing or failed card; check the card on the system.</div>` : '')
     + `<div style="${note}">From the adapter inventory in this system's AutoSupport data. The drawing above is the platform's standard layout with the ports Active IQ reports.</div></div></details>`;
 }
 async function _bpFillDocs(platform, sys) {

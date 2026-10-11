@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.304 (2026-10-11)
+
+### Fixed
+- Installed cards table: the onboard devices are no longer each flagged as 'N of M ports reported' (slot 0 is every onboard device together, and storage-shelf, service-processor and internal ports are in the inventory but not in ONTAP's network port list); one note gives the onboard totals. A numbered slot whose card has no port in the network port list is now described as that, not as a disagreement, with the reasons it can be normal.
+
 ## 5.6.303 (2026-10-11)
 
 ### Fixed
