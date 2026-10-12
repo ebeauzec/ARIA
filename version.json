@@ -1,8 +1,8 @@
 {
-  "version": "5.6.328",
+  "version": "5.6.329",
   "major": 5,
   "minor": 6,
-  "patch": 328,
+  "patch": 329,
   "date": "2026-10-11",
-  "notes": "Unowned drives table shows count, dates, support, AutoSupport and health per system"
+  "notes": "Chart text recoloured on theme switch"
 }

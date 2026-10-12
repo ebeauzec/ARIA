@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.329 (2026-10-12)
+
+### Fixed
+- Switching between light and dark mode left the charts with the old theme's text colours: the efficiency doughnut and the capacity, risk trend and projection charts kept dark labels and values on the dark background (and the reverse) until their data changed. Every chart is now recoloured when the theme changes, and the doughnut's centre text and legend follow the theme.
+
 ## 5.6.328 (2026-10-12)
 
 ### Added

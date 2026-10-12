@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.328";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.329";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.329",
+    date: "12 Oct 2026",
+    title: "Charts follow the theme",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Switching between light and dark mode left the charts with the old theme's text colours: the efficiency doughnut and the capacity, risk trend and projection charts kept dark labels and values on the dark background (and the reverse) until their data changed. Every chart is now recoloured when the theme changes, and the doughnut's centre text and legend follow the theme.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.328",
     date: "12 Oct 2026",
@@ -13050,6 +13065,14 @@ function applyTheme(redraw) {
   const b = document.getElementById('themeToggleBtn'); if (b) b.innerHTML = light ? _MOON : _SUN;   // the icon shows what a click switches to
   document.querySelectorAll('[data-theme-choice]').forEach(x => { const on = x.getAttribute('data-theme-choice') === _themeMode(); x.style.borderColor = on ? 'var(--accent-cyan)' : ''; x.style.color = on ? 'var(--accent-cyan)' : ''; x.style.fontWeight = on ? '700' : ''; });
   if (typeof Chart !== 'undefined') { Chart.defaults.color = _cTick(); Chart.defaults.borderColor = _cGrid(); }
+  if (redraw && typeof Chart !== 'undefined' && Chart.instances) Object.values(Chart.instances).forEach(c => {   // charts on tabs that are not open keep their old text colours until redrawn
+    try {
+      const o = c.options || {}, lg = o.plugins && o.plugins.legend; if (lg && lg.labels) lg.labels.color = _cText();
+      Object.values(o.scales || {}).forEach(sc => { if (sc.ticks) sc.ticks.color = _cTick(); if (sc.grid) sc.grid.color = _cGrid(); if (sc.title) sc.title.color = _cTick(); });
+      c.update('none');
+    } catch (e) { /* the next draw uses the new defaults */ }
+  });
+  if (redraw && typeof _chartDataStamp !== 'undefined') _chartDataStamp = null;   // the capacity and efficiency charts skip a redraw when their data is unchanged, which would keep the old theme's text colours
   if (redraw && typeof switchTab === 'function' && state && state.currentTab) { try { switchTab(state.currentTab); } catch (e) { /* the next navigation redraws it */ } }
 }
 function setTheme(mode) { try { localStorage.setItem('aria_theme', mode); } catch (e) { /* the choice just does not persist */ } applyTheme(true); }
