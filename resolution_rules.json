@@ -3,7 +3,7 @@
   "productClasses": [
     {
       "class": "aiqum",
-      "pattern": "unified manager|aiqum"
+      "pattern": "unified manager|aiqum|web services proxy|storage plugin|plug-?in|vcenter"
     },
     {
       "class": "bmc",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.325 (2026-10-12)
+
+### Fixed
+- Only what applies to a system is flagged against it. An advisory that lists no affected product but has NetApp's not-affected table (for example the September 2026 IBM Cognos advisory) was attached to 980 systems; it is now treated as not applicable. The known exploited vulnerabilities check no longer counts the SANtricity ActiveMQ CVE (CVE-2023-46604) on 27 E-Series and StorageGRID systems: that advisory concerns Web Services Proxy and the vCenter plug-in, not the controller software, so such products are no longer matched to SANtricity OS. Findings Active IQ reports are checked against the advisory's product list in the known exploited view too.
+- The header chip now shows the number of distinct advisories (it counted duplicates), and its KEV figure is the number of known exploited CVEs affecting your systems, the same as the Overview card, with a tooltip saying so. The card's fix note now reads 'lowest fixed release on its own line, else the next line up'.
+
 ## 5.6.324 (2026-10-12)
 
 ### Added

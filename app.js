@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.324";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.325";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.325",
+    date: "12 Oct 2026",
+    title: "Flag only what applies to the system",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Only what applies to a system is flagged against it. An advisory that lists no affected product but has NetApp's not-affected table (for example the September 2026 IBM Cognos advisory) was attached to 980 systems; it is now treated as not applicable. The known exploited vulnerabilities check no longer counts the SANtricity ActiveMQ CVE (CVE-2023-46604) on 27 E-Series and StorageGRID systems: that advisory concerns Web Services Proxy and the vCenter plug-in, not the controller software, so such products are no longer matched to SANtricity OS. Findings Active IQ reports are checked against the advisory's product list in the known exploited view too.",
+          "The header chip now shows the number of distinct advisories (it counted duplicates), and its KEV figure is the number of known exploited CVEs affecting your systems, the same as the Overview card, with a tooltip saying so. The card's fix note now reads 'lowest fixed release on its own line, else the next line up'.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.324",
     date: "12 October 2026",
@@ -13378,8 +13394,9 @@ const enrichmentEngine = {
 
     // Gather counts from global state
     const kbCount  = (state.enrichmentKB && state.enrichmentKB.articles) ? state.enrichmentKB.articles.length : 0;
-    const advCount = (typeof NETAPP_SECURITY_BULLETIN_DB !== 'undefined') ? NETAPP_SECURITY_BULLETIN_DB.length : 0;
-    const kevCount = (state.enrichmentKB && state.enrichmentKB.kevCount) ? state.enrichmentKB.kevCount : 0;
+    const advCount = (typeof NETAPP_SECURITY_BULLETIN_DB !== 'undefined') ? new Set(NETAPP_SECURITY_BULLETIN_DB.map(x => String((x && x.id) || '').toLowerCase()).filter(Boolean)).size : 0;   // distinct advisory ids
+    let kevEx = null; try { if (typeof _kevExposure === 'function' && typeof _kevCves !== 'undefined' && _kevCves && _kevCves.size && (state.systems || []).length) kevEx = _kevExposure(state.systems); } catch (e) { kevEx = null; }
+    const kevCount = kevEx ? kevEx.rows.length : ((state.enrichmentKB && state.enrichmentKB.kevCount) ? state.enrichmentKB.kevCount : 0);
 
     // Build segments — only show non-zero counts
     const sep = '<span style="opacity:0.35;margin:0 4px">·</span>';
@@ -13388,7 +13405,7 @@ const enrichmentEngine = {
     if (cveCount > 0) segments.push(`<span title="${cveCount} CVEs enriched with CVSS scores, severity, and NVD details" style="cursor:help">${cveCount} CVE</span>`);
     if (advCount > 0) segments.push(`<span title="${advCount} NetApp PSIRT security advisories loaded from security.netapp.com" style="color:var(--hx-f0abfc);cursor:help">${advCount} PSIRT</span>`);
     if (kbCount > 0)  segments.push(`<span title="${kbCount} knowledge base articles matched to fleet ONTAP versions and platform families" style="color:var(--hx-93c5fd);cursor:help">${kbCount} KB</span>`);
-    if (kevCount > 0) segments.push(`<span title="${kevCount} advisories matched to CISA Known Exploited Vulnerabilities catalog — actively exploited in the wild" style="color:var(--hx-fbbf24);cursor:help">⚠ ${kevCount} KEV</span>`);
+    if (kevCount > 0) segments.push(`<span title="${kevEx ? `${kevCount} CISA known-exploited CVE${kevCount !== 1 ? 's' : ''} affecting ${kevEx.systems} of your systems (see the Known exploited vulnerabilities card on the Overview)` : `${kevCount} advisories matched to the CISA Known Exploited Vulnerabilities catalog`}" style="color:var(--hx-fbbf24);cursor:help">⚠ ${kevCount} KEV</span>`);
 
     if (segments.length === 0) {
       text.textContent = `${this._count} enriched`;
@@ -20991,7 +21008,7 @@ const _advProducts = rec => [...new Set([...(rec.affected || []), ...(rec.fixes 
 // {applies: true|false|null, products:[...]}: null = no advisory data (yet)
 function _advApplicability(sys, advId) {
   const rec = ADVISORY_RES[advId]; if (!rec) return { applies: null, products: [] };
-  const products = _advProducts(rec); if (!products.length) return { applies: null, products: [] };
+  const products = _advProducts(rec); if (!products.length) return (rec.unaffected || []).length ? { applies: false, products: [] } : { applies: null, products: [] };   // NetApp lists no affected product but has published the not-affected table: nothing here is affected
   const fam = _platformFamily(sys);
   return { applies: products.some(p => _advProductApplies(sys, fam, p)), products };
 }
@@ -21100,7 +21117,7 @@ function _riskResolution(sys, r) {
   res.applies = app.applies;
   if (app.applies === false) {
     res.kind = 'na';
-    res.summary = `Not applicable to this ${_famLabel(fam)}: ${res.advisoryId} lists ${_advShortProducts(app.products)} as affected, not the ${prod} software here. Nothing to change on this system.`;
+    res.summary = app.products.length ? `Not applicable to this ${_famLabel(fam)}: ${res.advisoryId} lists ${_advShortProducts(app.products)} as affected, not the ${prod} software here. Nothing to change on this system.` : `Not applicable to this ${_famLabel(fam)}: ${res.advisoryId} lists no affected product, and ${prod} is in NetApp's not-affected list. Nothing to change on this system.`;
     return res;
   }
   const fixVersions = [];
@@ -21827,6 +21844,7 @@ function _kevCvesOfSystem(s) {
     const ids = new Set(((r.cveDetails || []).map(d => d && d.id).filter(Boolean).map(x => String(x).toUpperCase())).concat(_kevIdsOf(r.description)));
     ids.forEach(id => {
       if (!_kevCves.has(id)) return;
+      { const adv = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); if (adv && typeof ADVISORY_RES !== 'undefined' && ADVISORY_RES[adv] && _advApplicability(s, adv).applies === false) return; }   // Active IQ attached an advisory that lists only other products (Unified Manager ...)
       let fix = ''; try { const x = riskResolution(s, r); fix = (x && x.minVersion) || ''; } catch (e) { /* the fix column stays empty */ }
       found.set(id, { id, tier: 'aiq', fix, ack: r.ack || null, riskId: r.id });
     });
@@ -21920,7 +21938,7 @@ function renderKevCard() {
         + `<td style="${td}">${esc2(r.added)}<div style="color:var(--text-muted);font-size:0.7rem;">${esc2(_kevDueText(r.due))}</div></td>`
         + `<td style="${td}"><b>${r.systems.length}</b><div style="color:var(--text-muted);font-size:0.7rem;">${r.customers.size} customer${r.customers.size !== 1 ? 's' : ''}</div></td>`
         + `<td style="${td}">${r.aiq ? `${r.aiq} reported by Active IQ` : ''}${r.aiq && r.advisoryOnly ? '<br>' : ''}${r.advisoryOnly ? `${r.advisoryOnly} confirmed by NetApp's advisory` : ''}</td>`
-        + `<td style="${td}">${fixes.length ? esc2(fixes.slice(0, 3).join(', ')) + (fixes.length > 3 ? ` +${fixes.length - 3}` : '') + '<div style="color:var(--text-muted);font-size:0.7rem;">on the system\'s own release line</div>' : '<span style="color:var(--text-muted);">no fixed release published</span>'}</td>`
+        + `<td style="${td}">${fixes.length ? esc2(fixes.slice(0, 3).join(', ')) + (fixes.length > 3 ? ` +${fixes.length - 3}` : '') + '<div style="color:var(--text-muted);font-size:0.7rem;">lowest fixed release on its own line, else the next line up</div>' : '<span style="color:var(--text-muted);">no fixed release published</span>'}</td>`
         + `<td style="${td}white-space:nowrap;"><a href="#" onclick="_kevOpenToggle('${esc2(r.id)}');return false;">${open ? 'Hide systems' : 'Show systems'}</a> · <a href="#" onclick="_kevCopy('${esc2(r.id)}');return false;">Copy</a></td></tr>`;
       if (open) {
         const byCust = new Map(); r.systems.forEach(x => { const k = x.customer || '(no customer)'; if (!byCust.has(k)) byCust.set(k, []); byCust.get(k).push(x); });

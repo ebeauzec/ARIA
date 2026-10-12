@@ -1,8 +1,8 @@
 {
-  "version": "5.6.324",
+  "version": "5.6.325",
   "major": 5,
   "minor": 6,
-  "patch": 324,
+  "patch": 325,
   "date": "2026-10-11",
-  "notes": "KEV exposure covers all 84 NetApp-advised KEV CVEs; BMC firmware verdicts; reasons for the rest."
+  "notes": "Advisories that list no affected product, and software add-ons, are no longer flagged against controllers; header chip counts corrected"
 }
