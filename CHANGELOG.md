@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.316 (2026-10-12)
+
+### Added
+- New tool tools/verify_rear_panels_reverse.py: draws each platform with nothing reported and lists every fixed port the drawing shows that NetApp's install, cabling and setup pages for that platform never mention. It complements tools/verify_rear_panels.py, which checks the other direction (every documented port has a place on the drawing). It reads only public NetApp documentation.
+
 ## 5.6.315 (2026-10-12)
 
 ### Added

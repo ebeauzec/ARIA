@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.315";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.316";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.316",
+    date: "12 October 2026",
+    title: "Rear Panel Reverse Check",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New tool tools/verify_rear_panels_reverse.py: draws each platform with nothing reported and lists every fixed port the drawing shows that NetApp's install, cabling and setup pages for that platform never mention. It complements tools/verify_rear_panels.py, which checks the other direction (every documented port has a place on the drawing). It reads only public NetApp documentation.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.315",
     date: "12 October 2026",

@@ -1,8 +1,8 @@
 {
-  "version": "5.6.315",
+  "version": "5.6.316",
   "major": 5,
   "minor": 6,
-  "patch": 315,
+  "patch": 316,
   "date": "2026-10-11",
-  "notes": "Offline mode documentation; recovery-copy row in the hardening scorecard."
+  "notes": "Tool: reverse rear-panel check against NetApp documentation."
 }
