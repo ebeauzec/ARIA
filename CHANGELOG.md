@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.328 (2026-10-12)
+
+### Added
+- The Unowned drives card and brief section now carry full detail per system: cluster and serial, customer and site, model, release and HA configuration, the number of unowned drives or partitions (Active IQ's risk text states it: 121 across the 21 systems), severity, first and last seen dates, days open, support contract state and end date, last AutoSupport, health score, and a link to NetApp's storage disk assign documentation. This corrects the card's earlier statement that Active IQ gives no count.
+
 ## 5.6.327 (2026-10-12)
 
 ### Added

@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.327";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.328";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.328",
+    date: "12 Oct 2026",
+    title: "Unowned drives: full detail",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "The Unowned drives card and brief section now carry full detail per system: cluster and serial, customer and site, model, release and HA configuration, the number of unowned drives or partitions (Active IQ's risk text states it: 121 across the 21 systems), severity, first and last seen dates, days open, support contract state and end date, last AutoSupport, health score, and a link to NetApp's storage disk assign documentation. This corrects the card's earlier statement that Active IQ gives no count.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.327",
     date: "12 Oct 2026",
@@ -21997,23 +22012,29 @@ function _dfKevExposureText(systems, heading) {
   return o;
 }
 
-// Unowned drives: Active IQ raises one risk per system ("Unowned drives or partitions present"). It carries no drive list, owner or count.
+// Unowned drives: Active IQ raises one risk per system ("Unowned drives or partitions present"). Its detail text gives the count for most systems, but no drive list or owner.
 const _UNOWNED_RX = /unowned (drive|disk|partition)|unassigned (drive|disk)/i;
 const _unownedRiskOf = s => (s.risks || []).find(r => _UNOWNED_RX.test(String(r.description || r.title || r.shortName || '')));
+const _UNOWNED_CMD = 'storage disk show -container-type unassigned';
+const _dayOf = v => { const t = Date.parse(v || ''); return isNaN(t) ? '' : new Date(t).toISOString().slice(0, 10); };
 function _unownedDrives(systems) {
   const rows = [];
   (systems || []).forEach(s => {
     const r = _unownedRiskOf(s); if (!r) return;
     const t = Date.parse(r.firstSeen || ''), days = isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 86400000));
+    const m = String(r.riskDetail || '').match(/there (?:are|is) (\d+) unowned/i), count = m ? parseInt(m[1], 10) : null;
     const ds460 = (s.risks || []).some(x => /DS460 shelf has drives assigned incorrectly/i.test(String(x.description || x.title || '')));
-    rows.push({ serial: s.serialNumber, name: s.systemName || s.serialNumber, customer: s.customerName || '', model: s.model || s.platform || '', release: s.ontapVersion || s.osVersion || '', days, ack: r.ack || null, ds460 });
+    const g = ((r.guidance || [])[0] || {}).url || r.advisoryUrl || '';
+    const ct = Date.parse(s.contractEndDate || s.contractExpiry || ''), sup = s.contractActive === true || s.contractActive === 'true' ? 'Active' : (s.contractActive === false || s.contractActive === 'false' ? 'Expired' : '');
+    rows.push({ serial: s.serialNumber, name: s.systemName || s.serialNumber, cluster: s.clusterName || '', customer: s.customerName || '', site: [s.siteName, s.siteCity, s.siteCountry].filter(Boolean).join(', '), model: s.model || s.platform || '', release: s.ontapVersion || s.osVersion || '', config: s.storageConfiguration || '',
+      count, severity: String(r.severity || '').replace(/_/g, ' '), first: _dayOf(r.firstSeen), last: _dayOf(r.lastSeen), days, ack: r.ack || null, ds460, guide: g,
+      support: sup ? sup + (isNaN(ct) ? '' : ' to ' + _dayOf(s.contractEndDate || s.contractExpiry)) : '', asup: _dayOf(s.latestAsupDate), health: s.aiqHealthScore != null && s.aiqHealthScore !== '' ? s.aiqHealthScore : '' });
   });
   return rows.sort((a, b) => (b.days == null ? -1 : b.days) - (a.days == null ? -1 : a.days) || a.customer.localeCompare(b.customer));
 }
-const _UNOWNED_CMD = 'storage disk show -container-type unassigned';
 function _unownedCopy() {
   const rows = _unownedDrives(getFilteredSystems(true) || []);
-  const txt = rows.map(x => `${x.customer ? x.customer + ' / ' : ''}${x.name} (${x.model}, ${x.release || 'release unknown'})`).join('\n');
+  const txt = rows.map(x => [x.customer, x.name, x.serial, x.model, x.release, x.count == null ? 'count not reported' : x.count + ' unowned', x.first ? 'open since ' + x.first : ''].filter(Boolean).join(' | ')).join('\n');
   try { navigator.clipboard.writeText(txt); showToast && showToast(`Copied ${rows.length} system${rows.length !== 1 ? 's' : ''}`); } catch (e) { /* the list is still on screen */ }
 }
 function renderUnownedCard() {
@@ -22022,14 +22043,19 @@ function renderUnownedCard() {
   if (!rows.length) { card.style.display = 'none'; return; }
   card.style.display = 'block';
   const esc2 = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const th = 'text-align:left;padding:5px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:6px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.76rem;';
-  const custs = new Set(rows.map(x => x.customer).filter(Boolean)), open = !!(state.unownedOpen);
+  const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);white-space:nowrap;', td = 'padding:6px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.74rem;', sub = 'color:var(--text-muted);font-size:0.68rem;';
+  const custs = new Set(rows.map(x => x.customer).filter(Boolean)), open = !!(state.unownedOpen), counted = rows.filter(x => x.count != null), total = counted.reduce((n, x) => n + x.count, 0);
   const shown = open ? rows : rows.slice(0, 10);
   let h = `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;"><div class="section-title" style="margin:0;">Unowned drives</div><div style="font-size:0.74rem;color:var(--text-muted);"><a href="#" onclick="_unownedCopy();return false;">Copy list</a></div></div>`
-    + `<div style="font-size:0.8rem;margin:8px 0 6px;"><b>${rows.length}</b> system${rows.length !== 1 ? 's' : ''} (${custs.size} customer${custs.size !== 1 ? 's' : ''}) ${rows.length !== 1 ? 'have' : 'has'} at least one drive or partition without an owner. Unowned drives cannot be used as spares or in an aggregate. Active IQ reports only that they exist, not how many or which; to list them run <code>${esc2(_UNOWNED_CMD)}</code> on the cluster, then assign them with <code>storage disk assign</code>.</div>`
-    + `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">System</th><th style="${th}">Customer</th><th style="${th}">Model · release</th><th style="${th}">Open for</th><th style="${th}">Note</th></tr></thead><tbody>`
-    + shown.map(x => `<tr><td style="${td}"><a href="#" data-serial="${esc2(x.serial)}" onclick="selectSystem(this.dataset.serial);switchTab('tam');return false;">${esc2(x.name)}</a></td><td style="${td}">${esc2(x.customer)}</td><td style="${td}">${esc2(x.model)}<div style="color:var(--text-muted);font-size:0.7rem;">${esc2(x.release)}</div></td><td style="${td}">${x.days == null ? '<span style="color:var(--text-muted);">unknown</span>' : x.days + ' day' + (x.days !== 1 ? 's' : '')}</td><td style="${td}">${x.ds460 ? 'DS460 shelf with drives owned by both nodes: auto-assign cannot work until that is corrected. ' : ''}${x.ack ? '<span style="color:var(--text-muted);">acknowledged</span>' : ''}</td></tr>`).join('')
-    + `</tbody></table>`;
+    + `<div style="font-size:0.8rem;margin:8px 0 6px;"><b>${rows.length}</b> system${rows.length !== 1 ? 's' : ''} (${custs.size} customer${custs.size !== 1 ? 's' : ''}) ${rows.length !== 1 ? 'have' : 'has'} at least one drive or partition without an owner${counted.length ? (counted.length === rows.length ? `; <b>${total}</b> drives or partitions in all` : `; Active IQ gives the count for ${counted.length} of them, <b>${total}</b> in all`) : ''}. Unowned drives cannot be used as spares or in an aggregate. Active IQ does not say which drives; to list them run <code>${esc2(_UNOWNED_CMD)}</code> on the cluster, then assign them with <code>storage disk assign</code>.</div>`
+    + `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>` + ['System', 'Customer · site', 'Model · release', 'Unowned', 'Severity', 'First seen · last seen', 'Open for', 'Support', 'Last AutoSupport', 'Health', 'Note'].map(c => `<th style="${th}">${c}</th>`).join('') + `</tr></thead><tbody>`
+    + shown.map(x => `<tr><td style="${td}"><a href="#" data-serial="${esc2(x.serial)}" onclick="selectSystem(this.dataset.serial);switchTab('tam');return false;">${esc2(x.name)}</a><div style="${sub}">${x.cluster && x.cluster !== x.name ? 'cluster ' + esc2(x.cluster) + ' · ' : ''}${esc2(x.serial)}</div></td>`
+      + `<td style="${td}">${esc2(x.customer)}<div style="${sub}">${esc2(x.site)}</div></td><td style="${td}">${esc2(x.model)}<div style="${sub}">${esc2(x.release)}${x.config ? ' · ' + esc2(x.config) : ''}</div></td>`
+      + `<td style="${td}">${x.count == null ? '<span style="color:var(--text-muted);">not reported</span>' : '<b>' + x.count + '</b>'}</td><td style="${td}">${esc2(x.severity)}</td>`
+      + `<td style="${td}">${esc2(x.first) || '-'}<div style="${sub}">${esc2(x.last)}</div></td><td style="${td}">${x.days == null ? '-' : x.days + ' day' + (x.days !== 1 ? 's' : '')}</td>`
+      + `<td style="${td}">${esc2(x.support) || '-'}</td><td style="${td}">${esc2(x.asup) || '-'}</td><td style="${td}">${esc2(x.health) || '-'}</td>`
+      + `<td style="${td}">${x.ds460 ? 'DS460 shelf with drives owned by both nodes: auto-assign cannot work until that is corrected. ' : ''}${x.ack ? '<span style="color:var(--text-muted);">acknowledged. </span>' : ''}${x.guide ? `<a href="${esc2(x.guide)}" target="_blank" rel="noopener" title="NetApp documentation: storage disk assign">NetApp doc</a>` : ''}</td></tr>`).join('')
+    + `</tbody></table></div>`;
   if (rows.length > 10) h += `<div style="margin-top:8px;font-size:0.76rem;"><a href="#" onclick="state.unownedOpen=!state.unownedOpen;renderUnownedCard();return false;">${open ? 'Show the first 10 only' : 'Show all ' + rows.length + ' systems'}</a></div>`;
   card.innerHTML = h;
 }
@@ -22037,11 +22063,12 @@ function _dfUnownedText(systems, heading) {
   const rows = _unownedDrives(systems), cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
   let o = `\n${heading || '## Unowned Drives'}\n\n`;
   if (!rows.length) return o + '**Finding:** Active IQ reports no unowned drives or partitions on the systems in scope.\n\n';
-  o += `**Finding:** ${rows.length} system${rows.length !== 1 ? 's' : ''} report unowned drives or partitions. Unowned drives cannot serve as spares or hold data. Active IQ does not say how many or which; run \`${_UNOWNED_CMD}\` on the cluster and assign them with \`storage disk assign\`.\n\n`;
-  o += '| System | Customer | Model | Release | Open for (days) | Note |\n|---|---|---|---|---|---|\n' + rows.map(x => `| ${cell(x.name)} | ${cell(x.customer)} | ${cell(x.model)} | ${cell(x.release)} | ${x.days == null ? '-' : x.days} | ${x.ds460 ? 'DS460 ownership rule broken; ' : ''}${x.ack ? 'acknowledged' : ''} |`).join('\n') + '\n\n';
+  const counted = rows.filter(x => x.count != null);
+  o += `**Finding:** ${rows.length} system${rows.length !== 1 ? 's' : ''} report unowned drives or partitions${counted.length ? (counted.length === rows.length ? ` (${counted.reduce((n, x) => n + x.count, 0)} drives or partitions in all)` : ` (${counted.reduce((n, x) => n + x.count, 0)} in the ${counted.length} where Active IQ gives the count)`) : ''}. Unowned drives cannot serve as spares or hold data. Active IQ does not say which drives; run \`${_UNOWNED_CMD}\` on the cluster and assign them with \`storage disk assign\`.\n\n`;
+  o += '| System | Cluster | Serial | Customer | Site | Model | Release | Unowned | Severity | First seen | Last seen | Open for (days) | Support | Last AutoSupport | Health | Note |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n'
+    + rows.map(x => `| ${cell(x.name)} | ${cell(x.cluster)} | ${cell(x.serial)} | ${cell(x.customer)} | ${cell(x.site)} | ${cell(x.model)} | ${cell(x.release)} | ${x.count == null ? 'not reported' : x.count} | ${cell(x.severity)} | ${cell(x.first)} | ${cell(x.last)} | ${x.days == null ? '-' : x.days} | ${cell(x.support)} | ${cell(x.asup)} | ${cell(x.health)} | ${x.ds460 ? 'DS460 ownership rule broken; ' : ''}${x.ack ? 'acknowledged' : ''} |`).join('\n') + '\n\n';
   return o;
 }
-
 function _dfCveIndex(systems) {
   const map = {};
   // kev: true if ANY source flags this CVE as CISA Known Exploited (confirmed active
