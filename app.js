@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.321";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.322";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.322",
+    date: "12 October 2026",
+    title: "Risk Pill Tooltip And Open Risks",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The risk count beside each customer and group in the sidebar now says what it counts. Its tooltip gives the number of open risks, the systems they are on and the split by severity (critical, high, medium, low, best practice), and clicking it opens Technical Audit for that customer or group. Risks acknowledged in Active IQ are not counted, because they have been accepted; the tooltip says how many were left out.",
+          "The counts beside customers and groups used to go stale: the sidebar redrew only when its lists changed, so risks and cases that arrived afterwards (advisory matching, generated StorageGRID findings, an acknowledgement) left the pills out of date (48 of 56 differed from the data 15 seconds after load). It now redraws when the totals change.",
+          "The customer and group pills no longer put a name inside the text of a click handler, so a customer name with a quote cannot break them.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.321",
     date: "12 October 2026",
@@ -39030,7 +39047,9 @@ function renderSidebarGroups() {
   if (!container) return;
 
   // Build a lightweight snapshot of everything the sidebar renders
-  const _stamp = `${state.systems.length}|${state.watchlists.length}|${state.groups.length}|${state.activeFilterType}|${state.activeFilterValue || ''}|${state.activeSearchQuery || ''}`;
+  let _risksN = 0, _acksN = 0, _casesN = 0;
+  state.systems.forEach(s => { const rs = s.risks || []; _risksN += rs.length; rs.forEach(r => { if (r.ack) _acksN++; }); _casesN += _openCaseCount(s.supportCases); });
+  const _stamp = `${state.systems.length}|${state.watchlists.length}|${state.groups.length}|${state.activeFilterType}|${state.activeFilterValue || ''}|${state.activeSearchQuery || ''}|${_risksN}|${_acksN}|${_casesN}`;
   if (_stamp === _sidebarStamp) return; // nothing to redraw
   _sidebarStamp = _stamp;
 
@@ -39099,11 +39118,10 @@ function renderSidebarGroups() {
       
       // Calculate active risks for badge
       const custSystems = state.systems.filter(s => s.customerName === cust);
-      const riskCount = custSystems.reduce((acc, s) => acc + s.risks.length, 0);
-      const badge = riskCount > 0 ? `<span class="tree-badge ${custSystems.some(s => s.status === 'critical') ? 'critical' : 'warning'}">${riskCount}</span>` : '';
+      const badge = _riskPillHtml(custSystems, 'CUSTOMER', cust);
       
       const caseCount = custSystems.reduce((acc, s) => acc + _openCaseCount(s.supportCases), 0);
-      const caseBadge = caseCount > 0 ? `<span class="tree-badge info" style="background: var(--status-info); cursor: pointer;" onclick="navigateToSupportCases('CUSTOMER', '${cust}', event)" data-tooltip="Click to view all ${caseCount} open support cases">✉ ${caseCount}</span>` : '';
+      const caseBadge = caseCount > 0 ? `<span class="tree-badge info" style="background: var(--status-info); cursor: pointer;" data-v="${_ae(cust)}" onclick="navigateToSupportCases('CUSTOMER', this.dataset.v, event)" data-tooltip="Click to view all ${caseCount} open support cases">✉ ${caseCount}</span>` : '';
 
       item.innerHTML = `
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
@@ -39137,11 +39155,10 @@ function renderSidebarGroups() {
       };
 
       const groupSystems = state.systems.filter(s => grp.systemSerials.includes(s.serialNumber));
-      const riskCount = groupSystems.reduce((acc, s) => acc + s.risks.length, 0);
-      const badge = riskCount > 0 ? `<span class="tree-badge ${groupSystems.some(s => s.status === 'critical') ? 'critical' : 'warning'}">${riskCount}</span>` : '';
+      const badge = _riskPillHtml(groupSystems, 'GROUP', grp.id);
 
       const caseCount = groupSystems.reduce((acc, s) => acc + _openCaseCount(s.supportCases), 0);
-      const caseBadge = caseCount > 0 ? `<span class="tree-badge info" style="background: var(--status-info); cursor: pointer;" onclick="navigateToSupportCases('GROUP', '${grp.id}', event)" data-tooltip="Click to view all ${caseCount} open support cases">✉ ${caseCount}</span>` : '';
+      const caseBadge = caseCount > 0 ? `<span class="tree-badge info" style="background: var(--status-info); cursor: pointer;" data-v="${_ae(grp.id)}" onclick="navigateToSupportCases('GROUP', this.dataset.v, event)" data-tooltip="Click to view all ${caseCount} open support cases">✉ ${caseCount}</span>` : '';
 
       item.innerHTML = `
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
@@ -39246,6 +39263,30 @@ function setFilter(type, value) {
   renderSidebarGroups();
 }
 
+// The risk count beside a customer or group: open risks only (a risk acknowledged in Active IQ has been accepted, so it is not counted), with the split by severity
+// and the number left out in the tooltip. Clicking it opens Technical Audit for that customer or group.
+function _riskPillHtml(systems, type, value) {
+  let open = 0, ack = 0; const sev = { critical: 0, high: 0, medium: 0, low: 0, best_practice: 0, other: 0 }, withRisk = new Set();
+  (systems || []).forEach(s => (s.risks || []).forEach(r => {
+    if (r.ack) { ack++; return; }
+    open++; withRisk.add(s.serialNumber);
+    const k = String(r.severity || '').toLowerCase(); sev[k in sev ? k : 'other']++;
+  }));
+  if (open === 0) return '';
+  const cls = (systems || []).some(s => s.status === 'critical') ? 'critical' : 'warning';
+  const tip = `${open} open risk${open !== 1 ? 's' : ''} on ${withRisk.size} system${withRisk.size !== 1 ? 's' : ''}: ${sev.critical} critical, ${sev.high} high, ${sev.medium} medium, ${sev.low} low, ${sev.best_practice + sev.other} best practice`
+    + (ack ? `. ${ack} acknowledged in Active IQ ${ack !== 1 ? 'are' : 'is'} not counted` : '') + '. Click to see them in Technical Audit';
+  return `<span class="tree-badge ${cls}" style="cursor: pointer;" data-t="${_ae(type)}" data-v="${_ae(value)}" onclick="navigateToRisks(this.dataset.t, this.dataset.v, event)" data-tooltip="${_ae(tip)}">${open}</span>`;
+}
+// Risks and cases keep arriving after the first draw (advisory matching, generated StorageGRID findings, an acknowledgement); renderSidebarGroups() redraws only when
+// its stamp, which includes those totals, has changed, so looking now and then keeps the pills in step with the data.
+if (!window._sidebarPoll) window._sidebarPoll = setInterval(() => { try { if (state && state.systems && state.systems.length) renderSidebarGroups(); } catch (e) { /* the next tick tries again */ } }, 4000);
+function navigateToRisks(type, value, event) {
+  if (event) { event.stopPropagation(); event.preventDefault(); }
+  state.currentTab = 'tam';
+  setFilter(type, value);
+  switchTab('tam');
+}
 function navigateToSupportCases(type, value, event) {
   if (event) {
     event.stopPropagation();

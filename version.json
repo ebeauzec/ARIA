@@ -1,8 +1,8 @@
 {
-  "version": "5.6.321",
+  "version": "5.6.322",
   "major": 5,
   "minor": 6,
-  "patch": 321,
+  "patch": 322,
   "date": "2026-10-11",
-  "notes": "Sidebar and system-table case counts show open cases only."
+  "notes": "Risk pill: open risks, severity tooltip, click to Technical Audit; sidebar counts stay current."
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.322 (2026-10-12)
+
+### Fixed
+- The risk count beside each customer and group in the sidebar now says what it counts. Its tooltip gives the number of open risks, the systems they are on and the split by severity (critical, high, medium, low, best practice), and clicking it opens Technical Audit for that customer or group. Risks acknowledged in Active IQ are not counted, because they have been accepted; the tooltip says how many were left out.
+- The counts beside customers and groups used to go stale: the sidebar redrew only when its lists changed, so risks and cases that arrived afterwards (advisory matching, generated StorageGRID findings, an acknowledgement) left the pills out of date (48 of 56 differed from the data 15 seconds after load). It now redraws when the totals change.
+- The customer and group pills no longer put a name inside the text of a click handler, so a customer name with a quote cannot break them.
+
 ## 5.6.321 (2026-10-12)
 
 ### Fixed
