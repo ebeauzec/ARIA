@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.308";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.309";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.309",
+    date: "12 October 2026",
+    title: "Proxy 401 Fallback",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "A system proxy that cannot be authenticated to (common on macOS: VPN and security gateways) answered the Active IQ token request with HTTP 401, which looked like a rejected refresh token and left the app with no data. A 401 or 407 that comes back through a proxy is now retried once without the proxy; when that works, ARIA keeps going direct (a log line says so). Setting ARIA_NO_PROXY=1 forces direct connections from the start. Resolved watchlist names are now merged into aiq_config.json across accounts instead of one account overwriting the other's.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.308",
     date: "11 October 2026",

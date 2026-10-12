@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.309 (2026-10-12)
+
+### Fixed
+- A system proxy that cannot be authenticated to (common on macOS: VPN and security gateways) answered the Active IQ token request with HTTP 401, which looked like a rejected refresh token and left the app with no data. A 401 or 407 that comes back through a proxy is now retried once without the proxy; when that works, ARIA keeps going direct (a log line says so). Setting ARIA_NO_PROXY=1 forces direct connections from the start. Resolved watchlist names are now merged into aiq_config.json across accounts instead of one account overwriting the other's.
+
 ## 5.6.308 (2026-10-11)
 
 ### Fixed
