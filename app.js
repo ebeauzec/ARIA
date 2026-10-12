@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.316";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.317";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.317",
+    date: "12 October 2026",
+    title: "Light Theme",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Light theme. The sun/moon button in the header switches between dark and light, and Settings > Connection > Appearance offers Dark, Light or Match system. Dark stays the default and looks exactly as before (checked by comparing screenshots of the main tabs before and after: the only differences are the new button and the Appearance card). Light uses a soft cool-grey page, white cards with gentle shadows, a deeper sky-blue accent and darker status colours that stay readable on white. Charts, dialogs, badges and the header follow the theme. The rear-panel drawings keep their dark hardware colours in both themes. The choice is remembered, and it is applied before the page paints so there is no flash of the wrong theme.",
+          "Support & Ops and Value & ROI no longer write every system name into the page header when a large scope is selected (1,808 names, 33,000 characters, which pushed the page apart); they show the first six and the count, with the first sixty in the tooltip.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.316",
     date: "12 October 2026",
@@ -10520,7 +10536,7 @@ const _pfAgeHours = snap => { const t = Date.parse(snap.generatedAt || (snap.pay
 const _pfAgeText = snap => { const h = _pfAgeHours(snap); if (h == null) return 'unknown age'; if (h < 1) return 'just now'; if (h < 48) return Math.round(h) + 'h ago'; return Math.round(h / 24) + 'd ago'; };
 const _pfStale = snap => { const h = _pfAgeHours(snap); return h != null && h > Math.max(72, ((snap.payload || {}).period_hours || 0) * 1.5); };
 const _pfTrend = p => (p == null || Math.abs(p) < 5) ? '<span style="color:var(--text-muted);">flat</span>' :
-  p > 0 ? `<span style="color:#ef4444;">▲ ${_pfNum(p, 0)}%</span>` : `<span style="color:#22c55e;">▼ ${_pfNum(-p, 0)}%</span>`;
+  p > 0 ? `<span style="color:var(--hx-ef4444);">▲ ${_pfNum(p, 0)}%</span>` : `<span style="color:var(--hx-22c55e);">▼ ${_pfNum(-p, 0)}%</span>`;
 const _pfDays = d => d < 1 ? 'under a day' : d < 14 ? 'about ' + Math.round(d) + ' days' : d < 90 ? 'about ' + Math.round(d / 7) + ' weeks' : 'about ' + Math.round(d / 30) + ' months';
 
 function _pfSpark(points, color, w = 120, h = 28) {
@@ -10539,7 +10555,7 @@ function _pfWorstMetric(a) {
 function _renderPerformanceSection(systems) {
   const sc = getScopePerf(systems);
   const th = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.72rem;text-transform:uppercase;';
-  const td = 'padding:7px 10px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.8rem;vertical-align:top;';
+  const td = 'padding:7px 10px;border-bottom:1px solid var(--wa-50);font-size:0.8rem;vertical-align:top;';
   if (sc.snapshots.length === 0) {
     return `<div style="padding:18px;border:1px dashed var(--border-color);border-radius:8px;font-size:0.85rem;color:var(--text-secondary);line-height:1.6;">
       <strong style="color:var(--text-primary);">No StoragePerf data for this scope.</strong><br>
@@ -10548,7 +10564,7 @@ function _renderPerformanceSection(systems) {
   }
   const counts = { critical: 0, watch: 0, good: 0, unknown: 0 };
   sc.entries.forEach(e => { counts[e.array.health || 'unknown'] = (counts[e.array.health || 'unknown'] || 0) + 1; });
-  const snapLine = sc.snapshots.map(s => `<strong>${_esc(s.customerName)}</strong>: StoragePerf ${_esc(s.plumbVersion || '')}${s.siteLabel ? ' (' + _esc(s.siteLabel) + ')' : ''}, ${_esc(s.periodHours ? Math.round(s.periodHours) + 'h' : '')} window, received ${_pfAgeText(s)} via ${s.via === 'pull' ? 'direct pull' : 'file import' + (s.filename ? ' (' + _esc(s.filename) + ')' : '')}${_pfStale(s) ? ' <span style="color:#f59e0b;font-weight:700;">&#9888; stale</span>' : ''}${s.mockData ? ' <span style="color:#a78bfa;">(demo data)</span>' : ''}`).join('<br>');
+  const snapLine = sc.snapshots.map(s => `<strong>${_esc(s.customerName)}</strong>: StoragePerf ${_esc(s.plumbVersion || '')}${s.siteLabel ? ' (' + _esc(s.siteLabel) + ')' : ''}, ${_esc(s.periodHours ? Math.round(s.periodHours) + 'h' : '')} window, received ${_pfAgeText(s)} via ${s.via === 'pull' ? 'direct pull' : 'file import' + (s.filename ? ' (' + _esc(s.filename) + ')' : '')}${_pfStale(s) ? ' <span style="color:var(--hx-f59e0b);font-weight:700;">&#9888; stale</span>' : ''}${s.mockData ? ' <span style="color:var(--hx-a78bfa);">(demo data)</span>' : ''}`).join('<br>');
   let html = `<div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:12px;line-height:1.6;">Measured on the customer's site by StoragePerf &mdash; complements Active IQ's AutoSupport-based view.<br>${snapLine}</div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
       ${['critical', 'watch', 'good'].map(k => `<div style="flex:1;min-width:120px;padding:12px;border-radius:8px;border:1px solid ${_PF_COLORS[k]}55;background:${_PF_COLORS[k]}12;text-align:center;"><div style="font-size:1.7rem;font-weight:800;color:${_PF_COLORS[k]};">${counts[k]}</div><div style="font-size:0.72rem;text-transform:uppercase;color:var(--text-secondary);">${k}</div></div>`).join('')}
@@ -10563,7 +10579,7 @@ function _renderPerformanceSection(systems) {
       const latSeries = ((a.metrics || []).find(m => lat && m.id === lat.metric_id) || {}).sparkline;
       html += `<tr><td style="${td}"><strong>${_esc(a.name)}</strong><div style="font-size:0.7rem;color:var(--text-muted);">${_esc(a.model || a.vendor)}</div></td>
         <td style="${td}font-size:0.72rem;">${e.systems.slice(0, 3).map(s => _esc(s.systemName)).join(', ')}${e.systems.length > 3 ? ' +' + (e.systems.length - 3) : ''}<div style="color:var(--text-muted);">matched by ${_esc(e.matchedBy)}</div></td>
-        <td style="${td}">${_pfBadge(a.health)}${a.upstream_suspected ? '<div style="font-size:0.68rem;color:#f59e0b;margin-top:3px;">path suspected</div>' : ''}</td>
+        <td style="${td}">${_pfBadge(a.health)}${a.upstream_suspected ? '<div style="font-size:0.68rem;color:var(--hx-f59e0b);margin-top:3px;">path suspected</div>' : ''}</td>
         <td style="${td}">${lat ? `${_pfNum(lat.avg)} / ${_pfNum(lat.p95)} ${_esc(lat.unit)} ${_pfSpark(latSeries, _PF_COLORS[a.health] || '#94a3b8', 70, 20)}` : '—'}</td>
         <td style="${td}">${lat ? _pfTrend(lat.trend_pct) : '—'}</td>
         <td style="${td}">${wm ? `${_esc(wm.label)} <span style="color:var(--text-muted);">${_pfNum(wm.avg)} ${_esc(wm.unit)} avg &middot; ${_pfNum(wm.critical_pct + wm.watch_pct, 0)}% of samples over watch</span>` : '—'}</td>
@@ -10575,7 +10591,7 @@ function _renderPerformanceSection(systems) {
       const a = e.array, worst = (a.metrics || []).filter(m => m.severity !== 'good' && m.samples > 0);
       if (!(a.findings || []).length && !worst.length && !a.coverage_note) return;
       html += `<details style="border:1px solid var(--border-color);border-radius:6px;margin-bottom:8px;"${a.health === 'critical' ? ' open' : ''}><summary style="padding:9px 14px;cursor:pointer;font-weight:600;font-size:0.85rem;">${_esc(a.name)} ${_pfBadge(a.health)} <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">${(a.findings || []).length} finding(s)</span></summary><div style="padding:10px 16px;font-size:0.8rem;line-height:1.55;">
-        ${a.coverage_note ? `<div style="color:#f59e0b;margin-bottom:8px;">${_esc(a.coverage_note)}</div>` : ''}
+        ${a.coverage_note ? `<div style="color:var(--hx-f59e0b);margin-bottom:8px;">${_esc(a.coverage_note)}</div>` : ''}
         ${(a.findings || []).map(f => `<div style="margin-bottom:10px;"><div>${_pfBadge(f.severity)} <strong>${_esc(f.title)}</strong></div><div style="color:var(--text-secondary);margin:3px 0;">${_esc(f.body)}</div>
           ${(f.investigate || []).length ? `<div style="color:var(--text-muted);">Investigate: ${(f.investigate).map(_esc).join(' &middot; ')}</div>` : ''}${(f.remediate || []).length ? `<div style="color:var(--text-muted);">Remediate: ${(f.remediate).map(_esc).join(' &middot; ')}</div>` : ''}</div>`).join('')}
         ${worst.length ? `<table style="width:100%;border-collapse:collapse;margin-top:6px;"><thead><tr><th style="${th}">Metric</th><th style="${th}">Avg</th><th style="${th}">p95</th><th style="${th}">Max</th><th style="${th}">Over watch</th><th style="${th}">Trend</th></tr></thead><tbody>${worst.map(m => `<tr><td style="${td}">${_pfBadge(m.severity)} ${_esc(m.label)}</td><td style="${td}">${_pfNum(m.avg)} ${_esc(m.unit)}</td><td style="${td}">${_pfNum(m.p95)}</td><td style="${td}">${_pfNum(m.max)}</td><td style="${td}">${_pfNum(m.watch_pct + m.critical_pct, 0)}%</td><td style="${td}">${_pfTrend(m.trend_pct)}</td></tr>`).join('')}</tbody></table>` : ''}
@@ -10603,7 +10619,7 @@ function renderCSMPerfCard(targetSystems) {
   const rows = sc.entries.slice(0, single ? 1 : 8);
   el.style.display = '';
   el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;"><h3 style="margin:0;font-size:1rem;">&#9889; Performance &mdash; measured on site by StoragePerf</h3>
-    <span style="font-size:0.72rem;color:var(--text-muted);">${sc.snapshots.map(s => _esc(s.customerName) + ' ' + _pfAgeText(s)).join(' &middot; ')}${sc.snapshots.some(_pfStale) ? ' <span style="color:#f59e0b;">&#9888; stale</span>' : ''}</span></div>
+    <span style="font-size:0.72rem;color:var(--text-muted);">${sc.snapshots.map(s => _esc(s.customerName) + ' ' + _pfAgeText(s)).join(' &middot; ')}${sc.snapshots.some(_pfStale) ? ' <span style="color:var(--hx-f59e0b);">&#9888; stale</span>' : ''}</span></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(${single ? 320 : 250}px,1fr));gap:12px;">
     ${rows.map(e => {
       const a = e.array, lat = a.latency, cap = (a.capacity || []).sort((x, y) => x.days_to_critical - y.days_to_critical)[0], wm = _pfWorstMetric(a);
@@ -10614,7 +10630,7 @@ function renderCSMPerfCard(targetSystems) {
         ${lat ? `<div style="font-size:0.8rem;">${_esc(lat.label)}: <strong>${_pfNum(lat.avg)} ${_esc(lat.unit)}</strong> avg, ${_pfNum(lat.p95)} p95 ${_pfTrend(lat.trend_pct)} ${_pfSpark(series, _PF_COLORS[a.health] || '#94a3b8', 90, 22)}</div>` : ''}
         ${wm && wm.severity !== 'good' ? `<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;">Watch: ${_esc(wm.label)} (${_pfNum(wm.watch_pct + wm.critical_pct, 0)}% of the period over threshold)</div>` : ''}
         ${cap ? `<div style="font-size:0.75rem;margin-top:4px;color:${cap.days_to_critical < 90 ? '#ef4444' : '#f59e0b'};">${_esc(cap.label)} reaches ${_pfNum(cap.critical, 0)}${_esc(cap.unit)} in ${_pfDays(cap.days_to_critical)}</div>` : ''}
-        ${a.upstream_suspected ? '<div style="font-size:0.75rem;margin-top:4px;color:#f59e0b;">Array looks healthy while the path in front of it does not &mdash; investigate SAN/network first.</div>' : ''}
+        ${a.upstream_suspected ? '<div style="font-size:0.75rem;margin-top:4px;color:var(--hx-f59e0b);">Array looks healthy while the path in front of it does not &mdash; investigate SAN/network first.</div>' : ''}
         ${single ? (a.findings || []).slice(0, 4).map(f => `<div style="font-size:0.75rem;margin-top:6px;">${_pfBadge(f.severity)} ${_esc(f.title)}</div>`).join('') : ''}</div>`;
     }).join('')}</div>`;
 }
@@ -10677,8 +10693,8 @@ async function renderPerfSettings() {
         <button class="action-btn secondary" style="font-size:0.7rem;padding:3px 8px;" onclick="perfDeleteSource(${s.id})">Remove</button></td></tr>`).join('');
   const snaps = (state.perf.snapshots || []).map(s => `<tr>
       <td style="padding:6px 8px;"><strong>${_esc(s.customerName)}</strong></td>
-      <td style="padding:6px 8px;font-size:0.75rem;">${s.arrayCount} array(s) &middot; ${_esc(s.plumbVersion)}${s.siteLabel ? ' &middot; ' + _esc(s.siteLabel) : ''}${s.mockData ? ' <span style="color:#a78bfa;">(demo)</span>' : ''}</td>
-      <td style="padding:6px 8px;font-size:0.75rem;">${_pfAgeText(s)}${_pfStale(s) ? ' <span style="color:#f59e0b;">stale</span>' : ''} &middot; ${s.via === 'pull' ? 'pulled' : 'imported' + (s.filename ? ': ' + _esc(s.filename) : '')}</td>
+      <td style="padding:6px 8px;font-size:0.75rem;">${s.arrayCount} array(s) &middot; ${_esc(s.plumbVersion)}${s.siteLabel ? ' &middot; ' + _esc(s.siteLabel) : ''}${s.mockData ? ' <span style="color:var(--hx-a78bfa);">(demo)</span>' : ''}</td>
+      <td style="padding:6px 8px;font-size:0.75rem;">${_pfAgeText(s)}${_pfStale(s) ? ' <span style="color:var(--hx-f59e0b);">stale</span>' : ''} &middot; ${s.via === 'pull' ? 'pulled' : 'imported' + (s.filename ? ': ' + _esc(s.filename) : '')}</td>
       <td style="padding:6px 8px;"><button class="action-btn secondary" style="font-size:0.7rem;padding:3px 8px;" onclick="perfDeleteSnapshot(${s.id})">Delete</button></td></tr>`).join('');
   host.innerHTML = `
     <div id="settingsSectionPerf" class="settings-section-label" style="margin-top:24px;scroll-margin-top:90px;">StoragePerf Integration</div>
@@ -12333,7 +12349,7 @@ function renderCharts() {
       maintainAspectRatio: false,
       cutout: '68%',
       plugins: {
-        legend: { position: 'bottom', labels: { color: '#f3f4f6', font: { size: 11 }, padding: 14, usePointStyle: true, pointStyle: 'circle' } },
+        legend: { position: 'bottom', labels: { color: _cText(), font: { size: 11 }, padding: 14, usePointStyle: true, pointStyle: 'circle' } },
         tooltip: {
           callbacks: {
             label: ctx => {
@@ -12352,21 +12368,21 @@ function renderCharts() {
         c.save();
         if (avgDRR) {
           c.font = `bold ${Math.round(height / 8)}px Inter, sans-serif`;
-          c.fillStyle = '#f3f4f6';
+          c.fillStyle = _cText();
           c.textAlign = 'center';
           c.textBaseline = 'middle';
           c.fillText(`${avgDRR}:1`, width / 2, height / 2 - 10);
           c.font = `${Math.round(height / 14)}px Inter, sans-serif`;
-          c.fillStyle = '#9ca3af';
+          c.fillStyle = _cTick();
           c.fillText('avg reduction', width / 2, height / 2 + Math.round(height / 10));
         } else if (dedupCompressSum > 0.05) {
           c.font = `bold ${Math.round(height / 9)}px Inter, sans-serif`;
-          c.fillStyle = '#c084fc';
+          c.fillStyle = _cAccent2();
           c.textAlign = 'center';
           c.textBaseline = 'middle';
           c.fillText(`${fmtTB(dedupCompressSum)} TB`, width / 2, height / 2 - 8);
           c.font = `${Math.round(height / 14)}px Inter, sans-serif`;
-          c.fillStyle = '#9ca3af';
+          c.fillStyle = _cTick();
           c.fillText('saved', width / 2, height / 2 + Math.round(height / 10));
         }
         c.restore();
@@ -12434,24 +12450,24 @@ function renderCharts() {
       scales: {
         x: {
           stacked: true,
-          ticks: { color: '#9ca3af', maxRotation: 40, font: { size: 10 } },
-          grid: { color: 'rgba(255,255,255,0.04)' }
+          ticks: { color: _cTick(), maxRotation: 40, font: { size: 10 } },
+          grid: { color: _cGrid() }
         },
         y: {
           stacked: true,
           min: 0,
           ticks: {
-            color: '#9ca3af',
+            color: _cTick(),
             callback: v => v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v
           },
-          grid: { color: 'rgba(255,255,255,0.04)' },
-          title: { display: true, text: 'Storage (TB)', color: '#9ca3af', font: { size: 11 } }
+          grid: { color: _cGrid() },
+          title: { display: true, text: 'Storage (TB)', color: _cTick(), font: { size: 11 } }
         }
       },
       plugins: {
         legend: {
           position: 'bottom',
-          labels: { color: '#f3f4f6', font: { size: 11 } }
+          labels: { color: _cText(), font: { size: 11 } }
         },
         tooltip: {
           callbacks: {
@@ -12673,11 +12689,11 @@ async function renderRiskTrendChart() {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-        y: { min: 0, ticks: { color: '#9ca3af' }, grid: { color: 'rgba(255,255,255,0.04)' } }
+        x: { ticks: { color: _cTick(), font: { size: 10 } }, grid: { color: _cGrid() } },
+        y: { min: 0, ticks: { color: _cTick() }, grid: { color: _cGrid() } }
       },
       plugins: {
-        legend: { position: 'bottom', labels: { color: '#f3f4f6', font: { size: 11 } } },
+        legend: { position: 'bottom', labels: { color: _cText(), font: { size: 11 } } },
         tooltip: {
           callbacks: {
             afterBody: ctx => {
@@ -12847,7 +12863,7 @@ function renderChangesCard() {
   else {
     h += `<div style="font-size:0.78rem;margin-bottom:6px;">${nr.total} risk${nr.total !== 1 ? 's' : ''} on ${nr.systems} system${nr.systems !== 1 ? 's' : ''}: ` + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].filter(k => nr.bySev[k]).map(k => `<span style="color:${sevCol[k]};font-weight:600;">${nr.bySev[k]} ${k.toLowerCase()}</span>`).join(' · ') + `</div>`;
     const top = state.changesShowAll ? nr.groups : nr.groups.slice(0, 8);
-    h += `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;margin-bottom:6px;">` + top.map(g => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:4px 6px;color:${sevCol[g.sev] || 'inherit'};font-weight:600;width:70px;">${esc2(g.sev.toLowerCase())}</td><td style="padding:4px 6px;">${esc2(g.title)}</td><td style="padding:4px 6px;text-align:right;color:var(--text-muted);white-space:nowrap;">${g.systems.size} system${g.systems.size !== 1 ? 's' : ''}</td></tr>`).join('') + `</table>`;
+    h += `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;margin-bottom:6px;">` + top.map(g => `<tr style="border-bottom:1px solid var(--wa-50);"><td style="padding:4px 6px;color:${sevCol[g.sev] || 'inherit'};font-weight:600;width:70px;">${esc2(g.sev.toLowerCase())}</td><td style="padding:4px 6px;">${esc2(g.title)}</td><td style="padding:4px 6px;text-align:right;color:var(--text-muted);white-space:nowrap;">${g.systems.size} system${g.systems.size !== 1 ? 's' : ''}</td></tr>`).join('') + `</table>`;
     if (nr.groups.length > 8) h += `<a href="#" onclick="state.changesShowAll=!state.changesShowAll;renderChangesCard();return false;" style="font-size:0.72rem;">${state.changesShowAll ? 'Show fewer' : 'Show all ' + nr.groups.length + ' risks'}</a>`;
   }
   // 2. snapshot comparison
@@ -12864,14 +12880,45 @@ function renderChangesCard() {
     if (rows.length) {
       const shown = state.changesShowAllSys ? rows : rows.slice(0, 15);
       const pr = (x, f) => x ? `${esc2(x.from == null ? '—' : x.from)} → ${esc2(x.to == null ? '—' : x.to)}` : '';
-      h += `<table style="width:100%;border-collapse:collapse;font-size:0.74rem;"><thead><tr style="text-align:left;color:var(--text-muted);"><th style="padding:4px 6px;">System</th><th>OS</th><th>SP/BMC</th><th>Contract end</th><th>Resolved risks</th><th>Other</th></tr></thead><tbody>` + shown.map(c => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:4px 6px;">${esc2(c.name || c.serial)}</td><td>${pr(c.os)}</td><td>${pr(c.sp)}</td><td>${c.contractEnd ? esc2(String(c.contractEnd.from || '—').slice(0, 10)) + ' → ' + esc2(String(c.contractEnd.to || '—').slice(0, 10)) : ''}</td><td>${(c.resolvedRiskIds || []).map(i => esc2((titles[i] || {}).title || ('Risk ' + i))).slice(0, 3).join('; ')}${(c.resolvedRiskIds || []).length > 3 ? ' +' + ((c.resolvedRiskIds.length) - 3) + ' more' : ''}</td><td>${[c.arp ? 'ransomware protection ' + (c.arp.to ? 'on' : 'off') : '', c.contractActive ? 'contract ' + (c.contractActive.to ? 'active' : 'inactive') : '', c.watchlists ? 'watchlists changed' : ''].filter(Boolean).join('; ')}</td></tr>`).join('') + `</tbody></table>`;
+      h += `<table style="width:100%;border-collapse:collapse;font-size:0.74rem;"><thead><tr style="text-align:left;color:var(--text-muted);"><th style="padding:4px 6px;">System</th><th>OS</th><th>SP/BMC</th><th>Contract end</th><th>Resolved risks</th><th>Other</th></tr></thead><tbody>` + shown.map(c => `<tr style="border-bottom:1px solid var(--wa-50);"><td style="padding:4px 6px;">${esc2(c.name || c.serial)}</td><td>${pr(c.os)}</td><td>${pr(c.sp)}</td><td>${c.contractEnd ? esc2(String(c.contractEnd.from || '—').slice(0, 10)) + ' → ' + esc2(String(c.contractEnd.to || '—').slice(0, 10)) : ''}</td><td>${(c.resolvedRiskIds || []).map(i => esc2((titles[i] || {}).title || ('Risk ' + i))).slice(0, 3).join('; ')}${(c.resolvedRiskIds || []).length > 3 ? ' +' + ((c.resolvedRiskIds.length) - 3) + ' more' : ''}</td><td>${[c.arp ? 'ransomware protection ' + (c.arp.to ? 'on' : 'off') : '', c.contractActive ? 'contract ' + (c.contractActive.to ? 'active' : 'inactive') : '', c.watchlists ? 'watchlists changed' : ''].filter(Boolean).join('; ')}</td></tr>`).join('') + `</tbody></table>`;
       if (rows.length > 15) h += `<a href="#" onclick="state.changesShowAllSys=!state.changesShowAllSys;renderChangesCard();return false;" style="font-size:0.72rem;">${state.changesShowAllSys ? 'Show fewer' : 'Show all ' + rows.length + ' systems'}</a>`;
     }
     if (data.addedRemovedReliable && (data.added.length || data.removed.length)) h += `<div style="font-size:0.74rem;margin-top:6px;">${data.added.length} system${data.added.length !== 1 ? 's' : ''} appeared and ${data.removed.length} no longer appear${data.removed.length !== 1 ? '' : 's'} in the data.</div>`;
-    (data.notes || []).forEach(n => { h += `<div style="font-size:0.7rem;color:#f59e0b;margin-top:6px;">${esc2(n)}</div>`; });
+    (data.notes || []).forEach(n => { h += `<div style="font-size:0.7rem;color:var(--hx-f59e0b);margin-top:6px;">${esc2(n)}</div>`; });
   }
   card.innerHTML = h;
 }
+
+// ── Theme (dark / light / match system) ───────────────────────────────────────────────────────────
+// The stylesheet defines every colour as a variable; this only chooses the set, remembers the choice and redraws what paints on a canvas.
+function _themeMode() { try { return localStorage.getItem('aria_theme') || 'dark'; } catch (e) { return 'dark'; } }
+function _themeIsLight() { const m = _themeMode(); return m === 'light' || (m === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches); }
+const _SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const _MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+function applyTheme(redraw) {
+  const light = _themeIsLight();
+  document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
+  const b = document.getElementById('themeToggleBtn'); if (b) b.innerHTML = light ? _MOON : _SUN;   // the icon shows what a click switches to
+  document.querySelectorAll('[data-theme-choice]').forEach(x => { const on = x.getAttribute('data-theme-choice') === _themeMode(); x.style.borderColor = on ? 'var(--accent-cyan)' : ''; x.style.color = on ? 'var(--accent-cyan)' : ''; x.style.fontWeight = on ? '700' : ''; });
+  if (typeof Chart !== 'undefined') { Chart.defaults.color = _cTick(); Chart.defaults.borderColor = _cGrid(); }
+  if (redraw && typeof switchTab === 'function' && state && state.currentTab) { try { switchTab(state.currentTab); } catch (e) { /* the next navigation redraws it */ } }
+}
+function setTheme(mode) { try { localStorage.setItem('aria_theme', mode); } catch (e) { /* the choice just does not persist */ } applyTheme(true); }
+function cycleTheme() { setTheme(_themeIsLight() ? 'dark' : 'light'); }
+if (window.matchMedia) { try { window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => { if (_themeMode() === 'system') applyTheme(true); }); } catch (e) { /* older browser */ } }
+// canvas colours (Chart.js cannot read CSS variables)
+function _cTick() { return _themeIsLight() ? '#64748b' : '#9ca3af'; }
+function _cText() { return _themeIsLight() ? '#1e293b' : '#f3f4f6'; }
+function _cGrid() { return _themeIsLight() ? 'rgba(15,23,42,0.08)' : 'rgba(255,255,255,0.05)'; }
+function _cAccent2() { return _themeIsLight() ? '#7e22ce' : '#c084fc'; }
+document.addEventListener('DOMContentLoaded', () => applyTheme(false)); if (document.readyState !== 'loading') applyTheme(false);
+
+// A scope of hundreds of systems used to be written out in full in the page header (1,808 names, 33,000 characters, pushing the whole page apart): show the first few and the count.
+function _nameListShort(names, max) {
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return names.length <= max ? names.map(esc).join(', ') : names.slice(0, max).map(esc).join(', ') + ` and ${names.length - max} more`;
+}
+function _nameListTitle(names) { return String(names.slice(0, 60).join(', ') + (names.length > 60 ? ` ... and ${names.length - 60} more` : '')).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 
 function renderNeedsAttention() {
   const card = document.getElementById("overviewNeedsAttentionCard");
@@ -12909,7 +12956,7 @@ function renderNeedsAttention() {
     if (r.aiqHealthScore != null) parts.push(`<span style="color: var(--text-secondary);">AIQ score ${r.aiqHealthScore}</span>`);
     if (r.contractExpiringSoon) parts.push(`<span style="color: var(--status-warning);">contract expires in ${r.daysRemaining}d</span>`);
     return `
-      <div onclick="focusOnSystem('${r.sys.serialNumber}'); switchTab('tam');" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+      <div onclick="focusOnSystem('${r.sys.serialNumber}'); switchTab('tam');" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
         <div>
           <span style="font-weight: 600;">${r.sys.systemName}</span>
           <span style="color: var(--text-muted); font-size: 0.78rem; margin-left: 8px;">${r.sys.customerName || ''}</span>
@@ -13252,9 +13299,9 @@ const enrichmentEngine = {
     const segments = [];
     if (verCount > 0) segments.push(`<span title="${verCount} ONTAP/StorageGRID/SANtricity versions enriched with release notes, known issues, and upgrade paths" style="cursor:help">${verCount} ver</span>`);
     if (cveCount > 0) segments.push(`<span title="${cveCount} CVEs enriched with CVSS scores, severity, and NVD details" style="cursor:help">${cveCount} CVE</span>`);
-    if (advCount > 0) segments.push(`<span title="${advCount} NetApp PSIRT security advisories loaded from security.netapp.com" style="color:#f0abfc;cursor:help">${advCount} PSIRT</span>`);
-    if (kbCount > 0)  segments.push(`<span title="${kbCount} knowledge base articles matched to fleet ONTAP versions and platform families" style="color:#93c5fd;cursor:help">${kbCount} KB</span>`);
-    if (kevCount > 0) segments.push(`<span title="${kevCount} advisories matched to CISA Known Exploited Vulnerabilities catalog — actively exploited in the wild" style="color:#fbbf24;cursor:help">⚠ ${kevCount} KEV</span>`);
+    if (advCount > 0) segments.push(`<span title="${advCount} NetApp PSIRT security advisories loaded from security.netapp.com" style="color:var(--hx-f0abfc);cursor:help">${advCount} PSIRT</span>`);
+    if (kbCount > 0)  segments.push(`<span title="${kbCount} knowledge base articles matched to fleet ONTAP versions and platform families" style="color:var(--hx-93c5fd);cursor:help">${kbCount} KB</span>`);
+    if (kevCount > 0) segments.push(`<span title="${kevCount} advisories matched to CISA Known Exploited Vulnerabilities catalog — actively exploited in the wild" style="color:var(--hx-fbbf24);cursor:help">⚠ ${kevCount} KEV</span>`);
 
     if (segments.length === 0) {
       text.textContent = `${this._count} enriched`;
@@ -13330,20 +13377,20 @@ const enrichmentEngine = {
     let html = `<div style="margin-top:12px; padding:10px 12px; border-radius:8px; background:rgba(45,212,191,0.05); border:1px solid rgba(45,212,191,0.18); font-size:0.72rem; line-height:1.55;">`;
 
     // ── Header ───────────────────────────────────────────────────────────────
-    html += `<div style="font-weight:700; color:#2dd4bf; margin-bottom:6px; display:flex; align-items:center; gap:5px; flex-wrap:wrap;">`;
+    html += `<div style="font-weight:700; color:var(--hx-2dd4bf); margin-bottom:6px; display:flex; align-items:center; gap:5px; flex-wrap:wrap;">`;
     html += `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>`;
     const _viPlatLabel = data.platform || (sys.santricityVersion ? 'SANtricity' : 'ONTAP');
     html += `Version Intel · ${data.version || sys.santricityVersion || sys.ontapVersion || 'N/A'} (${_viPlatLabel})`;
     if (sources.length > 0) {
       sources.forEach(s => {
-        html += `<span style="font-weight:400; color:var(--text-muted); background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:3px; padding:1px 5px; font-size:0.63rem;">${s}</span>`;
+        html += `<span style="font-weight:400; color:var(--text-muted); background:var(--wa-50); border:1px solid var(--wa-100); border-radius:3px; padding:1px 5px; font-size:0.63rem;">${s}</span>`;
       });
     }
     html += `</div>`;
 
     // ── Known Issues ─────────────────────────────────────────────────────────
     if (issues.length > 0) {
-      html += `<div style="color:#f59e0b; font-weight:600; margin-bottom:3px;">⚠ ${issues.length} Known Issue${issues.length > 1 ? 's' : ''} (Release Notes):</div>`;
+      html += `<div style="color:var(--hx-f59e0b); font-weight:600; margin-bottom:3px;">⚠ ${issues.length} Known Issue${issues.length > 1 ? 's' : ''} (Release Notes):</div>`;
       html += `<ul style="margin:0 0 8px 14px; padding:0; color:var(--text-secondary);">`;
       html += issues.map(i => `<li style="margin-bottom:3px;">${i.substring(0,140)}${i.length>140?'…':''}</li>`).join('');
       html += `</ul>`;
@@ -13351,7 +13398,7 @@ const enrichmentEngine = {
 
     // ── Fixed Issues ─────────────────────────────────────────────────────────
     if (fixed.length > 0) {
-      html += `<div style="color:#22c55e; font-weight:600; margin-bottom:3px;">✓ ${fixed.length} Fixed in This Release:</div>`;
+      html += `<div style="color:var(--hx-22c55e); font-weight:600; margin-bottom:3px;">✓ ${fixed.length} Fixed in This Release:</div>`;
       html += `<ul style="margin:0 0 8px 14px; padding:0; color:var(--text-secondary);">`;
       html += fixed.map(f => `<li style="margin-bottom:3px;">${f.substring(0,140)}${f.length>140?'…':''}</li>`).join('');
       html += `</ul>`;
@@ -13359,7 +13406,7 @@ const enrichmentEngine = {
 
     // ── What's New ────────────────────────────────────────────────────────────
     if (whatsNew.length > 0) {
-      html += `<div style="color:#60a5fa; font-weight:600; margin-bottom:3px;">✦ What's New:</div>`;
+      html += `<div style="color:var(--hx-60a5fa); font-weight:600; margin-bottom:3px;">✦ What's New:</div>`;
       html += `<ul style="margin:0 0 8px 14px; padding:0; color:var(--text-secondary);">`;
       html += whatsNew.map(w => `<li style="margin-bottom:3px;">${w.substring(0,140)}${w.length>140?'…':''}</li>`).join('');
       html += `</ul>`;
@@ -13367,11 +13414,11 @@ const enrichmentEngine = {
 
     // ── NVD CVEs ──────────────────────────────────────────────────────────────
     if (cves.length > 0) {
-      html += `<div style="color:#ef4444; font-weight:600; margin-bottom:3px; border-top:1px solid rgba(255,255,255,0.07); padding-top:6px; margin-top:2px;">🔴 ${cves.length} CVE${cves.length>1?'s':''} from NVD:</div>`;
+      html += `<div style="color:var(--hx-ef4444); font-weight:600; margin-bottom:3px; border-top:1px solid var(--wa-70); padding-top:6px; margin-top:2px;">🔴 ${cves.length} CVE${cves.length>1?'s':''} from NVD:</div>`;
       html += cves.map(c => {
         const score = c.cvss != null ? parseFloat(c.cvss) : null;
         return `<div style="display:flex; align-items:flex-start; gap:6px; margin-bottom:5px; padding:4px 6px; background:rgba(239,68,68,0.06); border-radius:4px;">
-          <span style="font-weight:700; color:#ef4444; white-space:nowrap; font-size:0.7rem;">${c.id}</span>
+          <span style="font-weight:700; color:var(--hx-ef4444); white-space:nowrap; font-size:0.7rem;">${c.id}</span>
           ${sevBadge(c.severity, score)}
           <span style="color:var(--text-secondary); flex:1;">${(c.description||'').substring(0,160)}${(c.description||'').length>160?'…':''}</span>
           ${c.publishedDate ? `<span style="color:var(--text-muted); white-space:nowrap; font-size:0.65rem;">${c.publishedDate}</span>` : ''}
@@ -13381,10 +13428,10 @@ const enrichmentEngine = {
 
     // ── PSIRT Advisories ──────────────────────────────────────────────────────
     if (advisories.length > 0) {
-      html += `<div style="color:#f97316; font-weight:600; margin-bottom:3px; border-top:1px solid rgba(255,255,255,0.07); padding-top:6px; margin-top:2px;">🔒 ${advisories.length} PSIRT Advisory/Advisories:</div>`;
+      html += `<div style="color:var(--hx-f97316); font-weight:600; margin-bottom:3px; border-top:1px solid var(--wa-70); padding-top:6px; margin-top:2px;">🔒 ${advisories.length} PSIRT Advisory/Advisories:</div>`;
       html += advisories.map(a =>
         `<div style="margin-bottom:4px; padding:4px 6px; background:rgba(249,115,22,0.06); border-radius:4px;">
-          <a href="${a.link||'#'}" target="_blank" style="color:#f97316; font-weight:600; font-size:0.7rem; text-decoration:none;">${a.id}</a>
+          <a href="${a.link||'#'}" target="_blank" style="color:var(--hx-f97316); font-weight:600; font-size:0.7rem; text-decoration:none;">${a.id}</a>
           <span style="color:var(--text-secondary); margin-left:6px;">${(a.title||'').substring(0,120)}</span>
         </div>`
       ).join('');
@@ -13392,10 +13439,10 @@ const enrichmentEngine = {
 
     // ── Bugs Online ───────────────────────────────────────────────────────────
     if (bugs.length > 0) {
-      html += `<div style="color:#a78bfa; font-weight:600; margin-bottom:3px; border-top:1px solid rgba(255,255,255,0.07); padding-top:6px; margin-top:2px;">🐛 ${bugs.length} Bug${bugs.length>1?'s':''} (Bugs Online):</div>`;
+      html += `<div style="color:var(--hx-a78bfa); font-weight:600; margin-bottom:3px; border-top:1px solid var(--wa-70); padding-top:6px; margin-top:2px;">🐛 ${bugs.length} Bug${bugs.length>1?'s':''} (Bugs Online):</div>`;
       html += bugs.map(b =>
         `<div style="margin-bottom:4px; padding:4px 6px; background:rgba(167,139,250,0.06); border-radius:4px;">
-          <a href="${b.link||'#'}" target="_blank" style="color:#a78bfa; font-weight:600; font-size:0.7rem; text-decoration:none;">${b.id}</a>
+          <a href="${b.link||'#'}" target="_blank" style="color:var(--hx-a78bfa); font-weight:600; font-size:0.7rem; text-decoration:none;">${b.id}</a>
           <span style="color:var(--text-secondary); margin-left:6px;">${(b.title||'').substring(0,120)}</span>
         </div>`
       ).join('');
@@ -13403,10 +13450,10 @@ const enrichmentEngine = {
 
     // ── KB Articles & Remediation ──────────────────────────────────────────────
     if (kbArticles.length > 0) {
-      html += `<div style="color:#14b8a6; font-weight:600; margin-bottom:3px; border-top:1px solid rgba(255,255,255,0.07); padding-top:6px; margin-top:2px;">📚 ${kbArticles.length} KB Article${kbArticles.length>1?'s':''} & Remediation:</div>`;
+      html += `<div style="color:var(--hx-14b8a6); font-weight:600; margin-bottom:3px; border-top:1px solid var(--wa-70); padding-top:6px; margin-top:2px;">📚 ${kbArticles.length} KB Article${kbArticles.length>1?'s':''} & Remediation:</div>`;
       html += kbArticles.map(kb =>
         `<div style="margin-bottom:5px; padding:5px 8px; background:rgba(20,184,166,0.06); border-radius:4px; border-left:2px solid #14b8a644;">
-          <a href="${kb.url||'#'}" target="_blank" style="color:#14b8a6; font-weight:600; font-size:0.7rem; text-decoration:none;">${kb.id || 'KB'}</a>
+          <a href="${kb.url||'#'}" target="_blank" style="color:var(--hx-14b8a6); font-weight:600; font-size:0.7rem; text-decoration:none;">${kb.id || 'KB'}</a>
           <span style="color:var(--text-primary); margin-left:6px; font-weight:500;">${(kb.title||'').substring(0,100)}</span>
           ${kb.remediation && kb.remediation !== 'See article for details.' ? `<div style="color:var(--text-secondary); margin-top:3px; padding-left:8px; border-left:1px solid rgba(20,184,166,0.2); font-size:0.68rem;">💊 ${kb.remediation.substring(0,180)}${kb.remediation.length>180?'…':''}</div>` : ''}
           ${kb.summary && kb.summary !== 'Found matching KB article' ? `<div style="color:var(--text-muted); font-size:0.66rem; margin-top:2px;">${kb.summary.substring(0,120)}</div>` : ''}
@@ -13418,16 +13465,16 @@ const enrichmentEngine = {
     if (upgradePath.recommendedTarget) {
       const isDirect = upgradePath.directUpgradeSupported;
       const directBadge = isDirect
-        ? `<span style="background:rgba(34,197,94,0.15); color:#22c55e; border:1px solid #22c55e44; border-radius:3px; padding:1px 6px; font-size:0.65rem; font-weight:700; margin-left:6px;">✓ Direct Upgrade</span>`
-        : `<span style="background:rgba(245,158,11,0.15); color:#f59e0b; border:1px solid #f59e0b44; border-radius:3px; padding:1px 6px; font-size:0.65rem; font-weight:700; margin-left:6px;">⚠ Multi-Hop Required</span>`;
-      html += `<div style="border-top:1px solid rgba(255,255,255,0.07); padding-top:6px; margin-top:2px;">`;
-      html += `<div style="color:#06b6d4; font-weight:600; margin-bottom:4px; display:flex; align-items:center;">⬆️ Upgrade Path${directBadge}</div>`;
+        ? `<span style="background:rgba(34,197,94,0.15); color:var(--hx-22c55e); border:1px solid #22c55e44; border-radius:3px; padding:1px 6px; font-size:0.65rem; font-weight:700; margin-left:6px;">✓ Direct Upgrade</span>`
+        : `<span style="background:rgba(245,158,11,0.15); color:var(--hx-f59e0b); border:1px solid #f59e0b44; border-radius:3px; padding:1px 6px; font-size:0.65rem; font-weight:700; margin-left:6px;">⚠ Multi-Hop Required</span>`;
+      html += `<div style="border-top:1px solid var(--wa-70); padding-top:6px; margin-top:2px;">`;
+      html += `<div style="color:var(--hx-06b6d4); font-weight:600; margin-bottom:4px; display:flex; align-items:center;">⬆️ Upgrade Path${directBadge}</div>`;
       html += `<div style="padding:6px 10px; background:rgba(6,182,212,0.06); border-radius:5px; border:1px solid rgba(6,182,212,0.12);">`;
       html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">`;
       html += `<span style="color:var(--text-muted); font-size:0.68rem;">Current:</span>`;
-      html += `<span style="color:#f59e0b; font-weight:600;">${upgradePath.currentVersion || data.version || '?'}</span>`;
+      html += `<span style="color:var(--hx-f59e0b); font-weight:600;">${upgradePath.currentVersion || data.version || '?'}</span>`;
       html += `<span style="color:var(--text-muted);">→</span>`;
-      html += `<span style="color:#22c55e; font-weight:700;">${upgradePath.recommendedTarget}</span>`;
+      html += `<span style="color:var(--hx-22c55e); font-weight:700;">${upgradePath.recommendedTarget}</span>`;
       html += `</div>`;
       if (upgradePath.prerequisites && upgradePath.prerequisites.length > 0) {
         html += `<div style="color:var(--text-secondary); font-size:0.67rem; margin-top:3px;">Prerequisites: ${upgradePath.prerequisites.slice(0,3).join(' · ')}</div>`;
@@ -13436,17 +13483,17 @@ const enrichmentEngine = {
         html += `<div style="color:var(--text-muted); font-size:0.66rem; margin-top:2px; font-style:italic;">${upgradePath.notes[0].substring(0,150)}</div>`;
       }
       if (upgradePath.upgradeGuideUrl) {
-        html += `<a href="${upgradePath.upgradeGuideUrl}" target="_blank" style="color:#06b6d4; font-size:0.66rem; text-decoration:none; margin-top:3px; display:inline-block;">📖 View Upgrade Guide →</a>`;
+        html += `<a href="${upgradePath.upgradeGuideUrl}" target="_blank" style="color:var(--hx-06b6d4); font-size:0.66rem; text-decoration:none; margin-top:3px; display:inline-block;">📖 View Upgrade Guide →</a>`;
       }
       html += `</div></div>`;
     }
 
     // ── Best Practice Guides ──────────────────────────────────────────────────
     if (bestPractices.length > 0) {
-      html += `<div style="color:#818cf8; font-weight:600; margin-bottom:3px; border-top:1px solid rgba(255,255,255,0.07); padding-top:6px; margin-top:2px;">📖 ${bestPractices.length} Best Practice Guide${bestPractices.length>1?'s':''}:</div>`;
+      html += `<div style="color:var(--hx-818cf8); font-weight:600; margin-bottom:3px; border-top:1px solid var(--wa-70); padding-top:6px; margin-top:2px;">📖 ${bestPractices.length} Best Practice Guide${bestPractices.length>1?'s':''}:</div>`;
       html += bestPractices.map(bp =>
         `<div style="margin-bottom:4px; padding:4px 6px; background:rgba(129,140,248,0.06); border-radius:4px; display:flex; align-items:flex-start; gap:6px;">
-          <span style="color:#818cf8; font-weight:700; font-size:0.7rem; white-space:nowrap;">${bp.trNumber || 'Guide'}</span>
+          <span style="color:var(--hx-818cf8); font-weight:700; font-size:0.7rem; white-space:nowrap;">${bp.trNumber || 'Guide'}</span>
           <a href="${bp.url||'#'}" target="_blank" style="color:var(--text-secondary); text-decoration:none; flex:1;">${(bp.title||'').substring(0,120)}</a>
           ${bp.relevantFeatures && bp.relevantFeatures.length ? `<span style="color:var(--text-muted); font-size:0.6rem;">${bp.relevantFeatures.slice(0,3).join(', ')}</span>` : ''}
         </div>`
@@ -13460,7 +13507,7 @@ const enrichmentEngine = {
 
     // ── Upgrade motivation summary ────────────────────────────────────────────
     if (motivation) {
-      html += `<div style="color:var(--text-secondary); border-top:1px solid rgba(255,255,255,0.06); padding-top:5px; margin-top:6px;">💡 ${motivation}</div>`;
+      html += `<div style="color:var(--text-secondary); border-top:1px solid var(--wa-60); padding-top:5px; margin-top:6px;">💡 ${motivation}</div>`;
     }
 
     html += `</div>`;
@@ -13655,8 +13702,8 @@ function showEnrichLog() {
       summary = 'Release catalogue refreshed';
       detail = 'The list of ONTAP, StorageGRID and SANtricity releases ARIA knows about, read from docs.netapp.com.';
     }
-    return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-      <td style="padding:5px 8px; color:#2dd4bf; font-family:monospace; font-size:0.75rem;">${e.id}</td>
+    return `<tr style="border-bottom:1px solid var(--wa-50);">
+      <td style="padding:5px 8px; color:var(--hx-2dd4bf); font-family:monospace; font-size:0.75rem;">${e.id}</td>
       <td style="padding:5px 8px; color:var(--text-secondary); font-size:0.72rem;">${e.type}</td>
       <td style="padding:5px 8px; color:var(--text-secondary); font-size:0.72rem;">${e.source}</td>
       <td style="padding:5px 8px; color:var(--text-muted); font-size:0.72rem;">${cacheStr}</td>
@@ -13670,11 +13717,11 @@ function showEnrichLog() {
   modal.innerHTML = `
     <div style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius);padding:24px;max-width:1100px;width:95%;max-height:80vh;overflow:auto;position:relative;">
       <button onclick="this.closest('[style*=fixed]').remove()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer;">✕</button>
-      <div style="font-size:1rem;font-weight:700;color:#2dd4bf;margin-bottom:4px;">🔍 Enrichment Log</div>
+      <div style="font-size:1rem;font-weight:700;color:var(--hx-2dd4bf);margin-bottom:4px;">🔍 Enrichment Log</div>
       <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:16px;">Public data ARIA holds for the versions and CVEs in your fleet (NVD, docs.netapp.com, security.netapp.com), with the date it was fetched. Cached entries were fetched on an earlier day and reused. No customer data was transmitted.</div>
       <table style="width:100%;border-collapse:collapse;">
         <thead>
-          <tr style="border-bottom:1px solid rgba(255,255,255,0.1);">
+          <tr style="border-bottom:1px solid var(--wa-100);">
             <th style="padding:4px 8px;text-align:left;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">ID</th>
             <th style="padding:4px 8px;text-align:left;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">Type</th>
             <th style="padding:4px 8px;text-align:left;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">Source</th>
@@ -14028,7 +14075,7 @@ function populateSystemSelectors() {
         clusterDiv.innerHTML = `
           <input type="checkbox" id="chk_cluster_${clusterName}" ${allClusterNodesChecked ? 'checked' : ''} style="cursor: pointer;">
           <label for="chk_cluster_${clusterName}" style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: var(--accent-cyan); flex: 1;">
-            Cluster: ${clusterName}${clusterHasMC ? ' <span style="color:#ff9800;font-size:0.68rem;font-weight:700;">⬡ MC</span>' : ''}
+            Cluster: ${clusterName}${clusterHasMC ? ' <span style="color:var(--hx-ff9800);font-size:0.68rem;font-weight:700;">⬡ MC</span>' : ''}
           </label>
         `;
         clusterDiv.onclick = (e) => e.stopPropagation();
@@ -14061,7 +14108,7 @@ function populateSystemSelectors() {
           
           itemDiv.innerHTML = `
             <input type="checkbox" value="${sys.serialNumber}" id="chk_tam_${sys.serialNumber}" ${isChecked ? 'checked' : ''} style="cursor: pointer;">
-            <label for="chk_tam_${sys.serialNumber}" style="cursor: pointer; font-size: 0.8rem; flex: 1;">Node: ${sys.systemName} (${sys.platform})${sys.isMetroCluster ? ' <span style="color:#ff9800;font-size:0.68rem;font-weight:700;">⬡ MC</span>' : ''}</label>
+            <label for="chk_tam_${sys.serialNumber}" style="cursor: pointer; font-size: 0.8rem; flex: 1;">Node: ${sys.systemName} (${sys.platform})${sys.isMetroCluster ? ' <span style="color:var(--hx-ff9800);font-size:0.68rem;font-weight:700;">⬡ MC</span>' : ''}</label>
           `;
           itemDiv.onclick = (e) => e.stopPropagation();
           
@@ -15203,7 +15250,7 @@ function _renderUpgradeDetail(idx) {
   if (hops.length === 0) {
     // No path resolved — show a fallback guidance card
     hopHtml =
-      '<div style="margin-top:10px;padding:12px;background:rgba(255,255,255,0.015);border-left:3px solid var(--status-warning);border-radius:var(--radius-sm);">'
+      '<div style="margin-top:10px;padding:12px;background:var(--wa-15);border-left:3px solid var(--status-warning);border-radius:var(--radius-sm);">'
       + '<div style="font-weight:700;font-size:0.8rem;color:var(--status-warning);margin-bottom:8px;">Upgrade Path Undetermined</div>'
       + '<p style="font-size:0.74rem;color:var(--text-secondary);margin:0;">No structured upgrade path was found for this version combination. '
       + 'Please consult the <a href="https://mysupport.netapp.com/site/tools/tool-eula/upgrade-advisor" target="_blank" '
@@ -15252,7 +15299,7 @@ function _renderUpgradeDetail(idx) {
     hops.forEach(function(hop, i) {
       var isLastHop = (i === hops.length - 1);
       hopHtml +=
-        '<div style="margin-top:10px;padding:12px;background:rgba(255,255,255,0.015);border-left:3px solid var(--accent-cyan);border-radius:var(--radius-sm);">'
+        '<div style="margin-top:10px;padding:12px;background:var(--wa-15);border-left:3px solid var(--accent-cyan);border-radius:var(--radius-sm);">'
         + '<div style="font-weight:700;font-size:0.8rem;color:var(--accent-cyan);margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;">'
         + '<span style="display:flex;align-items:center;gap:6px;">'
         + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>'
@@ -15282,7 +15329,7 @@ function _renderUpgradeDetail(idx) {
   }
 
   body.innerHTML =
-    '<div style="padding:14px 16px 16px;border-top:1px solid rgba(255,255,255,0.05);background:rgba(0,0,0,0.15);">'
+    '<div style="padding:14px 16px 16px;border-top:1px solid var(--wa-50);background:var(--bk-150);">'
     + (item.benefits ? '<p style="font-size:0.78rem;color:var(--text-secondary);margin:0 0 10px 0;line-height:1.4;">' + item.benefits + '</p>' : '')
     + hopHtml
     + '</div>';
@@ -15400,11 +15447,11 @@ function _lazyBuildRiskGroup(groupId, drilldownEl) {
   });
 
   let html = `<td colspan="4" style="padding:0;">
-    <table style="width:100%;border-collapse:collapse;background:rgba(0,0,0,0.15);">`;
+    <table style="width:100%;border-collapse:collapse;background:var(--bk-150);">`;
 
   sortedRisks.forEach(r => {
     html += `
-      <tr class="tam-risk-detail-row" style="border-top:1px solid rgba(255,255,255,0.04);">
+      <tr class="tam-risk-detail-row" style="border-top:1px solid var(--wa-40);">
         <td style="padding:10px 14px 10px 24px;width:110px;vertical-align:top;">${sevBadgeHtml(r.severity)}</td>
         <td style="padding:10px 8px;width:160px;vertical-align:top;">
           <div style="font-weight:600;font-size:0.82rem;">${r.category}</div>
@@ -15599,7 +15646,7 @@ function openRemediationModal(riskId) {
   // Display safety tier in description
   document.getElementById("modalRiskDesc").innerHTML = `<span class="rk-tag rk-tag-finding">FINDING ON THIS SYSTEM</span> ${risk.description}
     ${_rrHtml(null, risk)}
-    <div style="margin-top: 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
+    <div style="margin-top: 10px; background: var(--wa-30); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
       <span style="color: var(--text-muted); font-weight: 600;">Safety Tier:</span>
       <span style="background: ${safetyColor}; color: #fff; font-size: 0.68rem; padding: 2px 6px; border-radius: var(--radius-sm); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">${safetyTier}</span>
     </div>`;
@@ -15897,7 +15944,7 @@ function renderTAMTab() {
   // Technical Audit distinguishing a MetroCluster system from a normal
   // cluster; isMetroCluster is a real, reliably-populated field but nothing
   // surfaced it here.
-  const _mcBadge = ' <span style="background:rgba(255,152,0,0.12);color:#ff9800;border:1px solid rgba(255,152,0,0.35);border-radius:10px;padding:1px 8px;font-size:0.68rem;font-weight:700;letter-spacing:0.3px;vertical-align:middle;">⬡ METROCLUSTER</span>';
+  const _mcBadge = ' <span style="background:rgba(255,152,0,0.12);color:var(--hx-ff9800);border:1px solid rgba(255,152,0,0.35);border-radius:10px;padding:1px 8px;font-size:0.68rem;font-weight:700;letter-spacing:0.3px;vertical-align:middle;">⬡ METROCLUSTER</span>';
 
   // Update header text
   if (selectedSystems.length === 1) {
@@ -15916,7 +15963,7 @@ function renderTAMTab() {
     const _open = !!state._tamSelListOpen;
     const _nAll = (getFilteredSystems() || []).length;
     document.getElementById("tamActiveSystem").innerHTML = `
-      <strong>Selected Systems (${selectedSystems.length})</strong>${selectedSystems.length === _nAll ? ' <span style="font-size:0.72rem;color:var(--text-muted);">all systems in scope</span>' : ` <span style="font-size:0.72rem;color:var(--text-muted);">of ${_nAll} in scope</span>`}${_mcCountInSel > 0 ? ` <span style="font-size:0.68rem;color:#ff9800;">(${_mcCountInSel} MetroCluster)</span>` : ''}
+      <strong>Selected Systems (${selectedSystems.length})</strong>${selectedSystems.length === _nAll ? ' <span style="font-size:0.72rem;color:var(--text-muted);">all systems in scope</span>' : ` <span style="font-size:0.72rem;color:var(--text-muted);">of ${_nAll} in scope</span>`}${_mcCountInSel > 0 ? ` <span style="font-size:0.68rem;color:var(--hx-ff9800);">(${_mcCountInSel} MetroCluster)</span>` : ''}
       <a href="javascript:void(0)" style="font-size:0.72rem;margin-left:8px;color:var(--accent-cyan);" onclick="state._tamSelListOpen=!state._tamSelListOpen;document.getElementById('tamSelList').style.display=state._tamSelListOpen?'block':'none';this.textContent=state._tamSelListOpen?'Hide list \u25B4':'Show list \u25BE';">${_open ? 'Hide list \u25B4' : 'Show list \u25BE'}</a>
       <div id="tamSelList" style="display:${_open ? 'block' : 'none'};max-height:110px;overflow:auto;margin-top:6px;font-size:0.78rem;color:var(--text-primary);">${names}</div>
     `;
@@ -16011,8 +16058,8 @@ function renderTAMTab() {
     const _s = document.createElement('style');
     _s.id = '_tamRiskHoverStyle';
     _s.textContent =
-      '.tam-risk-sys-hdr:hover{background:rgba(255,255,255,0.03)!important}' +
-      '.tam-risk-detail-row:hover td{background:rgba(255,255,255,0.02)!important}';
+      '.tam-risk-sys-hdr:hover{background:var(--wa-30)!important}' +
+      '.tam-risk-detail-row:hover td{background:var(--wa-20)!important}';
     document.head.appendChild(_s);
   }
 
@@ -16025,7 +16072,7 @@ function renderTAMTab() {
     // Build header controls row
     const controlsHtml = `
       <tr class="risk-controls-row">
-        <td colspan="4" style="padding:8px 12px;background:rgba(255,255,255,0.015);border-bottom:1px solid var(--border-color);">
+        <td colspan="4" style="padding:8px 12px;background:var(--wa-15);border-bottom:1px solid var(--border-color);">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
             <span style="font-size:0.78rem;color:var(--text-muted);">
               <strong style="color:var(--text-primary);">${sortedSystemNames.length}</strong> systems
@@ -16034,7 +16081,7 @@ function renderTAMTab() {
             </span>
             <button onclick="toggleAllRiskGroups(this)"
               style="font-size:0.72rem;padding:3px 10px;border:1px solid var(--border-color);
-                     background:rgba(255,255,255,0.04);color:var(--text-secondary);
+                     background:var(--wa-40);color:var(--text-secondary);
                      border-radius:var(--radius-sm);cursor:pointer;"
               data-expanded="false">⊞ Expand All</button>
           </div>
@@ -16060,10 +16107,10 @@ function renderTAMTab() {
 
       // Severity pill mini-summary
       const pills = [];
-      if (counts.critical) pills.push(`<span style="background:rgba(248,113,113,0.18);color:#f87171;border:1px solid rgba(248,113,113,0.35);border-radius:8px;padding:1px 7px;font-size:0.68rem;font-weight:700;">🔴 ${counts.critical} Crit</span>`);
-      if (counts.high)     pills.push(`<span style="background:rgba(251,146,60,0.18);color:#fb923c;border:1px solid rgba(251,146,60,0.35);border-radius:8px;padding:1px 7px;font-size:0.68rem;font-weight:700;">🟠 ${counts.high} High</span>`);
-      if (counts.medium)   pills.push(`<span style="background:rgba(251,191,36,0.15);color:#fbbf24;border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:1px 7px;font-size:0.68rem;font-weight:700;">🟡 ${counts.medium} Med</span>`);
-      if (counts.low)      pills.push(`<span style="background:rgba(96,165,250,0.15);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);border-radius:8px;padding:1px 7px;font-size:0.68rem;font-weight:700;">🔵 ${counts.low} Low</span>`);
+      if (counts.critical) pills.push(`<span style="background:rgba(248,113,113,0.18);color:var(--hx-f87171);border:1px solid rgba(248,113,113,0.35);border-radius:8px;padding:1px 7px;font-size:0.68rem;font-weight:700;">🔴 ${counts.critical} Crit</span>`);
+      if (counts.high)     pills.push(`<span style="background:rgba(251,146,60,0.18);color:var(--hx-fb923c);border:1px solid rgba(251,146,60,0.35);border-radius:8px;padding:1px 7px;font-size:0.68rem;font-weight:700;">🟠 ${counts.high} High</span>`);
+      if (counts.medium)   pills.push(`<span style="background:rgba(251,191,36,0.15);color:var(--hx-fbbf24);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:1px 7px;font-size:0.68rem;font-weight:700;">🟡 ${counts.medium} Med</span>`);
+      if (counts.low)      pills.push(`<span style="background:rgba(96,165,250,0.15);color:var(--hx-60a5fa);border:1px solid rgba(96,165,250,0.3);border-radius:8px;padding:1px 7px;font-size:0.68rem;font-weight:700;">🔵 ${counts.low} Low</span>`);
 
       // Left accent colour by worst severity
       const accentColor = worst === 0 ? '#f87171' : worst === 1 ? '#fb923c' : worst === 2 ? '#fbbf24' : '#60a5fa';
@@ -16092,7 +16139,7 @@ function renderTAMTab() {
       // which was the primary cause of the TAM tab freezing the browser.
       riskRows += `<tr id="${groupId}" style="display:none;" data-lazy="true">
         <td colspan="4" style="padding:0;">
-          <table style="width:100%;border-collapse:collapse;background:rgba(0,0,0,0.15);">
+          <table style="width:100%;border-collapse:collapse;background:var(--bk-150);">
             <tr><td colspan="4" style="padding:12px;text-align:center;color:var(--text-muted);font-size:0.78rem;">Loading…</td></tr>
           </table>
         </td>
@@ -16154,7 +16201,7 @@ function renderTAMTab() {
       const _us = document.createElement('style');
       _us.id = '_tamUpgradeHoverStyle';
       _us.textContent =
-        '.tam-upgrade-hdr:hover{background:rgba(255,255,255,0.06)!important}';
+        '.tam-upgrade-hdr:hover{background:var(--wa-60)!important}';
       document.head.appendChild(_us);
     }
 
@@ -16164,8 +16211,8 @@ function renderTAMTab() {
       '<h3 style="font-size:1.05rem;margin:0;">Recommended OS Upgrades</h3>' +
       '<button id="upgradeExpandToggle" data-state="closed"' +
       ' onclick="_expandAllUpgradeCards(this)"' +
-      ' style="font-size:0.75rem;padding:5px 12px;background:rgba(255,255,255,0.06);' +
-        'border:1px solid rgba(255,255,255,0.12);border-radius:6px;' +
+      ' style="font-size:0.75rem;padding:5px 12px;background:var(--wa-60);' +
+        'border:1px solid var(--wa-120);border-radius:6px;' +
         'color:var(--text-secondary);cursor:pointer;transition:background 0.15s;">' +
       '\u2295 Expand All</button></div>';
 
@@ -16207,13 +16254,13 @@ function renderTAMTab() {
 
       // ── Card: header only — body is EMPTY (lazy-filled on first click) ────
       upgradeHtml +=
-        '<div id="' + cardId + '" style="margin-bottom:8px;border:1px solid rgba(255,255,255,0.07);border-radius:10px;overflow:hidden;">' +
+        '<div id="' + cardId + '" style="margin-bottom:8px;border:1px solid var(--wa-70);border-radius:10px;overflow:hidden;">' +
 
         // Clickable summary header (CSS class hover, no inline onmouseover)
         '<div class="tam-upgrade-hdr"' +
           ' onclick="_toggleUpgradeCard(\'' + cardId + '\',' + itemIdx + ')"' +
           ' style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;' +
-            'cursor:pointer;background:rgba(255,255,255,0.03);transition:background 0.15s;user-select:none;">' +
+            'cursor:pointer;background:var(--wa-30);transition:background 0.15s;user-select:none;">' +
 
           // Left: chevron + system name + version line + hop pills
           '<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">' +
@@ -16309,7 +16356,7 @@ function renderTAMTab() {
       // numbers, not a live measurement — Active IQ exposes no live ISL telemetry)
       // instead of validating an MC ISL switch identically to a plain cluster switch.
       const mcNote = sw.mcContext
-        ? `<div style="margin-top:4px;font-size:0.68rem;color:#a78bfa;" title="This switch sits on a MetroCluster ISL — a mirrored-plex synchronous replication path with its own distance/packet-loss/jitter/MTU requirements distinct from a plain cluster-interconnect switch.">⬡ MetroCluster ISL — max packet loss ${REFERENCE_LIBRARY_MC_REQUIREMENTS.isl.maxPacketLoss}%, max jitter ${REFERENCE_LIBRARY_MC_REQUIREMENTS.isl.maxJitter}ms, MTU ${REFERENCE_LIBRARY_MC_REQUIREMENTS.isl.requiredMTU}</div>`
+        ? `<div style="margin-top:4px;font-size:0.68rem;color:var(--hx-a78bfa);" title="This switch sits on a MetroCluster ISL — a mirrored-plex synchronous replication path with its own distance/packet-loss/jitter/MTU requirements distinct from a plain cluster-interconnect switch.">⬡ MetroCluster ISL — max packet loss ${REFERENCE_LIBRARY_MC_REQUIREMENTS.isl.maxPacketLoss}%, max jitter ${REFERENCE_LIBRARY_MC_REQUIREMENTS.isl.maxJitter}ms, MTU ${REFERENCE_LIBRARY_MC_REQUIREMENTS.isl.requiredMTU}</div>`
         : '';
 
       // RCF (Reference Configuration File) compliance — real signal from
@@ -16468,17 +16515,17 @@ function renderTAMTab() {
     // Controls bar
     bulletinRows += `
       <tr>
-        <td colspan="4" style="padding:8px 12px;background:rgba(255,255,255,0.015);border-bottom:1px solid var(--border-color);">
+        <td colspan="4" style="padding:8px 12px;background:var(--wa-15);border-bottom:1px solid var(--border-color);">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
             <span style="font-size:0.78rem;color:var(--text-muted);">
-              <strong style="color:#f87171;">${primaryBulletins.length}</strong> Critical/High
+              <strong style="color:var(--hx-f87171);">${primaryBulletins.length}</strong> Critical/High
               ${secondaryBulletins.length ? `· <strong style="color:var(--text-secondary);">${secondaryBulletins.length}</strong> Medium/Low/Info` : ''}
               · <strong style="color:var(--text-primary);">${allBulletins.length}</strong> total
             </span>
             ${secondaryBulletins.length ? `
               <button onclick="toggleBulletinSecondary(this)"
                 style="font-size:0.72rem;padding:3px 10px;border:1px solid var(--border-color);
-                       background:rgba(255,255,255,0.04);color:var(--text-secondary);
+                       background:var(--wa-40);color:var(--text-secondary);
                        border-radius:var(--radius-sm);cursor:pointer;" data-expanded="false">
                 Show ${secondaryBulletins.length} lower-severity advisories ▼
               </button>` : ''}
@@ -16504,7 +16551,7 @@ function renderTAMTab() {
       // Separator toggle row
       bulletinRows += `
         <tr id="bulletin-secondary-toggle" onclick="toggleBulletinSecondary(this.querySelector('button'))"
-          style="cursor:pointer;background:rgba(255,255,255,0.015);"
+          style="cursor:pointer;background:var(--wa-15);"
           onmouseover="this.style.background='rgba(255,255,255,0.03)'"
           onmouseout="this.style.background='rgba(255,255,255,0.015)'">
           <td colspan="4" style="padding:10px 14px;text-align:center;">
@@ -16518,7 +16565,7 @@ function renderTAMTab() {
       // Empty lazy container — rows injected by toggleBulletinSecondary on first click
       bulletinRows += `<tr id="bulletin-secondary-group" style="display:none;" data-lazy="true">
         <td colspan="4" style="padding:0;">
-          <table style="width:100%;border-collapse:collapse;background:rgba(0,0,0,0.1);"></table>
+          <table style="width:100%;border-collapse:collapse;background:var(--bk-100);"></table>
         </td></tr>`;
 
       // Store secondary bulletin data for lazy rendering
@@ -16660,8 +16707,8 @@ function _dfSwitchInventory(systems) {
 function _switchInventoryHtml(v) {
   if (!v || !v.n) return `<div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:14px;">Active IQ reports no cluster switches for the ONTAP systems in this scope. Switch data comes from the Cluster Switch Health Monitor (CSHM); it is empty when CSHM is not configured on the cluster or the switch information has not reached Active IQ in AutoSupport.${v && v.ontapNoSw ? ` ${v.ontapNoSw} ONTAP system${v.ontapNoSw !== 1 ? 's' : ''} in scope have no switch records.` : ''}</div>`;
   const esc = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.76rem;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:top;';
-  const stat = (l, val, c, sub) => `<div style="background:rgba(0,0,0,0.2);padding:10px;border-radius:var(--radius-sm);text-align:center;border-left:3px solid ${c};"><div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${l}</div><div style="font-size:1.25rem;font-weight:700;">${val}</div>${sub ? `<div style="font-size:0.65rem;color:var(--text-muted);">${sub}</div>` : ''}</div>`;
+  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.76rem;border-bottom:1px solid var(--wa-40);vertical-align:top;';
+  const stat = (l, val, c, sub) => `<div style="background:var(--bk-200);padding:10px;border-radius:var(--radius-sm);text-align:center;border-left:3px solid ${c};"><div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${l}</div><div style="font-size:1.25rem;font-weight:700;">${val}</div>${sub ? `<div style="font-size:0.65rem;color:var(--text-muted);">${sub}</div>` : ''}</div>`;
   let h = `<h3 style="font-size:1rem;margin:0 0 10px;">Switch inventory</h3>`;
   h += `<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:12px;">` +
     stat('Distinct switches', v.n, 'var(--accent-cyan)', `${v.systemsWithSw} system${v.systemsWithSw !== 1 ? 's' : ''} connected`) +
@@ -16678,7 +16725,7 @@ function _switchInventoryHtml(v) {
   notes.push(`<strong>How to tell whether firmware or RCF needs an upgrade.</strong> Active IQ reports only what is <em>running</em> on a switch: its firmware version and the RCF (Reference Configuration File) applied to it. It does not say whether either is current. The <em>Version check</em> column compares the running firmware with the baseline ARIA keeps for that switch family; the RCF is shown as applied, and ARIA has no per-model recommended-RCF list, so it flags only RCF versions that differ between switches of the same model (see the table below). Confirm any upgrade against NetApp's switch upgrade documentation and the Interoperability Matrix for your ONTAP version.`);
   if (notes.length) h += `<ul style="margin:0 0 12px 18px;padding:0;font-size:0.8rem;color:var(--text-secondary);">${notes.map(x => `<li>${x}</li>`).join('')}</ul>`;
   h += `<div style="overflow-x:auto;margin-bottom:10px;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${['Switch', 'Vendor / model', 'Network', 'Firmware', 'Version check', 'RCF applied', 'Monitoring', 'SNMP', 'Contract ends', 'Clusters served'].map(x => `<th style="${th}">${x}</th>`).join('')}</tr></thead><tbody>` +
-    v.list.map(e => `<tr><td style="${td}font-weight:600;">${esc(e.name)}${e.ip ? `<div style="font-size:0.66rem;color:var(--text-muted);">${esc(e.ip)}${e.serial && !/^(unknown|not available)$/i.test(e.serial) ? ' &middot; S/N ' + esc(e.serial) : ''}</div>` : ''}</td><td style="${td}">${esc([e.vendor, e.model].filter(Boolean).join(' ') || '\u2014')}</td><td style="${td}">${esc(e.type || '\u2014')}${e.mc ? ' <span style="color:#ff9800;font-size:0.66rem;">MetroCluster</span>' : ''}</td><td style="${td}">${esc(e.fw || '\u2014')}</td><td style="${td}${e.check.status === 'behind' ? 'color:var(--status-warning);font-weight:600;' : e.check.status === 'current' ? 'color:var(--status-normal);' : 'color:var(--text-muted);'}">${esc(e.check.text)}</td><td style="${td}">${esc(e.rcf || '\u2014')}</td><td style="${td}">${esc(e.source)}</td><td style="${td}${e.weakSnmp ? 'color:var(--status-warning);' : ''}">${esc(e.snmpLabel || '\u2014')}</td><td style="${td}${e.daysToContractEnd != null && e.daysToContractEnd < 180 ? 'color:var(--status-warning);' : ''}">${e.contractEnd ? esc(String(e.contractEnd).slice(0, 10)) + (e.daysToContractEnd != null && e.daysToContractEnd < 0 ? ' (expired)' : '') : '\u2014'}</td><td style="${td}">${esc([...e.clusters].join(', '))}</td></tr>`).join('') + `</tbody></table></div>`;
+    v.list.map(e => `<tr><td style="${td}font-weight:600;">${esc(e.name)}${e.ip ? `<div style="font-size:0.66rem;color:var(--text-muted);">${esc(e.ip)}${e.serial && !/^(unknown|not available)$/i.test(e.serial) ? ' &middot; S/N ' + esc(e.serial) : ''}</div>` : ''}</td><td style="${td}">${esc([e.vendor, e.model].filter(Boolean).join(' ') || '\u2014')}</td><td style="${td}">${esc(e.type || '\u2014')}${e.mc ? ' <span style="color:var(--hx-ff9800);font-size:0.66rem;">MetroCluster</span>' : ''}</td><td style="${td}">${esc(e.fw || '\u2014')}</td><td style="${td}${e.check.status === 'behind' ? 'color:var(--status-warning);font-weight:600;' : e.check.status === 'current' ? 'color:var(--status-normal);' : 'color:var(--text-muted);'}">${esc(e.check.text)}</td><td style="${td}">${esc(e.rcf || '\u2014')}</td><td style="${td}">${esc(e.source)}</td><td style="${td}${e.weakSnmp ? 'color:var(--status-warning);' : ''}">${esc(e.snmpLabel || '\u2014')}</td><td style="${td}${e.daysToContractEnd != null && e.daysToContractEnd < 180 ? 'color:var(--status-warning);' : ''}">${e.contractEnd ? esc(String(e.contractEnd).slice(0, 10)) + (e.daysToContractEnd != null && e.daysToContractEnd < 0 ? ' (expired)' : '') : '\u2014'}</td><td style="${td}">${esc([...e.clusters].join(', '))}</td></tr>`).join('') + `</tbody></table></div>`;
   const models = Object.keys(v.byModel).sort((x, y) => v.byModel[y].n - v.byModel[x].n);
   h += `<div style="font-size:0.72rem;color:var(--text-muted);text-transform:uppercase;margin:12px 0 4px;font-weight:600;">Models and firmware in use</div><table style="width:100%;border-collapse:collapse;margin-bottom:16px;"><thead><tr><th style="${th}">Model</th><th style="${th}">Switches</th><th style="${th}">Firmware versions</th><th style="${th}">RCF versions applied</th></tr></thead><tbody>` +
     models.map(m => `<tr><td style="${td}">${esc(m)}</td><td style="${td}">${v.byModel[m].n}</td><td style="${td}">${esc([...v.byModel[m].fw].join('; ') || '\u2014')}${v.byModel[m].fw.size > 1 ? ' <span style="color:var(--status-warning);font-size:0.66rem;">mixed versions</span>' : ''}</td><td style="${td}">${esc([...v.byModel[m].rcf].join('; ') || '\u2014')}${v.byModel[m].rcf.size > 1 ? ' <span style="color:var(--status-warning);font-size:0.66rem;">different RCF versions on the same model</span>' : ''}</td></tr>`).join('') + `</tbody></table>`;
@@ -16716,7 +16763,7 @@ function _dfOtherProductCases(list) {
 function _otherProductHtml(list) {
   if (!list || !list.length) return '';
   const esc = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.76rem;border-bottom:1px solid rgba(255,255,255,0.04);vertical-align:top;';
+  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.76rem;border-bottom:1px solid var(--wa-40);vertical-align:top;';
   const groups = {}; list.forEach(o => { const k = (o.platformType || o.type || 'Other') + ' / ' + ((o.hardwareModel && o.hardwareModel.name) || 'model not reported'); groups[k] = (groups[k] || 0) + 1; });
   let h = `<h3 style="font-size:1rem;margin:16px 0 6px;">Other Active IQ records</h3><div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;">Active IQ also tracks ${list.length} record${list.length !== 1 ? 's' : ''} that ${list.length !== 1 ? 'are' : 'is'} not a storage controller (${Object.keys(groups).map(k => groups[k] + ' x ' + esc(k)).join('; ')}). They are not counted in the fleet statistics.</div>`;
   h += `<div style="overflow-x:auto;margin-bottom:10px;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${['Name / serial', 'Type', 'Model', 'Customer', 'Site', 'Contract ends'].map(x => `<th style="${th}">${x}</th>`).join('')}</tr></thead><tbody>` +
@@ -16841,7 +16888,7 @@ function renderSAMTab() {
 
   if (isMulti) {
     document.getElementById("samActiveSystem").innerHTML = `
-      <strong>Selected Systems (${targetSAMSystems.length})</strong>: <span style="font-size: 0.8rem; color: var(--text-primary);">${targetSAMSystems.map(s => s.systemName).join(", ")}</span>
+      <strong>Selected Systems (${targetSAMSystems.length})</strong>: <span style="font-size: 0.8rem; color: var(--text-primary);" title="${_nameListTitle(targetSAMSystems.map(s => s.systemName))}">${_nameListShort(targetSAMSystems.map(s => s.systemName), 6)}</span>
     `;
 
     // 1. Contract aggregate
@@ -16913,7 +16960,7 @@ function renderSAMTab() {
     document.getElementById("samHypervisorCard").innerHTML = `
       <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
         <h4 style="font-size: 0.9rem; color: var(--text-secondary);">Storage Protocols</h4>
-        ${noProtoCoverageCount > 0 ? `<span class="badge" style="background:rgba(148,163,184,0.15);color:#94a3b8;">${noProtoCoverageCount} Not Reported</span>` : ''}
+        ${noProtoCoverageCount > 0 ? `<span class="badge" style="background:rgba(148,163,184,0.15);color:var(--hx-94a3b8);">${noProtoCoverageCount} Not Reported</span>` : ''}
       </div>
       <div style="font-size: 1.3rem; font-weight: 700; margin-bottom: 6px;">
         ${distinctProtoCount} Protocol${distinctProtoCount !== 1 ? 's' : ''} In Use
@@ -16935,7 +16982,7 @@ function renderSAMTab() {
     let asupBadge = `<span class="badge normal">Healthy</span>`;
     if (asupFailed > 0) asupBadge = `<span class="badge critical">${asupFailed} Failed</span>`;
     else if (asupDisabled > 0) asupBadge = `<span class="badge warning">${asupDisabled} Disabled</span>`;
-    else if (asupUnknown > 0 && asupHealthy === 0) asupBadge = `<span class="badge" style="background:rgba(148,163,184,0.15);color:#94a3b8;">Not Reported</span>`;
+    else if (asupUnknown > 0 && asupHealthy === 0) asupBadge = `<span class="badge" style="background:rgba(148,163,184,0.15);color:var(--hx-94a3b8);">Not Reported</span>`;
 
     document.getElementById("samAutoSupportCard").innerHTML = `
       <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
@@ -17054,7 +17101,7 @@ function renderSAMTab() {
             <div style="display: flex; align-items: center; gap: 10px;">
               <div style="font-size: 1.8rem; font-weight: 800; color: ${shColor};">${avgScore.toFixed(1)}<span style="font-size: 0.9rem; font-weight: 500; color: var(--text-muted);">/10</span></div>
             </div>
-            <div class="health-bar-container" style="background: rgba(255,255,255,0.05); height: 6px; border-radius: 3px; margin-top: 6px; overflow: hidden;">
+            <div class="health-bar-container" style="background: var(--wa-50); height: 6px; border-radius: 3px; margin-top: 6px; overflow: hidden;">
               <div style="background: ${shColor}; height: 100%; width: ${avgPct}%;"></div>
             </div>
           </div>
@@ -17124,7 +17171,7 @@ function renderSAMTab() {
         
         const descLine = c.description ? `<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 3px;">${c.description}</div>` : '';
         const resLine = c.resolution ? `<div style="font-size: 0.78rem; color: var(--status-normal); margin-top: 6px; padding: 4px 8px; background: rgba(0,230,118,0.05); border-left: 2px solid var(--status-normal); border-radius: 4px;"><strong>Resolution:</strong> ${c.resolution}</div>` : '';
-        const notesLine = c.ownerNotes ? `<div style="font-size: 0.72rem; color: var(--text-secondary); font-style: italic; background: rgba(255,255,255,0.02); padding: 4px 8px; border-radius: 4px; border-left: 2px solid var(--accent-cyan); margin-top: 6px;">"${c.ownerNotes}"</div>` : '';
+        const notesLine = c.ownerNotes ? `<div style="font-size: 0.72rem; color: var(--text-secondary); font-style: italic; background: var(--wa-20); padding: 4px 8px; border-radius: 4px; border-left: 2px solid var(--accent-cyan); margin-top: 6px;">"${c.ownerNotes}"</div>` : '';
 
         caseRows += `
           <tr>
@@ -17293,7 +17340,7 @@ function renderSAMTab() {
       hypContainer.innerHTML = `
         <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
           <h4 style="font-size: 0.9rem; color: var(--text-secondary);">Storage Protocols</h4>
-          <span class="badge" style="background:rgba(148,163,184,0.15);color:#94a3b8;">Not Reported</span>
+          <span class="badge" style="background:rgba(148,163,184,0.15);color:var(--hx-94a3b8);">Not Reported</span>
         </div>
         <div style="color: var(--text-muted); font-size: 0.85rem;">No LIF/protocol data reported by Active IQ for this system.</div>
       `;
@@ -17320,7 +17367,7 @@ function renderSAMTab() {
   let asupBadge = `<span class="badge normal">Healthy</span>`;
   let asupColor = "var(--status-normal)";
   if (asup.unknown) {
-    asupBadge = `<span class="badge" style="background:rgba(148,163,184,0.15);color:#94a3b8;">Not Reported</span>`;
+    asupBadge = `<span class="badge" style="background:rgba(148,163,184,0.15);color:var(--hx-94a3b8);">Not Reported</span>`;
     asupColor = "var(--text-muted)";
   } else if (!asup.enabled) {
     asupBadge = `<span class="badge critical">Disabled</span>`;
@@ -17483,9 +17530,9 @@ function renderSAMTab() {
           <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; display: block; margin-bottom: 4px;">Support Case Health</span>
           <div style="display: flex; align-items: center; gap: 10px;">
             <div style="font-size: 1.8rem; font-weight: 800; color: ${healthColor};">${health.sentimentScore.toFixed(1)}<span style="font-size: 0.9rem; font-weight: 500; color: var(--text-muted);">/10</span></div>
-            <span class="badge" style="background-color: rgba(255,255,255,0.03); border-color: var(--border-color); color: ${healthColor}; font-size: 0.7rem; font-weight: 700;">${health.healthStatus}</span>
+            <span class="badge" style="background-color: var(--wa-30); border-color: var(--border-color); color: ${healthColor}; font-size: 0.7rem; font-weight: 700;">${health.healthStatus}</span>
           </div>
-          <div class="health-bar-container" style="background: rgba(255,255,255,0.05); height: 6px; border-radius: 3px; margin-top: 6px; overflow: hidden;">
+          <div class="health-bar-container" style="background: var(--wa-50); height: 6px; border-radius: 3px; margin-top: 6px; overflow: hidden;">
             <div style="background: ${healthColor}; height: 100%; width: ${sentimentPct}%;"></div>
           </div>
         </div>
@@ -17546,7 +17593,7 @@ function renderSAMTab() {
 
       const descHtml = c.description ? `<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">${c.description}</div>` : '';
       const resolutionHtml = c.resolution ? `<div style="font-size: 0.78rem; color: var(--status-normal); margin-top: 6px; padding: 4px 8px; background: rgba(0,230,118,0.05); border-left: 2px solid var(--status-normal); border-radius: 4px;"><strong>Resolution:</strong> ${c.resolution}</div>` : '';
-      const notesHtml = c.ownerNotes ? `<div style="font-size: 0.72rem; color: var(--text-secondary); font-style: italic; background: rgba(255,255,255,0.02); padding: 4px 8px; border-radius: 4px; border-left: 2px solid var(--accent-cyan); margin-top: 6px;">"${c.ownerNotes}"</div>` : '';
+      const notesHtml = c.ownerNotes ? `<div style="font-size: 0.72rem; color: var(--text-secondary); font-style: italic; background: var(--wa-20); padding: 4px 8px; border-radius: 4px; border-left: 2px solid var(--accent-cyan); margin-top: 6px;">"${c.ownerNotes}"</div>` : '';
       const subCatHtml = c.subCategory ? ` / ${c.subCategory}` : '';
       const reporterHtml = c.reporter ? `<div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 2px;"><strong>Reported By:</strong> ${c.reporter}</div>` : '';
 
@@ -17938,7 +17985,7 @@ function renderCSMTab() {
           <span style="font-size: 0.72rem; color: var(--text-muted);">Last Update: ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
           <div style="display: flex; align-items: center; gap: 8px; min-width: 220px;" title="Systems that reported AutoSupport (ASUP) within the last 7 days &mdash; same real field/window used by the Account Health Score's own ASUP-compliance KPI.">
             <span style="font-size: 0.72rem; color: var(--text-muted); white-space: nowrap;">Telemetry Connected: ${_viTelemetryPct}% (${_viTelemetryConnected}/${targetCSMSystems.length})</span>
-            <div style="flex: 1; min-width: 80px; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden;">
+            <div style="flex: 1; min-width: 80px; height: 6px; background: var(--wa-80); border-radius: 3px; overflow: hidden;">
               <div style="width: ${_viTelemetryPct}%; height: 100%; background: var(--accent-cyan);"></div>
             </div>
           </div>
@@ -17946,11 +17993,11 @@ function renderCSMTab() {
 
         <div style="font-size: 0.85rem; font-weight: 700; margin: 18px 0 10px;">NetApp-delivered savings and stability&hellip;</div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px;">
-          <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;">
+          <div style="background: var(--bk-150); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;">
             <div style="font-size: 1.4rem; font-weight: 800; color: var(--status-normal);">${_mTbSaved.toFixed(1)} TB</div>
             <div style="font-size: 0.78rem; color: var(--text-secondary);">Saved by data reduction</div>
           </div>
-          <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;" title="Active IQ's monthly uptime PERCENTAGE field is never returned by the API for this tenant (confirmed by inspecting every query field list) -- this shows real downtime EVENTS instead of a fabricated percentage.">
+          <div style="background: var(--bk-150); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;" title="Active IQ's monthly uptime PERCENTAGE field is never returned by the API for this tenant (confirmed by inspecting every query field list) -- this shows real downtime EVENTS instead of a fabricated percentage.">
             <div style="font-size: 1.4rem; font-weight: 800; color: ${_mUptime.systemsWithEvents === 0 ? 'var(--status-normal)' : '#f59e0b'};">${_mUptime.systemsWithEvents === 0 ? 'No events' : _mUptime.totalOutageMinutes + ' min'}</div>
             <div style="font-size: 0.78rem; color: var(--text-secondary);">Storage uptime</div>
             <div style="font-size: 0.68rem; color: var(--text-muted); font-style: italic; margin-top: 2px;">${_mUptime.systemsWithEvents === 0 ? 'No downtime events recorded' : `Across ${_mUptime.systemsWithEvents} system${_mUptime.systemsWithEvents !== 1 ? 's' : ''} -- uptime % not available via API`}</div>
@@ -17959,12 +18006,12 @@ function renderCSMTab() {
 
         <div style="font-size: 0.85rem; font-weight: 700; margin: 8px 0 10px;">&hellip;Plus security and planning for the future</div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
-          <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;">
+          <div style="background: var(--bk-150); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;">
             <div style="font-size: 1.4rem; font-weight: 800; color: var(--status-normal);">${_viThreatsNeutralized.size}</div>
             <div style="font-size: 0.78rem; color: var(--text-secondary);">Security threats neutralized</div>
             <div style="font-size: 0.68rem; color: var(--text-muted); font-style: italic; margin-top: 2px;">CVEs vulnerabilities, detected and matched to this fleet</div>
           </div>
-          <div style="background: rgba(0,0,0,0.15); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;">
+          <div style="background: var(--bk-150); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;">
             <div style="font-size: 1.4rem; font-weight: 800; color: var(--status-normal);">${_viSavedPiB.toFixed(2)} PiB</div>
             <div style="font-size: 0.78rem; color: var(--text-secondary);">Projected savings from efficiencies</div>
             <div style="font-size: 0.68rem; color: var(--text-muted); font-style: italic; margin-top: 2px;">${_mCap.savedTB.toFixed(1)} TB, fleet-wide (logical minus physical used)</div>
@@ -17973,7 +18020,7 @@ function renderCSMTab() {
 
         <details style="cursor: pointer; margin-top: 16px;">
           <summary style="font-size: 0.78rem; font-weight: 600; color: var(--accent-cyan); outline: none;">Detailed breakdown by category</summary>
-          <div style="margin-top: 10px; font-size: 0.8rem; line-height: 1.6; color: var(--text-primary); background: rgba(0,0,0,0.2); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+          <div style="margin-top: 10px; font-size: 0.8rem; line-height: 1.6; color: var(--text-primary); background: var(--bk-200); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div style="margin-bottom: 10px;">
               <div style="color: var(--accent-cyan); font-weight: 700; text-transform: uppercase; font-size: 0.7rem; margin-bottom: 3px;">Overall Health</div>
               <div>Account Health Score: <strong>${healthScore}/100</strong> (Grade ${healthGrade}) &middot; ${_mCritRisks} critical risk item${_mCritRisks !== 1 ? 's' : ''} open &middot; Case health ${_mCaseHealth.score.toFixed(1)}/10</div>
@@ -17997,7 +18044,7 @@ function renderCSMTab() {
 
   if (isMulti) {
     document.getElementById("csmActiveSystem").innerHTML = `
-      <strong>Selected Systems (${targetCSMSystems.length})</strong>: <span style="font-size: 0.8rem; color: var(--text-primary);">${targetCSMSystems.map(s => s.systemName).join(", ")}</span>
+      <strong>Selected Systems (${targetCSMSystems.length})</strong>: <span style="font-size: 0.8rem; color: var(--text-primary);" title="${_nameListTitle(targetCSMSystems.map(s => s.systemName))}">${_nameListShort(targetCSMSystems.map(s => s.systemName), 6)}</span>
     `;
 
     // ── Efficiency aggregates — all computed from dataReductionRatioSys (dedup+compression only,
@@ -18350,7 +18397,7 @@ function renderCSMTab() {
       if (_tot === 0) {
         return {
           html: `
-          <div style="padding: 6px 10px; background: rgba(255,255,255,0.01); border-bottom: 1px solid var(--border-color); opacity: 0.6;"${item.tip ? ` title="${_esc(item.tip)}"` : ''}>
+          <div style="padding: 6px 10px; background: var(--wa-10); border-bottom: 1px solid var(--border-color); opacity: 0.6;"${item.tip ? ` title="${_esc(item.tip)}"` : ''}>
             <div style="display: flex; align-items: center; justify-content: space-between;">
               <span style="font-size: 0.78rem;">${item.name}</span>
               <span style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; margin-left: 8px;">N/A</span>
@@ -18368,14 +18415,14 @@ function renderCSMTab() {
       const _open = _fails ? '<details class="chk-expand"><summary style="list-style:none;cursor:pointer;" title="Click to list every system that fails this check">' : '', _close = _fails
         ? `</summary><div style="margin:6px 0 2px;padding:6px 8px;background:rgba(0,0,0,0.18);border-radius:4px;max-height:260px;overflow:auto;font-size:0.72rem;"><div style="color:var(--text-muted);margin-bottom:4px;">${_fails.length} system${_fails.length !== 1 ? 's' : ''} fail${_fails.length === 1 ? 's' : ''} this check:</div><table style="width:100%;border-collapse:collapse;">${_fails.map(f => `<tr><td style="padding:2px 6px 2px 0;white-space:nowrap;vertical-align:top;font-weight:600;">${_esc(f.name)}</td><td style="padding:2px 0;color:var(--text-secondary);">${_esc(f.why)}</td></tr>`).join('')}</table></div></details>` : '';
       const html = `
-          <div style="padding: 6px 10px; background: rgba(255,255,255,0.01); border-bottom: 1px solid var(--border-color);"${item.tip ? ` title="${_esc(item.tip)}"` : ''}>
+          <div style="padding: 6px 10px; background: var(--wa-10); border-bottom: 1px solid var(--border-color);"${item.tip ? ` title="${_esc(item.tip)}"` : ''}>
             ${_open}
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: ${item.detail ? 3 : 2}px;">
               <span style="font-size: 0.78rem;${item.tip ? ' cursor: help; border-bottom: 1px dotted var(--text-muted);' : ''}">${item.name}</span>
               <span style="font-size: 0.78rem; font-weight: 600; color: ${_col}; white-space: nowrap; margin-left: 8px;">${item.completedCount}/${_tot}${_tot < n ? ' <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;" title="Applies only to the systems this check is relevant to (ONTAP-only checks exclude E-Series/StorageGRID)">(applicable)</span>' : ''}</span>
             </div>
             ${item.detail ? `<div style="font-size: 0.68rem; color: var(--text-muted); margin-bottom: 3px;">${item.detail}</div>` : ''}
-            <div style="height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;">
+            <div style="height: 3px; background: var(--wa-60); border-radius: 2px; overflow: hidden;">
               <div style="height: 100%; width: ${_pct}%; background: ${_col}; border-radius: 2px;"></div>
             </div>
             ${_close}
@@ -18605,15 +18652,15 @@ function renderCSMTab() {
           <div style="font-size: 2.2rem; font-weight: 800; color: ${_gc};">${_usedPct.toFixed(0)}% used</div>
           <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">${_gf(_gt)} total &middot; ${_g.installedNodeCount != null ? _g.installedNodeCount + ' nodes &middot; ' : ''}reported ${_gAsOf}</div>
         </div>
-        <div style="display:flex;height:10px;border-radius:5px;overflow:hidden;background:rgba(255,255,255,0.06);" title="Object data / metadata & reserved / remaining usable, as a share of total">
+        <div style="display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--wa-60);" title="Object data / metadata & reserved / remaining usable, as a share of total">
           <div style="width:${_dataPct}%;background:${_gc};"></div>
           <div style="width:${_metaPct}%;background:#6b7280;"></div>
           <div style="width:${_remPct}%;background:#10b981;"></div>
         </div>
         <div style="border-top: 1px solid var(--border-color); padding-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
           <div><span style="font-size: 0.75rem; color: ${_gc};">&#9632; Object data used</span><div style="font-weight: 600;">${_gf(_g.usedDataTB)}</div></div>
-          <div><span style="font-size: 0.75rem; color: #10b981;">&#9632; Remaining usable</span><div style="font-weight: 600;">${_gf(_g.remainingTB)}</div></div>
-          <div><span style="font-size: 0.75rem; color: #9ca3af;">&#9632; Metadata used + reserved</span><div style="font-weight: 600;">${_gf((_g.usedMetadataTB || 0) + (_g.reservedMetadataTB || 0))}</div></div>
+          <div><span style="font-size: 0.75rem; color: var(--hx-10b981);">&#9632; Remaining usable</span><div style="font-weight: 600;">${_gf(_g.remainingTB)}</div></div>
+          <div><span style="font-size: 0.75rem; color: var(--hx-9ca3af);">&#9632; Metadata used + reserved</span><div style="font-weight: 600;">${_gf((_g.usedMetadataTB || 0) + (_g.reservedMetadataTB || 0))}</div></div>
           ${_g.licenseCapacity ? `<div><span style="font-size: 0.75rem; color: var(--text-muted);">License capacity (as reported)</span><div style="font-weight: 600;">${_g.licenseCapacity}</div></div>` : ''}
           ${_trend('Quarter-over-quarter', _g.qoqPct)}${_trend('Year-over-year', _g.yoyPct)}
         </div>
@@ -18633,18 +18680,18 @@ function renderCSMTab() {
       <div style="display: flex; flex-direction: column; gap: 12px;">
         <div>
           <span style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase;">E-Series Block Capacity</span>
-          <div style="font-size: 2.2rem; font-weight: 800; color: #f59e0b;">${_fmt(_tot)}</div>
+          <div style="font-size: 2.2rem; font-weight: 800; color: var(--hx-f59e0b);">${_fmt(_tot)}</div>
           <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Raw capacity of all data drives &middot; reported ${_asOf}</div>
         </div>
-        <div style="display:flex;height:10px;border-radius:5px;overflow:hidden;background:rgba(255,255,255,0.06);" title="Allocated / free (in volume groups & pools) / unconfigured drives, as a share of total">
+        <div style="display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--wa-60);" title="Allocated / free (in volume groups & pools) / unconfigured drives, as a share of total">
           <div style="width:${_allocPct}%;background:#f59e0b;"></div>
           <div style="width:${_freePct}%;background:#10b981;"></div>
           <div style="width:${_unPct}%;background:#6b7280;"></div>
         </div>
         <div style="border-top: 1px solid var(--border-color); padding-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-          <div><span style="font-size: 0.75rem; color: #f59e0b;">&#9632; Allocated to volumes</span><div style="font-weight: 600;">${_fmt(_ec.allocatedTB)}</div></div>
-          <div><span style="font-size: 0.75rem; color: #10b981;">&#9632; Free in groups/pools</span><div style="font-weight: 600;">${_fmt(_ec.freeTB)}</div></div>
-          <div><span style="font-size: 0.75rem; color: #9ca3af;">&#9632; Unconfigured drives</span><div style="font-weight: 600;">${_fmt(_ec.unconfiguredTB)}</div></div>
+          <div><span style="font-size: 0.75rem; color: var(--hx-f59e0b);">&#9632; Allocated to volumes</span><div style="font-weight: 600;">${_fmt(_ec.allocatedTB)}</div></div>
+          <div><span style="font-size: 0.75rem; color: var(--hx-10b981);">&#9632; Free in groups/pools</span><div style="font-weight: 600;">${_fmt(_ec.freeTB)}</div></div>
+          <div><span style="font-size: 0.75rem; color: var(--hx-9ca3af);">&#9632; Unconfigured drives</span><div style="font-weight: 600;">${_fmt(_ec.unconfiguredTB)}</div></div>
           <div><span style="font-size: 0.75rem; color: var(--text-muted);">Allocated share of total</span><div style="font-weight: 600;">${_allocPct.toFixed(0)}%</div></div>
         </div>
         <div style="font-size: 0.7rem; color: var(--text-muted); font-style: italic;">${sys.efficiency.platformNote || ''} Total is raw; the gap to allocated + free is RAID/pool overhead.</div>
@@ -18659,7 +18706,7 @@ function renderCSMTab() {
       <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 8px 0; text-align: center;">
         <div style="font-size: 2.4rem; color: ${_sgColor}; filter: drop-shadow(0 0 8px ${_sgColor}55);">${_sgIcon}</div>
         <div style="font-size: 0.75rem; font-weight: 700; color: ${_sgColor}; text-transform: uppercase; letter-spacing: 0.6px;">${_sgLabel}</div>
-        <div style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.5; max-width: 320px; background: rgba(0,0,0,0.25); border: 1px solid ${_sgColor}44; border-radius: var(--radius-sm); padding: 12px 14px;">
+        <div style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.5; max-width: 320px; background: var(--bk-250); border: 1px solid ${_sgColor}44; border-radius: var(--radius-sm); padding: 12px 14px;">
           ${_sgNote}
         </div>
         <div style="font-size: 0.7rem; color: var(--text-muted); font-style: italic;">For capacity figures, use the platform's native management interface.</div>
@@ -18958,7 +19005,7 @@ function renderCSMTab() {
       }
       if (item.na) {
         html += `
-        <div style="padding: 6px 10px; background: rgba(255,255,255,0.01); border-bottom: 1px solid var(--border-color); opacity: 0.6;">
+        <div style="padding: 6px 10px; background: var(--wa-10); border-bottom: 1px solid var(--border-color); opacity: 0.6;">
           <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 2px;">
             <span style="font-size: 0.78rem; flex: 1;">${item.name}</span>
             <span style="font-size: 0.72rem; font-weight: 600; color: var(--text-muted); flex-shrink: 0;">N/A</span>
@@ -18970,7 +19017,7 @@ function renderCSMTab() {
       const _col = item.ok ? 'var(--status-normal)' : 'var(--status-critical)';
       const _dCol = item.ok ? 'var(--text-muted)' : 'var(--status-warning)';
       html += `
-        <div style="padding: 6px 10px; background: rgba(255,255,255,0.01); border-bottom: 1px solid var(--border-color);">
+        <div style="padding: 6px 10px; background: var(--wa-10); border-bottom: 1px solid var(--border-color);">
           <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 2px;">
             <span style="font-size: 0.78rem; flex: 1;">${item.name}</span>
             <span style="font-size: 1rem; font-weight: bold; color: ${_col}; flex-shrink: 0;">${item.ok ? '\u2713' : '\u2717'}</span>
@@ -19152,24 +19199,24 @@ function renderProjectionsChart(proj, systemName) {
       maintainAspectRatio: false,
       scales: {
         x: {
-          ticks: { color: '#9ca3af', font: { size: 10 } },
-          grid: { color: 'rgba(255, 255, 255, 0.05)' }
+          ticks: { color: _cTick(), font: { size: 10 } },
+          grid: { color: _cGrid() }
         },
         y: {
           min: yMin,
           max: yMax,
           ticks: {
-            color: '#9ca3af',
+            color: _cTick(),
             font: { size: 10 },
             callback: v => `${v.toLocaleString()} TB`
           },
-          grid: { color: 'rgba(255, 255, 255, 0.05)' }
+          grid: { color: _cGrid() }
         }
       },
       plugins: {
         legend: {
           position: 'top',
-          labels: { color: '#f3f4f6', boxWidth: 12, font: { size: 11 } }
+          labels: { color: _cText(), boxWidth: 12, font: { size: 11 } }
         },
         tooltip: {
           callbacks: {
@@ -19271,13 +19318,13 @@ function renderNodeCapacityChart(systems) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { ticks: { color: '#9ca3af', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
-        y: { ticks: { color: '#9ca3af', font: { size: 10 }, callback: v => v.toFixed(0) + ' TB' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+        x: { ticks: { color: _cTick(), font: { size: 9 } }, grid: { color: _cGrid() } },
+        y: { ticks: { color: _cTick(), font: { size: 10 }, callback: v => v.toFixed(0) + ' TB' }, grid: { color: _cGrid() } }
       },
       plugins: {
         legend: {
           position: 'top',
-          labels: { color: '#f3f4f6', boxWidth: 10, font: { size: 10 }, filter: item => !item.text.includes('(proj)') }
+          labels: { color: _cText(), boxWidth: 10, font: { size: 10 }, filter: item => !item.text.includes('(proj)') }
         },
         tooltip: { mode: 'index', intersect: false }
       }
@@ -19342,7 +19389,7 @@ function renderNodeBreakdownTable(systems) {
     const rawDisplay  = rawTB > 0 ? rawTB.toFixed(1) : '<span style="color:var(--text-muted);font-size:0.75rem;">N/A</span>';
     const usedDisplay = usedTB > 0 ? usedTB.toFixed(1) : '0.0';
 
-    return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);${rowBg}">
+    return `<tr style="border-bottom:1px solid var(--wa-50);${rowBg}">
       <td style="padding:9px 10px;font-weight:600;">${s.systemName || '-'}</td>
       <td style="padding:9px 10px;color:var(--text-secondary);font-size:0.78rem;">${s.customerName || '-'}</td>
       <td style="padding:9px 10px;color:var(--text-secondary);font-size:0.78rem;">${model}</td>
@@ -19350,7 +19397,7 @@ function renderNodeBreakdownTable(systems) {
       <td style="padding:9px 10px;text-align:right;">${usedDisplay}</td>
       <td style="padding:9px 10px;">
         <div style="display:flex;align-items:center;gap:8px;">
-          <div style="flex:1;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;">
+          <div style="flex:1;height:6px;background:var(--wa-80);border-radius:3px;overflow:hidden;">
             <div style="width:${Math.min(util, 100).toFixed(1)}%;height:100%;background:${barColor};border-radius:3px;transition:width 0.4s;"></div>
           </div>
           <span style="font-size:0.78rem;color:${barColor};font-weight:600;min-width:38px;">${util > 0 ? util.toFixed(1) + '%' : '<span style="color:var(--text-muted)">—</span>'}</span>
@@ -19372,17 +19419,17 @@ function renderNodeBreakdownTable(systems) {
   // Append totals footer via createElement to avoid the slow innerHTML += re-parse
   const _footerRow = document.createElement('tr');
   _footerRow.className = 'tam-total-row';
-  _footerRow.style.cssText = 'border-top:2px solid var(--border-color);font-weight:700;background:rgba(255,255,255,0.03);';
+  _footerRow.style.cssText = 'border-top:2px solid var(--border-color);font-weight:700;background:var(--wa-30);';
   _footerRow.innerHTML = `
     <td style="padding:9px 10px;" colspan="3">TOTAL (${sorted.length} nodes)</td>
     <td style="padding:9px 10px;text-align:right;">${totalRaw > 0 ? totalRaw.toFixed(1) : '<span style="color:var(--text-muted);font-weight:400;font-size:0.75rem;">N/A</span>'}</td>
     <td style="padding:9px 10px;text-align:right;">${totalUsed.toFixed(1)}</td>
     <td style="padding:9px 10px;">
       <div style="display:flex;align-items:center;gap:8px;">
-        <div style="flex:1;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;">
+        <div style="flex:1;height:6px;background:var(--wa-80);border-radius:3px;overflow:hidden;">
           <div style="width:${Math.min(totalUtil, 100).toFixed(1)}%;height:100%;background:#22d3ee;border-radius:3px;"></div>
         </div>
-        <span style="font-size:0.78rem;color:#22d3ee;font-weight:700;min-width:38px;">${totalUtil.toFixed(1)}%</span>
+        <span style="font-size:0.78rem;color:var(--hx-22d3ee);font-weight:700;min-width:38px;">${totalUtil.toFixed(1)}%</span>
       </div>
     </td>
     <td style="padding:9px 10px;text-align:right;">+${totalGrow.toFixed(0)} GB</td>
@@ -21478,8 +21525,8 @@ function _dfPlatformInsightsText(v, which, opts) {
 }
 function _platformInsightsHtml(v) {
   const esc = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:6px 8px;font-size:0.78rem;border-bottom:1px solid rgba(255,255,255,0.05);';
-  const stat = (l, val, c) => `<div style="background:rgba(0,0,0,0.2);padding:10px;border-radius:var(--radius-sm);text-align:center;border-left:3px solid ${c};"><div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${l}</div><div style="font-size:1.1rem;font-weight:700;color:${c};">${val}</div></div>`;
+  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:6px 8px;font-size:0.78rem;border-bottom:1px solid var(--wa-50);';
+  const stat = (l, val, c) => `<div style="background:var(--bk-200);padding:10px;border-radius:var(--radius-sm);text-align:center;border-left:3px solid ${c};"><div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${l}</div><div style="font-size:1.1rem;font-weight:700;color:${c};">${val}</div></div>`;
   const table = (head, rows, lim) => rows.length ? `<div style="overflow-x:auto;margin-bottom:14px;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${head.map(h => `<th style="${th}">${h}</th>`).join('')}</tr></thead><tbody>${rows.slice(0, lim || 25).map(r => `<tr>${r.map(c => `<td style="${td}">${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>${rows.length > (lim || 25) ? `<div style="font-size:0.7rem;color:var(--text-muted);">+${rows.length - (lim || 25)} more</div>` : ''}</div>` : '';
   const h = (t) => `<div style="font-size:0.72rem;color:var(--accent-cyan);text-transform:uppercase;margin:14px 0 6px;font-weight:600;">${t}</div>`;
   const hi = v.findings.filter(f => f.severity === 'high').length, md = v.findings.filter(f => f.severity === 'medium').length;
@@ -24346,7 +24393,7 @@ function getLogisticsUpdateTicketsAndDiffs(sys) {
           </thead>
           <tbody>
             ${changes.map(ch => `
-              <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);">
+              <tr style="border-bottom: 1px solid var(--wa-30);">
                 <td style="padding: 6px 0; font-weight: 600;">${ch.field}</td>
                 <td style="padding: 6px 12px; color: var(--text-muted); font-style: italic;">${ch.oldVal || '(Not Configured)'}</td>
                 <td style="padding: 6px 0; color: var(--status-normal); font-weight: 600;">${ch.newVal || '(Cleared)'}</td>
@@ -24376,7 +24423,7 @@ Reason for Change: Updating local datacenter access restrictions and primary sit
 
     diffsHTML += `
         <div style="font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; font-size: 0.78rem;">Non-Technical Ticket Copy-Paste Template:</div>
-        <textarea readonly class="form-input" rows="8" style="font-family: monospace; font-size: 0.74rem; background: rgba(0,0,0,0.3); border-color: var(--border-color); color: var(--text-secondary); cursor: text;" onclick="this.select()">${ticketTXT}</textarea>
+        <textarea readonly class="form-input" rows="8" style="font-family: monospace; font-size: 0.74rem; background: var(--bk-300); border-color: var(--border-color); color: var(--text-secondary); cursor: text;" onclick="this.select()">${ticketTXT}</textarea>
       </div>
     `;
   }
@@ -28803,11 +28850,11 @@ function renderFleetUptimeCard(targetSystems) {
 
   const monthRows = u.monthlyTrend.length > 0 ? u.monthlyTrend.map(m => {
     const label = new Date(m.month + '-01').toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
-    return `<div style="display:flex;justify-content:space-between;font-size:0.8rem;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04);"><span style="color:var(--text-secondary);">${label}</span><span>${Math.round(m.outageSeconds / 60)} min</span></div>`;
+    return `<div style="display:flex;justify-content:space-between;font-size:0.8rem;padding:4px 0;border-bottom:1px solid var(--wa-40);"><span style="color:var(--text-secondary);">${label}</span><span>${Math.round(m.outageSeconds / 60)} min</span></div>`;
   }).join('') : '<div style="color:var(--text-muted);font-size:0.8rem;">No downtime events reported in the harvested window.</div>';
 
   const systemRows = u.bySystem.map(s => `
-    <div style="border-top:1px solid rgba(255,255,255,0.04);padding:8px 0;">
+    <div style="border-top:1px solid var(--wa-40);padding:8px 0;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <span style="font-weight:600;font-size:0.85rem;cursor:pointer;color:var(--accent-cyan);" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none';">${s.systemName}</span>
         <span style="font-size:0.78rem;color:var(--text-muted);">${s.eventCount} event${s.eventCount !== 1 ? 's' : ''} · ${Math.round(s.outageSeconds / 60)} min</span>
@@ -31336,7 +31383,7 @@ function _sth(style, label) {
 function _renderContractsLifecycleSection(systems) {
   const tblStyle = 'width:100%;border-collapse:collapse;font-size:0.8rem;';
   const thStyle = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;';
-  const tdStyle = 'padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.8rem;';
+  const tdStyle = 'padding:6px 10px;border-bottom:1px solid var(--wa-40);font-size:0.8rem;';
   const critColor = {'CRITICAL':'#ef4444','HIGH':'#f59e0b','MEDIUM':'#3b82f6','LOW':'#6b7280'};
 
   // Contract summary
@@ -31395,22 +31442,22 @@ function _renderContractsLifecycleSection(systems) {
   let html = `
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
       <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Systems with a valid, current support contract. Includes both hardware and software service levels.">
-        <div style="font-size:1.8rem;font-weight:700;color:#10b981;">${activeContracts.length}</div>
+        <div style="font-size:1.8rem;font-weight:700;color:var(--hx-10b981);">${activeContracts.length}</div>
         <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Active Contracts</div>
         <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Current support coverage</div>
       </div>
       <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Systems whose support contract expires within 90 days. Immediate renewal engagement recommended to avoid coverage gaps.">
-        <div style="font-size:1.8rem;font-weight:700;color:#f59e0b;">${expiring90.length}</div>
+        <div style="font-size:1.8rem;font-weight:700;color:var(--hx-f59e0b);">${expiring90.length}</div>
         <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Expiring < 90 Days</div>
         <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Urgent renewal needed</div>
       </div>
       <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Systems with expired support contracts. No entitlement for break/fix, software updates, or technical support.">
-        <div style="font-size:1.8rem;font-weight:700;color:#ef4444;">${expired.length}</div>
+        <div style="font-size:1.8rem;font-weight:700;color:var(--hx-ef4444);">${expired.length}</div>
         <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Expired</div>
         <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">No support entitlement</div>
       </div>
       <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Upcoming hardware or software end-of-availability, end-of-support, or end-of-service lifecycle milestones from the TAM renewal pipeline.">
-        <div style="font-size:1.8rem;font-weight:700;color:#3b82f6;">${allLC.length}</div>
+        <div style="font-size:1.8rem;font-weight:700;color:var(--hx-3b82f6);">${allLC.length}</div>
         <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Lifecycle Events</div>
         <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">EOA / EOS milestones</div>
       </div>
@@ -31419,7 +31466,7 @@ function _renderContractsLifecycleSection(systems) {
   // Lifecycle events table
   if (allLC.length > 0) {
     html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Lifecycle Events (sorted by urgency)</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="${tblStyle}"><thead><tr>
         ${_sth(thStyle,'System')}${_sth(thStyle,'Category')}${_sth(thStyle,'Event')}
         ${_sth(thStyle,'Criticality')}${_sth(thStyle,'Days')}${_sth(thStyle,'Talking Point')}
@@ -31444,7 +31491,7 @@ function _renderContractsLifecycleSection(systems) {
   systems.forEach(s => { if (s.systemName) hostCustMap[s.systemName.toLowerCase()] = s.customerName || ''; });
   if (renewals.length > 0) {
     html += `<h4 style="color:var(--accent-cyan);margin:24px 0 8px;font-size:0.95rem;">Contract Renewal Pipeline (${renewals.length} systems)</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="${tblStyle}"><thead><tr>
         ${_sth(thStyle,'System')}${_sth(thStyle,'Customer')}${_sth(thStyle,'Platform')}${_sth(thStyle,'Service')}
         ${_sth(thStyle,'Tech Refresh')}${_sth(thStyle,'Expiry')}${_sth(thStyle,'Level')}${_sth(thStyle,'HW EOA')}${_sth(thStyle,'HW EOS')}
@@ -31548,7 +31595,7 @@ function _renderSustainabilitySection(systems) {
     // Banner when API score is fleet-level
     if (scoresAreIdentical) {
       const fleetSc = parseFloat(nonNullScores[0]).toFixed(1);
-      html += `<div style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.25);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:12px;font-size:0.73rem;color:#f59e0b;">
+      html += `<div style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.25);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:12px;font-size:0.73rem;color:var(--hx-f59e0b);">
         ⚠ The Active IQ API returns a single fleet-wide sustainability score (${fleetSc}%) for all customers — it cannot be broken down per customer. The bar below shows each customer's <strong>data reduction ratio</strong>, which is computed from their individual systems and genuinely varies.
       </div>`;
     }
@@ -31580,7 +31627,7 @@ function _renderSustainabilitySection(systems) {
         : (sc !== null ? (sc >= 75 ? 'Good' : sc >= 50 ? 'Fair' : 'Needs attention') : 'Score not available from API');
 
       html += `
-        <div style="background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.1);border-radius:var(--radius-sm);padding:14px 16px;">
+        <div style="background:var(--wa-35);border:1px solid var(--wa-100);border-radius:var(--radius-sm);padding:14px 16px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <div>
               <span style="font-size:0.88rem;font-weight:700;color:var(--text-primary);">${row.name}</span>
@@ -31588,11 +31635,11 @@ function _renderSustainabilitySection(systems) {
             </div>
             <div style="display:flex;align-items:center;gap:8px;">
               ${row.avgRed ? `<span style="font-size:0.75rem;color:var(--accent-cyan);background:rgba(0,229,255,0.08);border:1px solid rgba(0,229,255,0.2);padding:2px 8px;border-radius:8px;" title="Avg data reduction ratio">${row.avgRed}:1 reduction</span>` : ''}
-              ${row.carbonKg > 0 ? `<span style="font-size:0.75rem;color:#8b5cf6;background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.2);padding:2px 8px;border-radius:8px;" title="CO₂ from latest available month">${row.carbonKg.toFixed(2)} t CO₂</span>` : ''}
+              ${row.carbonKg > 0 ? `<span style="font-size:0.75rem;color:var(--hx-8b5cf6);background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.2);padding:2px 8px;border-radius:8px;" title="CO₂ from latest available month">${row.carbonKg.toFixed(2)} t CO₂</span>` : ''}
               ${!scoresAreIdentical && scFormatted ? `<span style="font-size:1.1rem;font-weight:800;color:${barCol};min-width:46px;text-align:right;">${scFormatted}%</span>` : ''}
             </div>
           </div>
-          <div style="background:rgba(255,255,255,0.07);border-radius:6px;height:8px;overflow:hidden;" title="${barTitle}">
+          <div style="background:var(--wa-70);border-radius:6px;height:8px;overflow:hidden;" title="${barTitle}">
             <div style="height:100%;width:${barW}%;background:linear-gradient(90deg,${barCol}99,${barCol});border-radius:6px;transition:width 0.4s ease;"></div>
           </div>
           <div style="font-size:0.68rem;color:var(--text-muted);margin-top:5px;">${scNote}</div>
@@ -31601,7 +31648,7 @@ function _renderSustainabilitySection(systems) {
 
     html += `</div>`;
   } else {
-    html += `<div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:16px;font-size:0.75rem;color:#93c5fd;">
+    html += `<div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:16px;font-size:0.75rem;color:var(--hx-93c5fd);">
       ℹ Per-customer data is not available for the current scope. Fleet trend is shown below.
     </div>`;
   }
@@ -31609,7 +31656,7 @@ function _renderSustainabilitySection(systems) {
   // ── Four summary stat cards ───────────────────────────────────────────────────
   html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
       <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:18px;text-align:center;cursor:help;" title="Latest fleet-wide Active IQ Sustainability score (0–100%). Measures power efficiency, storage utilization, and environmental impact across all systems.">
-        <div style="font-size:2.2rem;font-weight:700;color:#10b981;">${latest.scorePercentage || '—'}%</div>
+        <div style="font-size:2.2rem;font-weight:700;color:var(--hx-10b981);">${latest.scorePercentage || '—'}%</div>
         <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Fleet Sustainability Score</div>
         <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">AIQ environmental efficiency rating</div>
       </div>
@@ -31619,7 +31666,7 @@ function _renderSustainabilitySection(systems) {
         <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Score delta vs. previous week</div>
       </div>
       <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:var(--radius-sm);padding:18px;text-align:center;cursor:help;" title="Number of weekly sustainability score snapshots available.">
-        <div style="font-size:2.2rem;font-weight:700;color:#8b5cf6;">${scores.length}</div>
+        <div style="font-size:2.2rem;font-weight:700;color:var(--hx-8b5cf6);">${scores.length}</div>
         <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Historical Weeks</div>
         <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Weeks of trend data available</div>
       </div>
@@ -31633,7 +31680,7 @@ function _renderSustainabilitySection(systems) {
   // ── Fleet weekly score trend ──────────────────────────────────────────────────
   if (scores.length > 1) {
     html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Fleet Weekly Score Trend</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);padding:12px;">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);padding:12px;">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         <th style="text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;">Week</th>
         <th style="text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;">Score</th>
@@ -31646,9 +31693,9 @@ function _renderSustainabilitySection(systems) {
         ? s.scorePercentage - prev.scorePercentage
         : null;
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${(s.generatedDate || '').substring(0,10)}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-weight:600;">${s.scorePercentage || '—'}%</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);color:${change === null ? 'var(--text-muted)' : change >= 0 ? '#10b981' : '#ef4444'};font-weight:600;">${change === null ? '—' : (change >= 0 ? '+' : '') + change.toFixed(1) + ' pts'}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${(s.generatedDate || '').substring(0,10)}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);font-weight:600;">${s.scorePercentage || '—'}%</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);color:${change === null ? 'var(--text-muted)' : change >= 0 ? '#10b981' : '#ef4444'};font-weight:600;">${change === null ? '—' : (change >= 0 ? '+' : '') + change.toFixed(1) + ' pts'}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
@@ -31669,7 +31716,7 @@ function _renderSustainabilitySection(systems) {
   const carbonSystems = systems.filter(s => (s.monthlyCarbonStats || []).length > 0);
   if (carbonSystems.length > 0) {
     html += `<h4 style="color:var(--accent-cyan);margin:24px 0 8px;font-size:0.95rem;">Per-System Carbon Emissions (Latest Month)</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         <th style="text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;">System</th>
         <th style="text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;">Month</th>
@@ -31679,10 +31726,10 @@ function _renderSustainabilitySection(systems) {
     carbonSystems.forEach(s => {
       const latestC = s.monthlyCarbonStats[0] || {};
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.systemName}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${latestC.month || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-weight:600;">${latestC.carbonEmissionTons || '—'}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${latestC.energyConsumedKWh || '—'}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.systemName}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${latestC.month || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);font-weight:600;">${latestC.carbonEmissionTons || '—'}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${latestC.energyConsumedKWh || '—'}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
@@ -31924,8 +31971,8 @@ function _renderRecommendationsSection(targetSystems, opts) {
     if (!isReal) return text;      // Active IQ scores this check per account: its own wording is shown as it is, with no count worked out for this customer
     const failCount = realCount;
     const numHtml = isReal
-      ? `<strong style="color:#f59e0b">${failCount}</strong>`
-      : `<strong style="color:#f59e0b" title="Active IQ reports this check per-account, not per-customer. This count is estimated by applying the account-wide rate to this customer's system count -- it is not a direct measurement of these specific systems.">≈${failCount} <span style="font-size:0.7em;opacity:0.75;">(est.)</span></strong>`;
+      ? `<strong style="color:var(--hx-f59e0b)">${failCount}</strong>`
+      : `<strong style="color:var(--hx-f59e0b)" title="Active IQ reports this check per-account, not per-customer. This count is estimated by applying the account-wide rate to this customer's system count -- it is not a direct measurement of these specific systems.">≈${failCount} <span style="font-size:0.7em;opacity:0.75;">(est.)</span></strong>`;
     // Replace patterns like "98 of your systems", "27 of your systems are failing"
     let out = text.replace(/(\d+)\s+of\s+your\s+systems/gi, (match, n) => {
       return `${numHtml} of your <strong>${scopeCount}</strong> selected systems`;
@@ -31955,11 +32002,11 @@ function _renderRecommendationsSection(targetSystems, opts) {
   let html = `<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
     <p style="font-size:0.85rem;color:var(--text-secondary);margin:0;">Top ${recs.length} key recommendations from Active IQ — counts rescoped to <strong style="color:var(--accent-cyan)">${scopeCount} selected system${scopeCount !== 1 ? 's' : ''}</strong>.</p>
     ${usingRealCustomerRecs
-      ? `<span style="background:rgba(34,197,94,0.12);color:#22c55e;border:1px solid rgba(34,197,94,0.3);border-radius:10px;padding:2px 10px;font-size:0.72rem;font-weight:600;" title="recommendations(customerId: ...) -- confirmed live that this Active IQ query returns a genuinely different Score % per real customer, not the account-wide figure.">✓ Score % is this customer's own real Active IQ figure, not an account-wide estimate.</span>`
-      : `<span style="background:rgba(245,158,11,0.12);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:2px 10px;font-size:0.72rem;font-weight:600;" title="Active IQ itself only scores these checks per-account, tenant-wide -- it has no API field for a per-customer count. Where this tool has its own real per-system telemetry for the same check (AutoSupport, HA config, OS/firmware currency, EOS, contract expiry), the count is measured directly against this customer's own systems. Only the checks with no equivalent harvested field (mainly the bundled Best Practices categories) fall back to an account-wide-rate estimate, and are marked (est.).">⚠ Counts are measured per-customer where this tool has real per-system data for the check; only counts marked (est.) are extrapolated from Active IQ's account-wide rate.</span>`}
+      ? `<span style="background:rgba(34,197,94,0.12);color:var(--hx-22c55e);border:1px solid rgba(34,197,94,0.3);border-radius:10px;padding:2px 10px;font-size:0.72rem;font-weight:600;" title="recommendations(customerId: ...) -- confirmed live that this Active IQ query returns a genuinely different Score % per real customer, not the account-wide figure.">✓ Score % is this customer's own real Active IQ figure, not an account-wide estimate.</span>`
+      : `<span style="background:rgba(245,158,11,0.12);color:var(--hx-f59e0b);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:2px 10px;font-size:0.72rem;font-weight:600;" title="Active IQ itself only scores these checks per-account, tenant-wide -- it has no API field for a per-customer count. Where this tool has its own real per-system telemetry for the same check (AutoSupport, HA config, OS/firmware currency, EOS, contract expiry), the count is measured directly against this customer's own systems. Only the checks with no equivalent harvested field (mainly the bundled Best Practices categories) fall back to an account-wide-rate estimate, and are marked (est.).">⚠ Counts are measured per-customer where this tool has real per-system data for the check; only counts marked (est.) are extrapolated from Active IQ's account-wide rate.</span>`}
   </div>
   ${siblingCustomers.length > 0 ? `<div style="margin-bottom:16px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:var(--radius-sm);padding:10px 14px;font-size:0.78rem;color:var(--text-secondary);">
-    ℹ️ This scope's systems are billed under the same Active IQ account as <strong style="color:#60a5fa">${siblingCustomers.length} other customer${siblingCustomers.length !== 1 ? 's' : ''}</strong> (${siblingCustomers.join(', ')}). Active IQ computes each check's <strong>Score %</strong> for the whole account, so that percentage will be identical across all customers on this account — it is not a per-customer bug. The counts below are still rescoped to this customer's own ${scopeCount} system${scopeCount !== 1 ? 's' : ''} wherever real per-system data exists.
+    ℹ️ This scope's systems are billed under the same Active IQ account as <strong style="color:var(--hx-60a5fa)">${siblingCustomers.length} other customer${siblingCustomers.length !== 1 ? 's' : ''}</strong> (${siblingCustomers.join(', ')}). Active IQ computes each check's <strong>Score %</strong> for the whole account, so that percentage will be identical across all customers on this account — it is not a per-customer bug. The counts below are still rescoped to this customer's own ${scopeCount} system${scopeCount !== 1 ? 's' : ''} wherever real per-system data exists.
   </div>` : ''}`;
 
   Object.keys(byCategory).forEach(cat => {
@@ -31967,7 +32014,7 @@ function _renderRecommendationsSection(targetSystems, opts) {
     const icon  = catIcons[cat]  || '📋';
     const color = catColors[cat] || '#94a3b8';
     html += `<div style="margin-bottom:24px;">
-      <h4 style="color:${color};margin:12px 0 10px;font-size:0.95rem;font-weight:700;letter-spacing:0.3px;border-bottom:1px solid rgba(255,255,255,0.06);padding-bottom:8px;">${icon} ${cat.replace(/_/g,' ')} (${items.length})</h4>`;
+      <h4 style="color:${color};margin:12px 0 10px;font-size:0.95rem;font-weight:700;letter-spacing:0.3px;border-bottom:1px solid var(--wa-60);padding-bottom:8px;">${icon} ${cat.replace(/_/g,' ')} (${items.length})</h4>`;
     items.forEach(r => {
       const { effectiveScore, corrected, isAllClear } = _resolveRecommendationScore(r);
       const scoreColor = effectiveScore >= 80 ? '#10b981' : effectiveScore >= 50 ? '#f59e0b' : '#ef4444';
@@ -31999,12 +32046,12 @@ function _renderRecommendationsSection(targetSystems, opts) {
       // attributable rather than looking like duplicate/conflicting noise.
       const acctLabel = multiAccountScope && r.accountId ? (scopeAccountLabels[r.accountId] || r.accountId) : null;
       const acctBadge = acctLabel ? `<span style="font-size:0.65rem;color:var(--text-muted);font-weight:600;margin-left:8px;">· ${acctLabel}</span>` : '';
-      html += `<div style="background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.12);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px;">
+      html += `<div style="background:var(--wa-35);border:1px solid var(--wa-120);border-radius:var(--radius-sm);padding:14px;margin-bottom:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-size:0.7rem;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;">${r.subCategory || ''}${acctBadge}</span>
+          <span style="font-size:0.7rem;color:var(--hx-94a3b8);font-weight:700;text-transform:uppercase;letter-spacing:0.8px;">${r.subCategory || ''}${acctBadge}</span>
           <span style="background:${scoreColor}22;color:${scoreColor};padding:2px 10px;border-radius:10px;font-size:0.72rem;font-weight:700;border:1px solid ${scoreColor}44;">Score: ${scoreLabel}</span>
         </div>
-        <p style="font-size:0.83rem;color:#e2e8f0;margin:0;line-height:1.65;">${displayText}</p>
+        <p style="font-size:0.83rem;color:var(--hx-e2e8f0);margin:0;line-height:1.65;">${displayText}</p>
       </div>`;
     });
     html += `</div>`;
@@ -32061,17 +32108,17 @@ function _renderAccountIntelligenceSection(systems) {
 
   let html = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;">
     <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Unique customer accounts in the selected scope.">
-      <div style="font-size:1.8rem;font-weight:700;color:#3b82f6;">${Object.keys(custMap).length}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-3b82f6);">${Object.keys(custMap).length}</div>
       <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Customers</div>
       <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Unique account entities</div>
     </div>
     <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Physical data center or office locations associated with the selected customer's systems.">
-      <div style="font-size:1.8rem;font-weight:700;color:#8b5cf6;">${sites.length}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-8b5cf6);">${sites.length}</div>
       <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Sites</div>
       <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Locations in scope</div>
     </div>
     <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Total ONTAP storage systems in the selected scope.">
-      <div style="font-size:1.8rem;font-weight:700;color:#10b981;">${systems.length}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-10b981);">${systems.length}</div>
       <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Systems</div>
       <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Storage controllers in scope</div>
     </div>
@@ -32082,7 +32129,7 @@ function _renderAccountIntelligenceSection(systems) {
   if (personnelSystems.length > 0) {
     const thS13 = 'text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;';
     html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Account Personnel</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         ${_sth(thS13,'System')}${_sth(thS13,'Sales Rep')}${_sth(thS13,'TAM')}
         ${_sth(thS13,'SAM')}${_sth(thS13,'ASP')}
@@ -32095,12 +32142,12 @@ function _renderAccountIntelligenceSection(systems) {
       seen.add(key);
       const propColor = {'CRITICAL':'#ef4444','HIGH':'#f59e0b','MEDIUM':'#3b82f6'}[s.propensityCategory] || '#6b7280';
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.systemName}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.salesRepName || '—'}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.csmName || '—'}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.samName || '—'}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.aspName || '—'}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);"><span style="color:${propColor};font-weight:600;">${s.propensityCategory || '—'}</span></td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.systemName}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.salesRepName || '—'}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.csmName || '—'}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.samName || '—'}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.aspName || '—'}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);"><span style="color:${propColor};font-weight:600;">${s.propensityCategory || '—'}</span></td>
       </tr>`;
     });
     html += `</tbody></table></div>
@@ -32111,7 +32158,7 @@ function _renderAccountIntelligenceSection(systems) {
   if (sites.length > 0) {
     const thS13b = 'text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;';
     html += `<h4 style="color:var(--accent-cyan);margin:24px 0 8px;font-size:0.95rem;">Sites (${sites.length})</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         ${_sth(thS13b,'Site Name')}
         ${_sth(thS13b,'City')}
@@ -32122,12 +32169,12 @@ function _renderAccountIntelligenceSection(systems) {
       </tr></thead><tbody>`;
     sites.forEach(s => {
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.name || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.city || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.countryCode || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.ageInYears != null ? s.ageInYears + 'y' : ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);color:${(s.systemsWithCriticalPropensity||0) > 0 ? '#ef4444':'var(--text-secondary)'};">${s.systemsWithCriticalPropensity || 0}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);color:${(s.systemsWithHighPropensity||0) > 0 ? '#f59e0b':'var(--text-secondary)'};">${s.systemsWithHighPropensity || 0}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.name || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.city || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.countryCode || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.ageInYears != null ? s.ageInYears + 'y' : ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);color:${(s.systemsWithCriticalPropensity||0) > 0 ? '#ef4444':'var(--text-secondary)'};">${s.systemsWithCriticalPropensity || 0}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);color:${(s.systemsWithHighPropensity||0) > 0 ? '#f59e0b':'var(--text-secondary)'};">${s.systemsWithHighPropensity || 0}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
@@ -32165,12 +32212,12 @@ function _renderLicenseComplianceSection(systems) {
   
   let html = `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px;">
     <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Systems still within their original hardware warranty period (separate from support contracts).">
-      <div style="font-size:1.8rem;font-weight:700;color:#10b981;">${warrantyActive.length}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-10b981);">${warrantyActive.length}</div>
       <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Warranty Active</div>
       <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Within HW warranty period</div>
     </div>
     <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Systems whose original hardware warranty has expired. Hardware replacements require an active support contract.">
-      <div style="font-size:1.8rem;font-weight:700;color:#f59e0b;">${warrantyExpired.length}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-f59e0b);">${warrantyExpired.length}</div>
       <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Warranty Expired</div>
       <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Past HW warranty end date</div>
     </div>
@@ -32202,7 +32249,7 @@ function _renderLicenseComplianceSection(systems) {
 
   if (contractSystems.length > 0) {
     html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Contract Compliance (${contractSystems.length} systems)</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','System')}
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','Service Level')}
@@ -32216,12 +32263,12 @@ function _renderLicenseComplianceSection(systems) {
       const statusLabel = s.contractActive === true ? 'Active' : s.contractActive === false ? 'Expired' : 'Unknown';
       const statusColor = s.contractActive === true ? '#10b981' : '#ef4444';
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.systemName || s.serialNumber}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.serviceLevel || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${(s._endDate || '').substring(0,10)}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);"><span style="color:${daysColor};font-weight:600;">${s._daysLeft != null ? s._daysLeft : ''}</span></td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);"><span style="color:${statusColor};font-weight:600;">${statusLabel}</span></td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${(s.warrantyEndDate || '').substring(0,10)}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.systemName || s.serialNumber}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.serviceLevel || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${(s._endDate || '').substring(0,10)}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);"><span style="color:${daysColor};font-weight:600;">${s._daysLeft != null ? s._daysLeft : ''}</span></td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);"><span style="color:${statusColor};font-weight:600;">${statusLabel}</span></td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${(s.warrantyEndDate || '').substring(0,10)}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
@@ -32252,7 +32299,7 @@ function _renderLicenseComplianceSection(systems) {
   if (pkgRows.length > 0) {
     html += `<h4 style="color:var(--accent-cyan);margin:24px 0 8px;font-size:0.95rem;">Licensed Feature Adoption (${pkgRows.length} distinct packages)</h4>
     <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;">Sourced from Active IQ's per-system license inventory. "Adoption" is only cross-checked against telemetry for Anti-Ransomware Protection and SnapMirror today — other packages show license count only, not usage.</div>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','Package')}
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','Description')}
@@ -32262,13 +32309,13 @@ function _renderLicenseComplianceSection(systems) {
     pkgRows.forEach(([pkg, d]) => {
       const gap = d.checkable ? d.systems.size - d.enabledCount : null;
       const activeCell = d.checkable
-        ? `${d.enabledCount} / ${d.systems.size}` + (gap > 0 ? ` <span style="color:#f59e0b;font-weight:600;">(${gap} licensed, not confirmed active)</span>` : '')
+        ? `${d.enabledCount} / ${d.systems.size}` + (gap > 0 ? ` <span style="color:var(--hx-f59e0b);font-weight:600;">(${gap} licensed, not confirmed active)</span>` : '')
         : '<span style="color:var(--text-muted);">Not tracked</span>';
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-weight:600;">${pkg}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${d.description}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${d.systems.size}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${activeCell}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);font-weight:600;">${pkg}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${d.description}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${d.systems.size}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${activeCell}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
@@ -32286,8 +32333,8 @@ function _renderLicenseComplianceSection(systems) {
 // Every figure is Active IQ's; nothing here is estimated by ARIA.
 function _shTable(heads, rows, rightFrom) {
   const th = 'text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;';
-  const td = 'padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);';
-  return `<div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);margin-bottom:16px;">
+  const td = 'padding:5px 10px;border-bottom:1px solid var(--wa-40);';
+  return `<div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);margin-bottom:16px;">
     <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>${heads.map(h => `<th style="${th}">${h}</th>`).join('')}</tr></thead>
     <tbody>${rows.map(r => `<tr>${r.map(c => `<td style="${td}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
@@ -32308,7 +32355,7 @@ function _caseSummaryData() {
 }
 function _caseSummaryHtml() {
   const d = _caseSummaryData(); if (!d) return '';
-  const th = 'text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;', td = 'padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);';
+  const th = 'text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;', td = 'padding:5px 10px;border-bottom:1px solid var(--wa-40);';
   let o = `<div style="margin:6px 0 18px;"><div style="font-size:0.85rem;font-weight:700;margin-bottom:4px;">Case counts and trend (Active IQ)</div><div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;">Counted by Active IQ for the whole account (or watchlist), not for the customer selected here; the data can lag the support portal by up to 24 hours.</div>`;
   if (d.counts.length) {
     const rows = [];
@@ -32559,7 +32606,7 @@ function _renderMonthlySLASection(systems) {
     const staleSystems = asupSystems.filter(s => !s._asupHealthy).sort((a,b) => b._asupDaysAgo - a._asupDaysAgo);
     if (staleSystems.length > 0) {
       html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Stale AutoSupport Systems (>${'\u200B'}7 days)</h4>
-      <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+      <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
         <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
           ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','System')}
           ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','Last ASUP')}
@@ -32571,12 +32618,12 @@ function _renderMonthlySLASection(systems) {
       staleSystems.slice(0, 50).forEach(s => {
         const daysColor = s._asupDaysAgo > 30 ? '#ef4444' : '#f59e0b';
         html += `<tr>
-          <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.systemName || s.serialNumber}</td>
-          <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${(s.latestAsupDate || '').substring(0,10)}</td>
-          <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);"><span style="color:${daysColor};font-weight:600;">${s._asupDaysAgo}</span></td>
-          <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.osVersion || ''}</td>
-          <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.model || s.platform || ''}</td>
-          <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${_platformFamily(s) !== 'ontap' ? '<span style="color:#6b7280;" title="ONTAP-only feature">N/A</span>' : s.isARPEnabled === true ? '<span style="color:#10b981;">Yes</span>' : s.isARPEnabled === false ? '<span style="color:#ef4444;">No</span>' : '<span style="color:#6b7280;">—</span>'}</td>
+          <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.systemName || s.serialNumber}</td>
+          <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${(s.latestAsupDate || '').substring(0,10)}</td>
+          <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);"><span style="color:${daysColor};font-weight:600;">${s._asupDaysAgo}</span></td>
+          <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.osVersion || ''}</td>
+          <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.model || s.platform || ''}</td>
+          <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${_platformFamily(s) !== 'ontap' ? '<span style="color:#6b7280;" title="ONTAP-only feature">N/A</span>' : s.isARPEnabled === true ? '<span style="color:var(--hx-10b981);">Yes</span>' : s.isARPEnabled === false ? '<span style="color:var(--hx-ef4444);">No</span>' : '<span style="color:#6b7280;">—</span>'}</td>
         </tr>`;
       });
       html += `</tbody></table></div>`;
@@ -32590,7 +32637,7 @@ function _renderMonthlySLASection(systems) {
   const neverReportedSystems = systems.filter(s => !s.latestAsupDate);
   if (neverReportedSystems.length > 0) {
     html += `<h4 style="color:var(--accent-cyan);margin:24px 0 8px;font-size:0.95rem;">ASUP Never Reported - ${neverReportedSystems.length} system${neverReportedSystems.length !== 1 ? 's' : ''}</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','System')}
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','OS Version')}
@@ -32599,10 +32646,10 @@ function _renderMonthlySLASection(systems) {
       </tr></thead><tbody>`;
     neverReportedSystems.slice(0, 50).forEach(s => {
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.systemName || s.serialNumber}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.osVersion || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.model || s.platform || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${_platformFamily(s) !== 'ontap' ? '<span style="color:#6b7280;" title="ONTAP-only feature">N/A</span>' : s.isARPEnabled === true ? '<span style="color:#10b981;">Yes</span>' : s.isARPEnabled === false ? '<span style="color:#ef4444;">No</span>' : '<span style="color:#6b7280;">—</span>'}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.systemName || s.serialNumber}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.osVersion || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.model || s.platform || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${_platformFamily(s) !== 'ontap' ? '<span style="color:#6b7280;" title="ONTAP-only feature">N/A</span>' : s.isARPEnabled === true ? '<span style="color:var(--hx-10b981);">Yes</span>' : s.isARPEnabled === false ? '<span style="color:var(--hx-ef4444);">No</span>' : '<span style="color:#6b7280;">—</span>'}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
@@ -32612,7 +32659,7 @@ function _renderMonthlySLASection(systems) {
   const recentReboots = rebootSystems.filter(s => s._rebootDaysAgo <= 90);
   if (recentReboots.length > 0) {
     html += `<h4 style="color:var(--accent-cyan);margin:24px 0 8px;font-size:0.95rem;">Recent Reboots (Last 90 Days) - ${recentReboots.length} systems</h4>
-    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+    <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','System')}
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','Last Reboot')}
@@ -32622,11 +32669,11 @@ function _renderMonthlySLASection(systems) {
       </tr></thead><tbody>`;
     recentReboots.slice(0, 50).forEach(s => {
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.systemName || s.serialNumber}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${(s.lastRebootTime || '').substring(0,10)}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s._rebootDaysAgo}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.osVersion || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">${s.model || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.systemName || s.serialNumber}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${(s.lastRebootTime || '').substring(0,10)}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s._rebootDaysAgo}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.osVersion || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.model || ''}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
@@ -32644,7 +32691,7 @@ function _renderDRReplicationSection(allSystems) {
   const _drExcluded = allSystems.length - systems.length;
   const tblStyle = 'width:100%;border-collapse:collapse;font-size:0.8rem;';
   const thStyle = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;';
-  const tdStyle = 'padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.8rem;';
+  const tdStyle = 'padding:6px 10px;border-bottom:1px solid var(--wa-40);font-size:0.8rem;';
 
   const _smCount = (s) => s.snapmirrorCount || s.snapMirrorCount || (s.snapmirror && s.snapmirror.totalCount) || 0;
   const _hasHA = (s) => s.haConfigured || s.isHAConfigured || (s.snapmirror && s.snapmirror.isHAConfigured);
@@ -32656,18 +32703,18 @@ function _renderDRReplicationSection(allSystems) {
 
   let html = (_drExcluded > 0 ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;">Showing the ${systems.length} ONTAP system(s); ${_drExcluded} E-Series/StorageGRID system(s) are excluded (these are ONTAP-only features).</div>` : '') + `
     <div style="display:flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
-      <div style="flex:1; min-width: 200px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+      <div style="flex:1; min-width: 200px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 8px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">Protection Coverage</h4>
         <div style="font-size: 1.1rem; margin-bottom: 4px;"><strong>${snapMirrorSys.length} / ${systems.length}</strong> <span style="font-size:0.8rem; color:var(--text-secondary);">with SnapMirror</span></div>
         <div style="font-size: 1.1rem; margin-bottom: 4px;"><strong>${metroClusterSys.length} / ${systems.length}</strong> <span style="font-size:0.8rem; color:var(--text-secondary);">with MetroCluster</span></div>
         <div style="font-size: 1.1rem;"><strong>${syncMirrorSys.length} / ${systems.length}</strong> <span style="font-size:0.8rem; color:var(--text-secondary);">with SyncMirror</span></div>
       </div>
-      <div style="flex:1; min-width: 200px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+      <div style="flex:1; min-width: 200px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 8px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">HA Status</h4>
         <div style="font-size: 1.5rem; color: var(--accent-cyan); margin-bottom: 4px;">${haSys.length} / ${systems.length}</div>
         <div style="font-size:0.8rem; color:var(--text-secondary);">HA Configured</div>
       </div>
-      <div style="flex:1; min-width: 200px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+      <div style="flex:1; min-width: 200px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 8px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">Unprotected Systems</h4>
         <div style="font-size: 1.5rem; color: ${unprotectedSys.length > 0 ? '#f59e0b' : '#10b981'}; margin-bottom: 4px;">${unprotectedSys.length}</div>
         <div style="font-size:0.8rem; color:var(--text-secondary);">No SnapMirror, MetroCluster, or SyncMirror</div>
@@ -32708,7 +32755,7 @@ function _renderDRReplicationSection(allSystems) {
 
     html += `
       <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 24px 0 8px 0;">SnapMirror Inventory</h3>
-      <div class="tam-table-wrapper" style="overflow-x:auto; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:var(--radius-md); padding:16px;">
+      <div class="tam-table-wrapper" style="overflow-x:auto; background:var(--bk-200); border:1px solid var(--wa-100); border-radius:var(--radius-md); padding:16px;">
         <table style="${tblStyle}">
           <thead>
             <tr>
@@ -32774,7 +32821,7 @@ function _renderPortfolioExecutiveDashboard() {
   const thStyleR = thStyle.replace('text-align:left', 'text-align:right');
 
   const kpi = (label, value, color) => `
-    <div style="flex:1; min-width: 150px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+    <div style="flex:1; min-width: 150px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
       <h4 style="margin:0 0 8px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">${label}</h4>
       <div style="font-size: 1.5rem; color: ${color || 'var(--accent-cyan)'}; margin-bottom: 4px;">${value}</div>
     </div>`;
@@ -32794,7 +32841,7 @@ function _renderPortfolioExecutiveDashboard() {
     <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 0 0 8px 0;">Fleet-Wide Risk Trend</h3>
     <div style="display:flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;">
       ${d.trend.map(w => `
-        <div style="flex:1; min-width: 180px; background: rgba(255,255,255,0.02); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05); font-size:0.78rem;">
+        <div style="flex:1; min-width: 180px; background: var(--wa-20); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50); font-size:0.78rem;">
           <div style="color:var(--text-secondary); font-weight:700; margin-bottom:6px;">${w.windowDays} Days${w.partial ? ' *' : ''}</div>
           <div>Critical: ${dir(w.criticalDelta)} (${w.criticalThen}&rarr;${w.criticalNow})</div>
           <div>High: ${dir(w.highDelta)} (${w.highThen}&rarr;${w.highNow})</div>
@@ -32806,7 +32853,7 @@ function _renderPortfolioExecutiveDashboard() {
 
   html += `
     <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 0 0 8px 0;">Accounts Needing Attention</h3>
-    <div class="tam-table-wrapper" style="overflow-x:auto; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:var(--radius-md); padding:16px; margin-bottom:24px;">
+    <div class="tam-table-wrapper" style="overflow-x:auto; background:var(--bk-200); border:1px solid var(--wa-100); border-radius:var(--radius-md); padding:16px; margin-bottom:24px;">
       <table style="${tblStyle}">
         <thead><tr>
           ${_sth(thStyle, 'Customer')}
@@ -32818,11 +32865,11 @@ function _renderPortfolioExecutiveDashboard() {
         </tr></thead>
         <tbody>
         ${d.rows.map(r => `
-          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);${r.urgency > 0 ? '' : 'opacity:0.6;'}">
+          <tr style="border-bottom:1px solid var(--wa-40);${r.urgency > 0 ? '' : 'opacity:0.6;'}">
             <td style="padding:6px 10px;font-weight:600;">${r.name}</td>
             <td style="padding:6px 10px;text-align:right;">${r.systemCount}</td>
-            <td style="padding:6px 10px;text-align:right;${r.critical > 0 ? 'color:#ef4444;font-weight:700;' : ''}">${r.critical}</td>
-            <td style="padding:6px 10px;text-align:right;${r.high > 0 ? 'color:#f59e0b;' : ''}">${r.high}</td>
+            <td style="padding:6px 10px;text-align:right;${r.critical > 0 ? 'color:var(--hx-ef4444);font-weight:700;' : ''}">${r.critical}</td>
+            <td style="padding:6px 10px;text-align:right;${r.high > 0 ? 'color:var(--hx-f59e0b);' : ''}">${r.high}</td>
             <td style="padding:6px 10px;text-align:right;">${r.openCases}</td>
             <td style="padding:6px 10px;text-align:right;">${r.eosSoon}</td>
           </tr>`).join('')}
@@ -32833,7 +32880,7 @@ function _renderPortfolioExecutiveDashboard() {
   if (d.sharedCves.length > 0) {
     html += `
     <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 0 0 8px 0;">Shared CVE Exposure <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;text-transform:none;">-- affecting 2+ managed customers</span></h3>
-    <div class="tam-table-wrapper" style="overflow-x:auto; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:var(--radius-md); padding:16px; margin-bottom:24px;">
+    <div class="tam-table-wrapper" style="overflow-x:auto; background:var(--bk-200); border:1px solid var(--wa-100); border-radius:var(--radius-md); padding:16px; margin-bottom:24px;">
       <table style="${tblStyle}">
         <thead><tr>
           ${_sth(thStyle, 'CVE')}
@@ -32844,10 +32891,10 @@ function _renderPortfolioExecutiveDashboard() {
         </tr></thead>
         <tbody>
         ${d.sharedCves.map(c => `
-          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+          <tr style="border-bottom:1px solid var(--wa-40);">
             <td style="padding:6px 10px;font-weight:600;">${c.id}</td>
             <td style="padding:6px 10px;text-transform:capitalize;">${c.sev || '-'}</td>
-            <td style="padding:6px 10px;">${c.kev ? '<span style="color:#ef4444;font-weight:700;">Yes</span>' : '—'}</td>
+            <td style="padding:6px 10px;">${c.kev ? '<span style="color:var(--hx-ef4444);font-weight:700;">Yes</span>' : '—'}</td>
             <td style="padding:6px 10px;text-align:right;font-weight:700;color:var(--accent-cyan);">${c.customerCount}</td>
             <td style="padding:6px 10px;text-align:right;">${c.systemCount}</td>
           </tr>`).join('')}
@@ -32859,7 +32906,7 @@ function _renderPortfolioExecutiveDashboard() {
   if (d.sharedRefresh.length > 0) {
     html += `
     <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 0 0 8px 0;">Shared Refresh Opportunities <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;text-transform:none;">-- models nearing EOS (&le;730 days) for 2+ managed customers</span></h3>
-    <div class="tam-table-wrapper" style="overflow-x:auto; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:var(--radius-md); padding:16px;">
+    <div class="tam-table-wrapper" style="overflow-x:auto; background:var(--bk-200); border:1px solid var(--wa-100); border-radius:var(--radius-md); padding:16px;">
       <table style="${tblStyle}">
         <thead><tr>
           ${_sth(thStyle, 'Model')}
@@ -32869,11 +32916,11 @@ function _renderPortfolioExecutiveDashboard() {
         </tr></thead>
         <tbody>
         ${d.sharedRefresh.map(g => `
-          <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+          <tr style="border-bottom:1px solid var(--wa-40);">
             <td style="padding:6px 10px;font-weight:600;">${g.model}</td>
             <td style="padding:6px 10px;text-align:right;font-weight:700;color:var(--accent-cyan);">${g.customerCount}</td>
             <td style="padding:6px 10px;text-align:right;">${g.count}</td>
-            <td style="padding:6px 10px;text-align:right;${g.minDays <= 90 ? 'color:#ef4444;font-weight:700;' : g.minDays <= 365 ? 'color:#f59e0b;' : ''}">${g.minDays <= 0 ? 'past EOS' : g.minDays + 'd'}</td>
+            <td style="padding:6px 10px;text-align:right;${g.minDays <= 90 ? 'color:var(--hx-ef4444);font-weight:700;' : g.minDays <= 365 ? 'color:var(--hx-f59e0b);' : ''}">${g.minDays <= 0 ? 'past EOS' : g.minDays + 'd'}</td>
           </tr>`).join('')}
         </tbody>
       </table>
@@ -32890,7 +32937,7 @@ function _renderVMwareInventorySection(allSystems) {
   }
   const tblStyle = 'width:100%;border-collapse:collapse;font-size:0.8rem;';
   const thStyle = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;';
-  const tdStyle = 'padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.8rem;';
+  const tdStyle = 'padding:6px 10px;border-bottom:1px solid var(--wa-40);font-size:0.8rem;';
 
   // Cross-reference against the same interop-finding sources the deliverables use
   // (the precise vCenter-version-matched check, plus the broader OTV/switch engine)
@@ -32918,17 +32965,17 @@ function _renderVMwareInventorySection(allSystems) {
 
   let html = `
     <div style="display:flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
-      <div style="flex:1; min-width: 200px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+      <div style="flex:1; min-width: 200px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 8px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">VMware Integration</h4>
         <div style="font-size: 1.5rem; color: var(--accent-cyan); margin-bottom: 4px;">${withVc.length} / ${allSystems.length}</div>
         <div style="font-size:0.8rem; color:var(--text-secondary);">systems with a registered vCenter</div>
       </div>
-      <div style="flex:1; min-width: 200px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+      <div style="flex:1; min-width: 200px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 8px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">Distinct vCenters</h4>
         <div style="font-size: 1.5rem; color: var(--accent-cyan); margin-bottom: 4px;">${vcGroups.length}</div>
         <div style="font-size:0.8rem; color:var(--text-secondary);">${distinctVersions} distinct version${distinctVersions !== 1 ? 's' : ''} in use</div>
       </div>
-      <div style="flex:1; min-width: 200px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+      <div style="flex:1; min-width: 200px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 8px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">Compatibility Concerns</h4>
         <div style="font-size: 1.5rem; color: ${flaggedSystems > 0 ? '#f59e0b' : '#10b981'}; margin-bottom: 4px;">${flaggedSystems}</div>
         <div style="font-size:0.8rem; color:var(--text-secondary);">system${flaggedSystems !== 1 ? 's' : ''} flagged by the NetApp IMT cross-reference</div>
@@ -32936,7 +32983,7 @@ function _renderVMwareInventorySection(allSystems) {
     </div>
 
     <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 24px 0 8px 0;">vCenter Inventory</h3>
-    <div class="tam-table-wrapper" style="overflow-x:auto; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:var(--radius-md); padding:16px;">
+    <div class="tam-table-wrapper" style="overflow-x:auto; background:var(--bk-200); border:1px solid var(--wa-100); border-radius:var(--radius-md); padding:16px;">
       <table style="${tblStyle}">
         <tr>
           <th style="${thStyle}">vCenter</th>
@@ -32949,8 +32996,8 @@ function _renderVMwareInventorySection(allSystems) {
         ${vcGroups.map(g => {
           const flagged = g.systems.filter(s => _findingsBySystem[s.systemName || s.serialNumber]);
           const compatCell = flagged.length > 0
-            ? `<span style="color:#f59e0b;">⚠ ${flagged.length} finding${flagged.length !== 1 ? 's' : ''}</span>`
-            : `<span style="color:#10b981;">✓ No findings</span>`;
+            ? `<span style="color:var(--hx-f59e0b);">⚠ ${flagged.length} finding${flagged.length !== 1 ? 's' : ''}</span>`
+            : `<span style="color:var(--hx-10b981);">✓ No findings</span>`;
           return `<tr>
             <td style="${tdStyle}">${g.name}</td>
             <td style="${tdStyle}font-family:monospace;">${g.version}</td>
@@ -32986,14 +33033,14 @@ function _toggleFwCard(cardId) {
 function _renderSanNasStorageSection(systems) {
   const tblStyle = 'width:100%;border-collapse:collapse;font-size:0.8rem;';
   const thStyle = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;';
-  const tdStyle = 'padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.8rem;';
+  const tdStyle = 'padding:6px 10px;border-bottom:1px solid var(--wa-40);font-size:0.8rem;';
 
   const summary = _sanNasStorageSummary(systems);
   if (!summary) {
     return `<div style="text-align:center;color:var(--text-muted);padding:40px;">No LUN or NAS volume inventory reported by Active IQ for this scope (E-Series/StorageGRID-only scopes, or ONTAP systems with no LUNs/volumes, report nothing here).</div>`;
   }
 
-  const kpi = (label, val) => `<div style="flex:1;min-width:140px;background:rgba(255,255,255,0.02);padding:12px;border-radius:var(--radius-md);border:1px solid rgba(255,255,255,0.05);text-align:center;">
+  const kpi = (label, val) => `<div style="flex:1;min-width:140px;background:var(--wa-20);padding:12px;border-radius:var(--radius-md);border:1px solid var(--wa-50);text-align:center;">
     <div style="font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;">${label}</div>
     <div style="font-size:1.2rem;font-weight:700;">${val}</div>
   </div>`;
@@ -33011,9 +33058,9 @@ function _renderSanNasStorageSection(systems) {
       <td style="${tdStyle}">${r.volumeCount || 0}</td>
       <td style="${tdStyle}">${r.volumeTB.toFixed(1)} TB</td>
       <td style="${tdStyle}">${r.thinPct != null ? r.thinPct.toFixed(0) + '%' : '<span title="No data volumes reported for this system, so there is no thin-provisioning share">—</span>'}</td>
-      <td style="${tdStyle}${r.snapshotReserveOverflowCount > 0 ? ';color:#f59e0b;font-weight:600;' : ''}">${r.snapshotReserveOverflowCount || 0}</td>
-      <td style="${tdStyle}${r.usedPct != null && r.usedPct >= 80 ? ';color:#f59e0b;font-weight:600;' : ''}">${r.usedPct != null ? r.usedPct.toFixed(0) + '% of ' + r.usableTB.toFixed(1) + ' TB usable' : (r.capacityUnclear ? '<span title="Active IQ reports a usable capacity below this system\'s used capacity, so no percentage is shown">n/a</span>' : '\u2014')}</td>
-      <td style="${tdStyle}${r.overcommit != null && r.overcommit > 1 ? (r.usedPct != null && r.usedPct >= 80 ? ';color:#ef4444;font-weight:600;' : ';color:var(--text-secondary);') : ''}">${r.overcommit != null ? r.overcommit.toFixed(1) + 'x' : (r.capacityUnclear ? 'n/a' : '\u2014')}</td>
+      <td style="${tdStyle}${r.snapshotReserveOverflowCount > 0 ? ';color:var(--hx-f59e0b);font-weight:600;' : ''}">${r.snapshotReserveOverflowCount || 0}</td>
+      <td style="${tdStyle}${r.usedPct != null && r.usedPct >= 80 ? ';color:var(--hx-f59e0b);font-weight:600;' : ''}">${r.usedPct != null ? r.usedPct.toFixed(0) + '% of ' + r.usableTB.toFixed(1) + ' TB usable' : (r.capacityUnclear ? '<span title="Active IQ reports a usable capacity below this system\'s used capacity, so no percentage is shown">n/a</span>' : '\u2014')}</td>
+      <td style="${tdStyle}${r.overcommit != null && r.overcommit > 1 ? (r.usedPct != null && r.usedPct >= 80 ? ';color:var(--hx-ef4444);font-weight:600;' : ';color:var(--text-secondary);') : ''}">${r.overcommit != null ? r.overcommit.toFixed(1) + 'x' : (r.capacityUnclear ? 'n/a' : '\u2014')}</td>
     </tr>`).join('');
 
   return `
@@ -33103,20 +33150,20 @@ function _dfNonOntapFirmware(systems) {
 }
 function _dfNonOntapFirmwareHtml(v) {
   if (!v.any) return '';
-  const tile = (label, t, desc) => { const tot = t.current + t.behind + t.unknown, col = t.behind ? '#f59e0b' : '#10b981'; return `<div style="background:${t.behind ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)'};border:1px solid ${t.behind ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'};border-radius:var(--radius-sm);padding:12px;text-align:center;cursor:help;" title="${desc}"><div style="font-size:1.4rem;font-weight:700;color:${col};">${t.current}<span style="font-size:0.85rem;color:var(--text-muted);font-weight:400;">/${tot}</span></div><div style="font-size:0.72rem;color:var(--text-secondary);font-weight:600;">${label}</div>${t.behind ? `<div style="font-size:0.65rem;color:#f59e0b;margin-top:3px;">${t.behind} need update</div>` : ''}${t.unknown ? `<div style="font-size:0.6rem;color:var(--text-muted);margin-top:2px;">${t.unknown} not reported</div>` : ''}</div>`; };
-  const badge = m => m === true ? '<span style="color:#10b981;font-weight:600;">✅ Current</span>' : m === false ? '<span style="color:#f59e0b;font-weight:600;">⚠️ Update</span>' : '<span style="color:var(--text-muted);">—</span>';
-  const th = 'text-align:left;padding:6px 8px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.7rem;text-transform:uppercase;', td = 'padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.78rem;';
+  const tile = (label, t, desc) => { const tot = t.current + t.behind + t.unknown, col = t.behind ? '#f59e0b' : '#10b981'; return `<div style="background:${t.behind ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)'};border:1px solid ${t.behind ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'};border-radius:var(--radius-sm);padding:12px;text-align:center;cursor:help;" title="${desc}"><div style="font-size:1.4rem;font-weight:700;color:${col};">${t.current}<span style="font-size:0.85rem;color:var(--text-muted);font-weight:400;">/${tot}</span></div><div style="font-size:0.72rem;color:var(--text-secondary);font-weight:600;">${label}</div>${t.behind ? `<div style="font-size:0.65rem;color:var(--hx-f59e0b);margin-top:3px;">${t.behind} need update</div>` : ''}${t.unknown ? `<div style="font-size:0.6rem;color:var(--text-muted);margin-top:2px;">${t.unknown} not reported</div>` : ''}</div>`; };
+  const badge = m => m === true ? '<span style="color:var(--hx-10b981);font-weight:600;">✅ Current</span>' : m === false ? '<span style="color:var(--hx-f59e0b);font-weight:600;">⚠️ Update</span>' : '<span style="color:var(--text-muted);">—</span>';
+  const th = 'text-align:left;padding:6px 8px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.7rem;text-transform:uppercase;', td = 'padding:5px 8px;border-bottom:1px solid var(--wa-40);font-size:0.78rem;';
   const e = (typeof esc === 'function') ? esc : (x => String(x == null ? '' : x).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])));
   let h = '';
   if (v.es.rows.length) {
     h += `<h3 style="font-size:0.95rem;margin:22px 0 4px;color:var(--text-primary);">E-Series (SANtricity) firmware <span class="rk-tag rk-tag-finding">FINDING</span></h3><div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:8px;">${v.es.rows.length} array${v.es.rows.length !== 1 ? 's' : ''}. Active IQ reports the SANtricity OS, NVSRAM and drive firmware, each against the version it recommends. It does not report controller, BMC or BIOS firmware for E-Series.</div>`;
     h += `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px;">${tile('SANtricity OS current', v.es.os, 'Running SANtricity OS compared with the version Active IQ recommends.')}${tile('NVSRAM current', v.es.nvsram, 'Controller NVSRAM compared with the recommended version.')}${tile('Drive firmware current (arrays)', v.es.drives, 'An array counts as current when every drive model reports a firmware revision at or above the recommended one.')}</div>`;
-    h += `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><thead><tr><th style="${th}">Array</th><th style="${th}">SANtricity OS</th><th style="${th}">Recommended</th><th style="${th}">NVSRAM</th><th style="${th}">Drive firmware</th></tr></thead><tbody>` + v.es.rows.map(r => `<tr><td style="${td}">${e(r.name)}<div style="font-size:0.65rem;color:var(--text-muted);">${e(r.customer)}</div></td><td style="${td}">${e(r.osCur || '—')} ${badge(r.osM)}</td><td style="${td}">${e(r.osRec && r.osM === false ? r.osRec : '—')}</td><td style="${td}">${e(r.nvCur || '—')} ${badge(r.nvM)}${r.nvM === false ? `<div style="font-size:0.65rem;color:#f59e0b;">recommended ${e(r.nvRec)}</div>` : ''}</td><td style="${td}">${r.drives.total ? `${r.drives.current}/${r.drives.total} drives current` : '—'}${r.drivesBehind.map(d => `<div style="font-size:0.65rem;color:#f59e0b;">${e(d.model)}: ${e(d.fw)} to ${e(d.rec)} (${d.count})</div>`).join('')}</td></tr>`).join('') + `</tbody></table>`;
+    h += `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><thead><tr><th style="${th}">Array</th><th style="${th}">SANtricity OS</th><th style="${th}">Recommended</th><th style="${th}">NVSRAM</th><th style="${th}">Drive firmware</th></tr></thead><tbody>` + v.es.rows.map(r => `<tr><td style="${td}">${e(r.name)}<div style="font-size:0.65rem;color:var(--text-muted);">${e(r.customer)}</div></td><td style="${td}">${e(r.osCur || '—')} ${badge(r.osM)}</td><td style="${td}">${e(r.osRec && r.osM === false ? r.osRec : '—')}</td><td style="${td}">${e(r.nvCur || '—')} ${badge(r.nvM)}${r.nvM === false ? `<div style="font-size:0.65rem;color:var(--hx-f59e0b);">recommended ${e(r.nvRec)}</div>` : ''}</td><td style="${td}">${r.drives.total ? `${r.drives.current}/${r.drives.total} drives current` : '—'}${r.drivesBehind.map(d => `<div style="font-size:0.65rem;color:var(--hx-f59e0b);">${e(d.model)}: ${e(d.fw)} to ${e(d.rec)} (${d.count})</div>`).join('')}</td></tr>`).join('') + `</tbody></table>`;
   }
   if (v.sg.rows.length) {
     h += `<h3 style="font-size:0.95rem;margin:22px 0 4px;color:var(--text-primary);">StorageGRID software <span class="rk-tag rk-tag-finding">FINDING</span></h3><div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:8px;">${v.sg.rows.length} grid${v.sg.rows.length !== 1 ? 's' : ''}. Active IQ reports the grid software version against the release it recommends, and each node's software version where the grid topology is harvested. Appliance BMC/BIOS firmware is not reported.</div>`;
     h += `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:12px;">${tile('Grid software current', v.sg.sw, 'Grid software version compared with the release Active IQ recommends.')}<div style="background:${v.sg.nodesMixed ? 'rgba(245,158,11,0.08)' : 'rgba(16,185,129,0.08)'};border:1px solid ${v.sg.nodesMixed ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'};border-radius:var(--radius-sm);padding:12px;text-align:center;"><div style="font-size:1.4rem;font-weight:700;color:${v.sg.nodesMixed ? '#f59e0b' : '#10b981'};">${v.sg.nodesMixed}</div><div style="font-size:0.72rem;color:var(--text-secondary);font-weight:600;">Grids with mixed node versions</div></div></div>`;
-    h += `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><thead><tr><th style="${th}">Grid</th><th style="${th}">Software</th><th style="${th}">Recommended</th><th style="${th}">Node versions</th></tr></thead><tbody>` + v.sg.rows.map(r => `<tr><td style="${td}">${e(r.name)}<div style="font-size:0.65rem;color:var(--text-muted);">${e(r.customer)}</div></td><td style="${td}">${e(r.version || '—')} ${badge(r.m)}</td><td style="${td}">${e(r.rec && r.m === false ? r.rec : '—')}</td><td style="${td}">${r.nodeN ? `${r.nodeN} nodes: ${e(r.nodeVers.join(', ') || 'not reported')}${r.mixed ? ' <span style="color:#f59e0b;font-weight:600;">mixed</span>' : ''}` : '<span style="color:var(--text-muted);">not harvested</span>'}</td></tr>`).join('') + `</tbody></table>`;
+    h += `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;"><thead><tr><th style="${th}">Grid</th><th style="${th}">Software</th><th style="${th}">Recommended</th><th style="${th}">Node versions</th></tr></thead><tbody>` + v.sg.rows.map(r => `<tr><td style="${td}">${e(r.name)}<div style="font-size:0.65rem;color:var(--text-muted);">${e(r.customer)}</div></td><td style="${td}">${e(r.version || '—')} ${badge(r.m)}</td><td style="${td}">${e(r.rec && r.m === false ? r.rec : '—')}</td><td style="${td}">${r.nodeN ? `${r.nodeN} nodes: ${e(r.nodeVers.join(', ') || 'not reported')}${r.mixed ? ' <span style="color:var(--hx-f59e0b);font-weight:600;">mixed</span>' : ''}` : '<span style="color:var(--text-muted);">not harvested</span>'}</td></tr>`).join('') + `</tbody></table>`;
   }
   return h;
 }
@@ -33186,8 +33233,8 @@ function _renderFirmwareCurrencySection(systems, opts) {
     return true; // all segments equal
   };
   const _badge = (isCurrent) => {
-    if (isCurrent === true)  return '<span style="color:#10b981;font-weight:600;" title="Current">✅ Current</span>';
-    if (isCurrent === false) return '<span style="color:#f59e0b;font-weight:600;" title="Update available">⚠️ Update</span>';
+    if (isCurrent === true)  return '<span style="color:var(--hx-10b981);font-weight:600;" title="Current">✅ Current</span>';
+    if (isCurrent === false) return '<span style="color:var(--hx-f59e0b);font-weight:600;" title="Update available">⚠️ Update</span>';
     return '<span style="color:var(--text-muted);" title="Not reported by Active IQ">—</span>';
   };
   const _ver = (v) => v || '<span style="color:var(--text-muted);">—</span>';
@@ -33334,24 +33381,24 @@ function _renderFirmwareCurrencySection(systems, opts) {
           <span style="color:var(--text-muted);">📦 ${shelfCount} shelf${shelfCount !== 1 ? 's' : ''} · ${driveCount} drive${driveCount !== 1 ? 's' : ''}</span>
         </span>
       </div>
-      <div id="${cardId}" style="display:none;padding:12px 14px;background:rgba(15,22,38,0.3);">`;
+      <div id="${cardId}" style="display:none;padding:12px 14px;background:var(--navy-300);">`;
 
     // ── Detail grid: SP/BMC, MB, DQP ──
     cardHtml += `
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">
-          <div style="background:rgba(255,255,255,0.03);border-radius:var(--radius-sm);padding:10px;">
+          <div style="background:var(--wa-30);border-radius:var(--radius-sm);padding:10px;">
             <div style="font-size:0.7rem;color:var(--accent-cyan);text-transform:uppercase;font-weight:600;margin-bottom:6px;">${sfw.type || 'SP'} / BMC Firmware</div>
             <div style="font-size:0.8rem;">Current: <code style="color:var(--text-primary);">${_ver(sfw.currentVersion)}</code></div>
             <div style="font-size:0.8rem;">Recommended: <code style="color:var(--accent-cyan);">${_ver(sfw.recommendedVersion)}</code></div>
             <div style="margin-top:4px;">${_badge(spMatch)}</div>
           </div>
-          <div style="background:rgba(255,255,255,0.03);border-radius:var(--radius-sm);padding:10px;">
+          <div style="background:var(--wa-30);border-radius:var(--radius-sm);padding:10px;">
             <div style="font-size:0.7rem;color:var(--accent-cyan);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Motherboard BIOS</div>
             <div style="font-size:0.8rem;">Current: <code style="color:var(--text-primary);">${_ver(mbfw.currentVersion)}</code></div>
             <div style="font-size:0.8rem;">Recommended: <code style="color:var(--accent-cyan);">${_ver(mbfw.recommendedVersion)}</code></div>
             <div style="margin-top:4px;">${_badge(mbMatch)}</div>
           </div>
-          <div style="background:rgba(255,255,255,0.03);border-radius:var(--radius-sm);padding:10px;">
+          <div style="background:var(--wa-30);border-radius:var(--radius-sm);padding:10px;">
             <div style="font-size:0.7rem;color:var(--accent-cyan);text-transform:uppercase;font-weight:600;margin-bottom:6px;">Disk Qualification Package</div>
             <div style="font-size:0.8rem;">Current: <code style="color:var(--text-primary);">${_ver(dqp.currentVersion)}</code></div>
             <div style="font-size:0.8rem;">Recommended: <code style="color:var(--accent-cyan);">${_ver(dqp.recommendedVersion)}</code></div>
@@ -33389,15 +33436,15 @@ function _renderFirmwareCurrencySection(systems, opts) {
         const shMatch = info.currentFw && info.baseline ? _fwMatch(info.currentFw, info.baseline.recommended) : null;
         cardHtml += `
             <tr>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);font-weight:600;">${info.modName}</td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);color:var(--text-secondary);">${Array.from(info.shelfModels).join(', ')}</td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:center;">${info.count}</td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);"><code style="color:var(--text-primary);">${_ver(info.currentFw)}</code></td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);">
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);font-weight:600;">${info.modName}</td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);color:var(--text-secondary);">${Array.from(info.shelfModels).join(', ')}</td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);text-align:center;">${info.count}</td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);"><code style="color:var(--text-primary);">${_ver(info.currentFw)}</code></td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);">
                 <code style="color:var(--accent-cyan);">${rec}</code>
                 ${label ? `<div style="font-size:0.65rem;color:var(--text-muted);">${label}</div>` : ''}
               </td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);">${_badge(shMatch)}</td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);">${_badge(shMatch)}</td>
             </tr>`;
       });
       cardHtml += `</tbody></table></div>`;
@@ -33415,7 +33462,7 @@ function _renderFirmwareCurrencySection(systems, opts) {
         }
       });
       const driveStatusLine = (driveBehind > 0 || driveCurrent > 0)
-        ? ` — <span style="color:#10b981;">${driveCurrent} current</span>${driveBehind > 0 ? `, <span style="color:#f59e0b;">${driveBehind} need update</span>` : ''}`
+        ? ` — <span style="color:var(--hx-10b981);">${driveCurrent} current</span>${driveBehind > 0 ? `, <span style="color:var(--hx-f59e0b);">${driveBehind} need update</span>` : ''}`
         : '';
       cardHtml += `
         <div>
@@ -33434,12 +33481,12 @@ function _renderFirmwareCurrencySection(systems, opts) {
         const driveMatch = _fwMatch(d.firmware !== 'Unknown' ? d.firmware : null, rec || null);
         cardHtml += `
             <tr>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);font-family:monospace;font-size:0.72rem;">${d.model}</td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);"><code>${d.firmware}</code></td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);"><code style="color:var(--accent-cyan);">${rec || '—'}</code></td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:center;">${_badge(driveMatch)}</td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);color:var(--text-secondary);">${d.vendor}</td>
-              <td style="padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:center;">${d.count}</td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);font-family:monospace;font-size:0.72rem;">${d.model}</td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);"><code>${d.firmware}</code></td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);"><code style="color:var(--accent-cyan);">${rec || '—'}</code></td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);text-align:center;">${_badge(driveMatch)}</td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);color:var(--text-secondary);">${d.vendor}</td>
+              <td style="padding:4px 8px;border-bottom:1px solid var(--wa-40);text-align:center;">${d.count}</td>
             </tr>`;
       });
       if (drives.length > 20) {
@@ -33466,7 +33513,7 @@ function _renderFirmwareCurrencySection(systems, opts) {
       <div style="font-size:0.85rem;margin-bottom:4px;">${icon}</div>
       <div style="font-size:1.6rem;font-weight:700;color:${color};">${current}<span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;">/${total}</span></div>
       <div style="font-size:0.72rem;color:var(--text-secondary);font-weight:600;">${label}</div>
-      ${behind > 0 ? `<div style="font-size:0.65rem;color:#f59e0b;margin-top:4px;">${behind} need update</div>` : ''}
+      ${behind > 0 ? `<div style="font-size:0.65rem;color:var(--hx-f59e0b);margin-top:4px;">${behind} need update</div>` : ''}
       ${unknown > 0 ? `<div style="font-size:0.6rem;color:var(--text-muted);margin-top:2px;">${unknown} unknown</div>` : ''}
     </div>`;
   };
@@ -33515,7 +33562,7 @@ function _renderFeatureAdoptionSection(systems) {
 
   const tblStyle = 'width:100%;border-collapse:collapse;font-size:0.8rem;';
   const thStyle = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;';
-  const tdStyle = 'padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.8rem; text-align:center;';
+  const tdStyle = 'padding:6px 10px;border-bottom:1px solid var(--wa-40);font-size:0.8rem; text-align:center;';
   const tdLeft = tdStyle.replace('text-align:center;', 'text-align:left;');
   // ARP/SnapMirror/HA/AutoSupport/Score data cells are text-align:center
   // (tdStyle above), but their <th> headers were built from thStyle, which is
@@ -33587,7 +33634,7 @@ function _renderFeatureAdoptionSection(systems) {
           <span>${ver}</span>
           <span>${count} (${pct}%)</span>
         </div>
-        <div style="width: 100%; background: rgba(255,255,255,0.1); border-radius: 2px; height: 6px;">
+        <div style="width: 100%; background: var(--wa-100); border-radius: 2px; height: 6px;">
           <div style="width: ${pct}%; background: var(--accent-cyan); height: 100%; border-radius: 2px;"></div>
         </div>
       </div>
@@ -33632,7 +33679,7 @@ function _renderFeatureAdoptionSection(systems) {
 
   return `
     <div style="display:flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
-      <div style="flex:2; min-width: 300px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+      <div style="flex:2; min-width: 300px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 12px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;" title="Feature adoption rates based on data confirmed by Active IQ API. Features showing '—' are not reported by the API and must be verified on-cluster.">Fleet-Wide Feature Adoption</h4>
         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px;">
           ${featureStats.map(f => {
@@ -33640,7 +33687,7 @@ function _renderFeatureAdoptionSection(systems) {
             const color = f.pct != null ? 'var(--accent-cyan)' : 'var(--text-muted)';
             const subtitle = f.poolN === 0 ? 'ONTAP-only' : f.pct != null ? `${f.enabled}/${f.known} confirmed` : 'Not reported';
             return `
-            <div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; text-align: center;" title="${f.enabled} enabled, ${f.disabled} disabled, ${f.unknown} unknown">
+            <div style="background: var(--bk-200); padding: 8px; border-radius: 4px; text-align: center;" title="${f.enabled} enabled, ${f.disabled} disabled, ${f.unknown} unknown">
               <div style="font-size: 1.2rem; color: ${color}; font-weight: bold;">${display}</div>
               <div style="font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase;">${f.name}</div>
               <div style="font-size: 0.6rem; color: var(--text-muted); margin-top: 2px;">${subtitle}</div>
@@ -33649,7 +33696,7 @@ function _renderFeatureAdoptionSection(systems) {
         </div>
         ${unknownNote}
       </div>
-      <div style="flex:1; min-width: 200px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+      <div style="flex:1; min-width: 200px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 12px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">Fleet Diversity (OS)</h4>
         ${versionBars || '<div style="font-size:0.8rem;color:var(--text-secondary);">No version data</div>'}
       </div>
@@ -33657,7 +33704,7 @@ function _renderFeatureAdoptionSection(systems) {
 
     <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 24px 0 8px 0;">Per-System Feature Matrix</h3>
     <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">✅ = Confirmed enabled &nbsp;&nbsp; ❌ = Confirmed disabled &nbsp;&nbsp; — = Not reported by API (verify on-cluster)</div>
-    <div class="tam-table-wrapper" style="overflow-x:auto; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:var(--radius-md); padding:16px;">
+    <div class="tam-table-wrapper" style="overflow-x:auto; background:var(--bk-200); border:1px solid var(--wa-100); border-radius:var(--radius-md); padding:16px;">
       <table style="${tblStyle}">
         <thead>
           <tr>
@@ -33698,12 +33745,12 @@ function _renderAsBuiltSection(systems) {
 
     const tblStyle = 'width:100%;border-collapse:collapse;font-size:0.8rem;';
     const thStyle = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;';
-    const tdStyle = 'padding:6px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.8rem;';
+    const tdStyle = 'padding:6px 10px;border-bottom:1px solid var(--wa-40);font-size:0.8rem;';
     
-    const badgeGreen = 'background:rgba(16,185,129,0.15);color:#10b981;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;';
-    const badgeAmber = 'background:rgba(245,158,11,0.15);color:#f59e0b;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;';
-    const badgeRed = 'background:rgba(239,68,68,0.15);color:#ef4444;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;';
-    const badgeNeutral = 'background:rgba(255,255,255,0.08);color:var(--text-secondary);padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;';
+    const badgeGreen = 'background:rgba(16,185,129,0.15);color:var(--hx-10b981);padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;';
+    const badgeAmber = 'background:rgba(245,158,11,0.15);color:var(--hx-f59e0b);padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;';
+    const badgeRed = 'background:rgba(239,68,68,0.15);color:var(--hx-ef4444);padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;';
+    const badgeNeutral = 'background:var(--wa-80);color:var(--text-secondary);padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;';
 
     const getBadgeStyle = (status) => {
         if (!status) return badgeNeutral;
@@ -33794,22 +33841,22 @@ function _renderAsBuiltSection(systems) {
     </div>
     
     <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:32px;">
-        <div style="flex:1; min-width: 180px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+        <div style="flex:1; min-width: 180px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
             <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Total Systems</div>
             <div style="font-size:1.8rem; font-weight:bold; color:var(--accent-cyan);">${_dfEffectiveSystemCount(systems)}</div>
         </div>
-        <div style="flex:1; min-width: 180px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+        <div style="flex:1; min-width: 180px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
             <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Platform Mix</div>
             <div style="font-size:0.85rem; line-height:1.5;">
                 ${Object.entries(platformMix).map(([k,v]) => '<div>' + k + ': <strong>' + v + '</strong></div>').join('')}
             </div>
         </div>
-        <div style="flex:1; min-width: 180px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+        <div style="flex:1; min-width: 180px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
             <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Total Fleet Capacity</div>
             <div style="font-size:1.8rem; font-weight:bold;">${totalCapTB.toFixed(1)} TB</div>
             <div style="font-size:0.78rem; color:var(--text-secondary);">Usable / Allocated</div>
         </div>
-        <div style="flex:1; min-width: 180px; background: rgba(255,255,255,0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05);">
+        <div style="flex:1; min-width: 180px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
             <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Fleet Health</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
                 <span style="${badgeGreen}">${healthNormal} Normal</span>
@@ -33832,8 +33879,8 @@ function _renderAsBuiltSection(systems) {
         const modelStr = s.model || s.platform || 'Unknown Model';
 
         html += `
-        <div style="margin-bottom:32px; border:1px solid var(--border-color); border-radius:var(--radius-lg); background:rgba(255,255,255,0.01); overflow:hidden; page-break-inside:avoid;">
-            <div style="background:linear-gradient(135deg, rgba(255,255,255,0.04), rgba(6,182,212,0.03)); padding:16px 20px; border-bottom:1px solid var(--border-color); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div style="margin-bottom:32px; border:1px solid var(--border-color); border-radius:var(--radius-lg); background:var(--wa-10); overflow:hidden; page-break-inside:avoid;">
+            <div style="background:linear-gradient(135deg, var(--wa-40), rgba(6,182,212,0.03)); padding:16px 20px; border-bottom:1px solid var(--border-color); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
                 <div style="display:flex; align-items:center; gap:12px;">
                     <div style="width:12px; height:12px; border-radius:50%; background:${dotColor}; box-shadow:0 0 6px ${dotColor}80;"></div>
                     <div>
@@ -33859,8 +33906,8 @@ function _renderAsBuiltSection(systems) {
         if (s.isDisaggregated) persBadges += '<span style="' + badgeGreen + ' margin-right:4px;">Disaggregated</span>';
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">System Identity & Hardware</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">System Identity & Hardware</summary>
                 <div style="padding:16px; display:flex; gap:16px; flex-wrap:wrap;">
                     <table style="${tblStyle} flex:1; min-width:280px;">
                         <tr><th style="${thStyle} width:40%;">System ID</th><td style="${tdStyle}">${valOrDash(s.systemId)}</td></tr>
@@ -33905,8 +33952,8 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Software & Operating System</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Software & Operating System</summary>
                 <div style="padding:16px;">
                     <table style="${tblStyle}">
                         <tr>
@@ -33978,25 +34025,25 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Storage Capacity & Efficiency</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Storage Capacity & Efficiency</summary>
                 <div style="padding:16px;">
                     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
-                        <div style="flex:1; min-width:140px; background:rgba(255,255,255,0.02); padding:12px; border-radius:var(--radius-md); border:1px solid rgba(255,255,255,0.05); text-align:center;">
+                        <div style="flex:1; min-width:140px; background:var(--wa-20); padding:12px; border-radius:var(--radius-md); border:1px solid var(--wa-50); text-align:center;">
                             <div style="font-size:0.7rem; color:var(--text-secondary); text-transform:uppercase;">Usable</div>
                             <div style="font-size:1.2rem; font-weight:700; color:var(--accent-cyan);">${_fmtTB(eff.usableCapacityTB)}</div>
                         </div>
-                        <div style="flex:1; min-width:140px; background:rgba(255,255,255,0.02); padding:12px; border-radius:var(--radius-md); border:1px solid rgba(255,255,255,0.05); text-align:center;">
+                        <div style="flex:1; min-width:140px; background:var(--wa-20); padding:12px; border-radius:var(--radius-md); border:1px solid var(--wa-50); text-align:center;">
                             <div style="font-size:0.7rem; color:var(--text-secondary); text-transform:uppercase;">Physical Used</div>
                             <div style="font-size:1.2rem; font-weight:700;">${_fmtTB(eff.physicalUsedTB)}</div>
                         </div>
-                        <div style="flex:1; min-width:140px; background:rgba(255,255,255,0.02); padding:12px; border-radius:var(--radius-md); border:1px solid rgba(255,255,255,0.05); text-align:center;">
+                        <div style="flex:1; min-width:140px; background:var(--wa-20); padding:12px; border-radius:var(--radius-md); border:1px solid var(--wa-50); text-align:center;">
                             <div style="font-size:0.7rem; color:var(--text-secondary); text-transform:uppercase;">Logical</div>
                             <div style="font-size:1.2rem; font-weight:700;">${_fmtTB(eff.logicalUsedTB)}</div>
                         </div>
                         <div style="flex:1; min-width:140px; background:rgba(16,185,129,0.06); padding:12px; border-radius:var(--radius-md); border:1px solid rgba(16,185,129,0.15); text-align:center;">
-                            <div style="font-size:0.7rem; color:#10b981; text-transform:uppercase;">Space Saved</div>
-                            <div style="font-size:1.2rem; font-weight:700; color:#10b981;">${_fmtTB(eff.spaceSavedTB)}</div>
+                            <div style="font-size:0.7rem; color:var(--hx-10b981); text-transform:uppercase;">Space Saved</div>
+                            <div style="font-size:1.2rem; font-weight:700; color:var(--hx-10b981);">${_fmtTB(eff.spaceSavedTB)}</div>
                         </div>
                     </div>
                     <table style="${tblStyle}">
@@ -34053,7 +34100,7 @@ function _renderAsBuiltSection(systems) {
                         + '</tr>';
                 });
                 const migratedWarn = svm.migratedLifs > 0
-                    ? '<div style="color:#f59e0b; font-size:0.8rem; margin-bottom:8px;">\u26a0 ' + svm.migratedLifs + ' LIF(s) not on home port</div>'
+                    ? '<div style="color:var(--hx-f59e0b); font-size:0.8rem; margin-bottom:8px;">\u26a0 ' + svm.migratedLifs + ' LIF(s) not on home port</div>'
                     : '';
                 
                 let secSettingsHtml = '';
@@ -34067,7 +34114,7 @@ function _renderAsBuiltSection(systems) {
                         + '</div>';
                 }
                 
-                svmsHtml += '<div style="border:1px solid rgba(255,255,255,0.06); padding:12px; border-radius:6px;">'
+                svmsHtml += '<div style="border:1px solid var(--wa-60); padding:12px; border-radius:6px;">'
                     + '<div style="display:flex; justify-content:space-between; margin-bottom:10px; align-items:center; flex-wrap:wrap; gap:8px;">'
                     + '<strong style="font-size:0.92rem;">SVM: ' + valOrDash(svm.name) + (svm.svmType ? ' (' + svm.svmType + ')' : '') + '</strong>'
                     + '<div><span style="' + getBadgeStyle(svm.status) + '">' + valOrDash(svm.status) + '</span> ' + protos + '</div>'
@@ -34091,9 +34138,9 @@ function _renderAsBuiltSection(systems) {
             const _linkBadge = (lnk) => {
                 if (!lnk) return '—';
                 const up = lnk.toUpperCase();
-                if (up === 'UP') return '<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:0.7rem;font-weight:600;background:rgba(52,211,153,0.15);color:#34d399;">UP</span>';
-                if (up === 'DOWN') return '<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:0.7rem;font-weight:600;background:rgba(248,113,113,0.15);color:#f87171;">DOWN</span>';
-                return '<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:0.7rem;font-weight:600;background:rgba(251,191,36,0.15);color:#fbbf24;">' + lnk + '</span>';
+                if (up === 'UP') return '<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:0.7rem;font-weight:600;background:rgba(52,211,153,0.15);color:var(--hx-34d399);">UP</span>';
+                if (up === 'DOWN') return '<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:0.7rem;font-weight:600;background:rgba(248,113,113,0.15);color:var(--hx-f87171);">DOWN</span>';
+                return '<span style="display:inline-block;padding:1px 7px;border-radius:4px;font-size:0.7rem;font-weight:600;background:rgba(251,191,36,0.15);color:var(--hx-fbbf24);">' + lnk + '</span>';
             };
             let _npRows = '';
             if (_npArr.length > 0) {
@@ -34112,7 +34159,7 @@ function _renderAsBuiltSection(systems) {
             } else {
                 _npRows = '<tr><td colspan="10" style="' + tdStyle + 'text-align:center;color:var(--text-muted);">No port details available</td></tr>';
             }
-            nwPortsHtml = '<div style="padding:16px; border-top:1px solid rgba(255,255,255,0.06);">'
+            nwPortsHtml = '<div style="padding:16px; border-top:1px solid var(--wa-60);">'
                 + '<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px;"><div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); letter-spacing:0.5px;">Network Ports</div>'
                 + '<span style="font-size:0.7rem;color:var(--text-muted);">(' + _npCount + ' total)</span></div>'
                 + '<div style="overflow-x:auto;">'
@@ -34137,13 +34184,13 @@ function _renderAsBuiltSection(systems) {
                 _piRows = '<tr><th style="' + thStyle + '">Property</th><th style="' + thStyle + '">Value</th></tr>'
                     + _piEntries.map(([k,v]) => '<tr><td style="' + tdStyle + '">' + k + '</td><td style="' + tdStyle + '">' + valOrDash(typeof v === 'object' ? JSON.stringify(v, null, 2) : v) + '</td></tr>').join('');
             }
-            portIntHtml = '<div style="padding:16px; border-top:1px solid rgba(255,255,255,0.06);"><div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; letter-spacing:0.5px;">Port Interfaces</div>'
+            portIntHtml = '<div style="padding:16px; border-top:1px solid var(--wa-60);"><div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; letter-spacing:0.5px;">Port Interfaces</div>'
                 + '<div style="overflow-x:auto;"><table style="' + tblStyle + '">' + _piRows + '</table></div></div>';
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Network & SVM Configuration</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Network & SVM Configuration</summary>
                 ${svmsHtml}
                 ${nwPortsHtml}
                 ${portIntHtml}
@@ -34165,8 +34212,8 @@ function _renderAsBuiltSection(systems) {
             });
         }
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Data Protection & Replication</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Data Protection & Replication</summary>
                 <div style="padding:16px;">
                     <div style="display:flex; gap:24px; margin-bottom:16px; flex-wrap:wrap;">
                         <div><strong>SnapMirror:</strong> <span style="${sm.enabled ? badgeGreen : badgeNeutral}">${sm.enabled ? 'Enabled' : 'Not Active'}</span></div>
@@ -34204,18 +34251,18 @@ function _renderAsBuiltSection(systems) {
         if (s.isARPEnabled === false) { arpLabel = 'Disabled'; arpBadge = badgeRed; }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Security Posture</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Security Posture</summary>
                 <div style="padding:16px;">
                     <div style="margin-bottom:16px;"><strong>Anti-Ransomware Protection (ARP):</strong> <span style="${arpBadge}">${arpLabel}</span></div>
                     <div style="display:flex; gap:32px; flex-wrap:wrap;">
                         <div style="flex:1; min-width:250px;">
                             <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; letter-spacing:0.5px;">Security Bulletins (${secBulls.length})</div>
-                            ${secBulls.length > 0 ? secBulls.slice(0, 10).map(b => '<div style="font-size:0.82rem; margin-bottom:6px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);"><span style="' + getBadgeStyle(b.severity) + '">' + (b.severity || 'N/A') + '</span> <strong>' + (b.id || '') + '</strong>: ' + (b.title || 'No title reported') + '</div>').join('') : '<div style="font-size:0.82rem; color:var(--text-muted);">None reported</div>'}
+                            ${secBulls.length > 0 ? secBulls.slice(0, 10).map(b => '<div style="font-size:0.82rem; margin-bottom:6px; padding:4px 0; border-bottom:1px solid var(--wa-30);"><span style="' + getBadgeStyle(b.severity) + '">' + (b.severity || 'N/A') + '</span> <strong>' + (b.id || '') + '</strong>: ' + (b.title || 'No title reported') + '</div>').join('') : '<div style="font-size:0.82rem; color:var(--text-muted);">None reported</div>'}
                         </div>
                         <div style="flex:1; min-width:250px;">
                             <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; letter-spacing:0.5px;">Security-Related Risks (${secRisks.length})</div>
-                            ${secRisks.length > 0 ? secRisks.slice(0, 10).map(r => '<div style="font-size:0.82rem; margin-bottom:6px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);"><span style="' + getBadgeStyle(r.severity) + '">' + (r.severity || 'N/A') + '</span> ' + (r.description || 'No description reported') + '</div>').join('') : '<div style="font-size:0.82rem; color:var(--text-muted);">None reported</div>'}
+                            ${secRisks.length > 0 ? secRisks.slice(0, 10).map(r => '<div style="font-size:0.82rem; margin-bottom:6px; padding:4px 0; border-bottom:1px solid var(--wa-30);"><span style="' + getBadgeStyle(r.severity) + '">' + (r.severity || 'N/A') + '</span> ' + (r.description || 'No description reported') + '</div>').join('') : '<div style="font-size:0.82rem; color:var(--text-muted);">None reported</div>'}
                         </div>
                     </div>
                 </div>
@@ -34243,8 +34290,8 @@ function _renderAsBuiltSection(systems) {
         const cases = s.supportCases || [];
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Warranty & Support</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Warranty & Support</summary>
                 <div style="padding:16px; display:flex; gap:32px; flex-wrap:wrap;">
                     <table style="${tblStyle} flex:1; min-width:280px;">
                         <tr><th style="${thStyle} width:40%;">Warranty Status</th><td style="${tdStyle}"><span style="${getBadgeStyle(wStatus)}">${valOrDash(wStatus)}</span></td></tr>
@@ -34257,7 +34304,7 @@ function _renderAsBuiltSection(systems) {
                         <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; letter-spacing:0.5px;">Primary Contact</div>
                         <div style="font-size:0.85rem; margin-bottom:16px;">Name: ${valOrDash((s.contacts || {}).name)}<br>Phone: ${valOrDash((s.contacts || {}).phone)}<br>Email: ${valOrDash((s.contacts || {}).email)}</div>
                         <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; letter-spacing:0.5px;">Support Cases (${cases.length})</div>
-                        ${cases.length > 0 ? cases.slice(0, 8).map(sc => '<div style="font-size:0.82rem; margin-bottom:4px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.03);">' + '<span style="' + getBadgeStyle(sc.severity) + '">' + (sc.severity || 'N/A') + '</span> ' + (sc.id || '') + ': ' + (sc.title || '') + '</div>').join('') : '<div style="font-size:0.82rem; color:var(--text-muted);">No open cases</div>'}
+                        ${cases.length > 0 ? cases.slice(0, 8).map(sc => '<div style="font-size:0.82rem; margin-bottom:4px; padding:4px 0; border-bottom:1px solid var(--wa-30);">' + '<span style="' + getBadgeStyle(sc.severity) + '">' + (sc.severity || 'N/A') + '</span> ' + (sc.id || '') + ': ' + (sc.title || '') + '</div>').join('') : '<div style="font-size:0.82rem; color:var(--text-muted);">No open cases</div>'}
                     </div>
                 </div>
             </details>
@@ -34276,8 +34323,8 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">AutoSupport Health</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">AutoSupport Health</summary>
                 <div style="padding:16px;">
                     <table style="${tblStyle}">
                         <tr>
@@ -34389,9 +34436,9 @@ function _renderAsBuiltSection(systems) {
                             if (!driveGroups[key]) driveGroups[key] = { vendor: dVendor, model: dModel, firmware: dFw, count: 0 };
                             driveGroups[key].count++;
                         });
-                        const compactTd = 'padding:3px 8px; border-bottom:1px solid rgba(255,255,255,0.04); font-size:0.75rem;';
-                        const compactTh = 'padding:3px 8px; text-align:left; font-weight:600; font-size:0.65rem; text-transform:uppercase; letter-spacing:0.5px; color:var(--accent, #64b5f6); border-bottom:1px solid rgba(255,255,255,0.08);';
-                        shRow += '<tr><td colspan="7" style="padding:0 0 0 28px; border-bottom:1px solid rgba(255,255,255,0.06);">'
+                        const compactTd = 'padding:3px 8px; border-bottom:1px solid var(--wa-40); font-size:0.75rem;';
+                        const compactTh = 'padding:3px 8px; text-align:left; font-weight:600; font-size:0.65rem; text-transform:uppercase; letter-spacing:0.5px; color:var(--accent, #64b5f6); border-bottom:1px solid var(--wa-80);';
+                        shRow += '<tr><td colspan="7" style="padding:0 0 0 28px; border-bottom:1px solid var(--wa-60);">'
                             + '<details style="margin:2px 0 4px 0;">'
                             + '<summary style="font-size:0.7rem; color:var(--text-secondary); cursor:pointer; padding:3px 0; user-select:none; list-style:none; display:flex; align-items:center; gap:4px;">'
                             + '<span style="display:inline-block; transition:transform 0.15s; font-size:0.55rem;">▶</span> '
@@ -34438,8 +34485,8 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Firmware Currency</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Firmware Currency</summary>
                 <div style="padding:16px;">
                     <table style="${tblStyle}">
                         <tr><th style="${thStyle}">Component</th><th style="${thStyle}">Current</th><th style="${thStyle}">Recommended</th><th style="${thStyle}">Status</th></tr>
@@ -34474,8 +34521,8 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Interconnect Switches</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Interconnect Switches</summary>
                 ${swHtml}
             </details>
         `;
@@ -34501,8 +34548,8 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Lifecycle & Licenses</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Lifecycle & Licenses</summary>
                 <div style="padding:16px; display:flex; gap:32px; flex-wrap:wrap;">
                     <div style="flex:1; min-width:280px;">
                         <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; letter-spacing:0.5px;">End of Support Dates</div>
@@ -34528,7 +34575,7 @@ function _renderAsBuiltSection(systems) {
                     </div>
                     <div style="flex:1; min-width:280px;">
                         <div style="font-size:0.75rem; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; letter-spacing:0.5px;">Licensed Packages (${_licSummary(lics).length})</div>
-                        ${_licSummary(lics).length > 0 ? '<div style="max-height:260px; overflow-y:auto; border:1px solid rgba(255,255,255,0.05); border-radius:4px;"><table style="' + tblStyle + '"><tr><th style="' + thStyle + '">Package</th><th style="' + thStyle + '">Description</th><th style="' + thStyle + '">Key</th><th style="' + thStyle + '">Enabled?</th></tr>' + _licSummary(lics).map(l => {
+                        ${_licSummary(lics).length > 0 ? '<div style="max-height:260px; overflow-y:auto; border:1px solid var(--wa-50); border-radius:4px;"><table style="' + tblStyle + '"><tr><th style="' + thStyle + '">Package</th><th style="' + thStyle + '">Description</th><th style="' + thStyle + '">Key</th><th style="' + thStyle + '">Enabled?</th></tr>' + _licSummary(lics).map(l => {
                             const enabled = _licFeatureEnabled(l.package, s);
                             const enabledCell = enabled === null ? emptyDash : (enabled ? '<span style="' + badgeGreen + '">Yes</span>' : '<span style="' + badgeAmber + '">Not detected</span>');
                             return '<tr><td style="' + tdStyle + '">' + valOrDash(l.package) + '</td><td style="' + tdStyle + '">' + valOrDash(l.description) + '</td><td style="' + tdStyle + '">' + valOrDash(l.name) + '</td><td style="' + tdStyle + '">' + enabledCell + '</td></tr>';
@@ -34541,8 +34588,8 @@ function _renderAsBuiltSection(systems) {
 
         // ── 12. Account & Success Team ──────────────────────────────────────────
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Account & Success Team</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Account & Success Team</summary>
                 <div style="padding:16px;">
                     <table style="${tblStyle}">
                         <tr>
@@ -34578,8 +34625,8 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Capacity Growth & Projections</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Capacity Growth & Projections</summary>
                 <div style="padding:16px;">
                     <table style="${tblStyle}">
                         <tr>
@@ -34631,8 +34678,8 @@ function _renderAsBuiltSection(systems) {
         }
         const opHealthEmpty = !autoResolvedHtml && !dtHtml && !uptimeHtml;
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Operational Health & Uptime</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Operational Health & Uptime</summary>
                 <div style="padding:16px;">
                     ${opHealthEmpty ? '<div style="font-size:0.8rem; color:var(--text-muted);">Not reported by Active IQ for this system — no auto-resolved case, downtime, or uptime telemetry available.</div>' : `
                     ${autoResolvedHtml}
@@ -34667,8 +34714,8 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Sustainability & Carbon</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Sustainability & Carbon</summary>
                 <div style="padding:16px;">
                     ${!sustScoresHtml && !carbonHtml ? '<div style="font-size:0.8rem; color:var(--text-muted);">Not reported by Active IQ for this system — sustainability/carbon telemetry requires Data Infrastructure Insights or a NetApp Sustainability workbook integration.</div>' : ''}
                     ${sustScoresHtml}
@@ -34709,8 +34756,8 @@ function _renderAsBuiltSection(systems) {
         }
 
         html += `
-            <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">Risk & Advisory Register</summary>
+            <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">Risk & Advisory Register</summary>
                 <div style="padding:16px;">
                     ${allRisksHtml}
                 </div>
@@ -34724,8 +34771,8 @@ function _renderAsBuiltSection(systems) {
                 + '</table>';
                 
             html += `
-                <details open style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                    <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">VMware Integration</summary>
+                <details open style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                    <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">VMware Integration</summary>
                     <div style="padding:16px;">
                         ${vcHtml}
                     </div>
@@ -34749,18 +34796,18 @@ function _renderAsBuiltSection(systems) {
                 + '<tr><th style="' + thStyle + '">LUNs (SAN)</th><td style="' + tdStyle + '">' + lv.lunCount + ' &middot; ' + lunTB.toFixed(1) + ' TB provisioned size</td>'
                 + '<th style="' + thStyle + '">Volumes</th><td style="' + tdStyle + '">' + lv.volumeCount + ' &middot; ' + volTB.toFixed(1) + ' TB configured size</td></tr>'
                 + (_oc != null ? '<tr><th style="' + thStyle + '">Physical used</th><td style="' + tdStyle + '">' + (_usedPct != null ? _usedPct.toFixed(0) + '% of ' + _ucTB.toFixed(1) + ' TB usable' : emptyDash) + '</td>'
-                + '<th style="' + thStyle + '">LUN size / usable</th><td style="' + tdStyle + (_oc > 1 && _usedPct != null && _usedPct >= 80 ? ';color:#ef4444;font-weight:600;' : '') + '">' + _oc.toFixed(1) + 'x' + (_oc > 1 ? (_usedPct != null && _usedPct >= 80 ? ' &middot; overcommitted and nearly full' : ' &middot; thin-provisioned, physical space not under pressure') : '') + '</td></tr>' : '')
+                + '<th style="' + thStyle + '">LUN size / usable</th><td style="' + tdStyle + (_oc > 1 && _usedPct != null && _usedPct >= 80 ? ';color:var(--hx-ef4444);font-weight:600;' : '') + '">' + _oc.toFixed(1) + 'x' + (_oc > 1 ? (_usedPct != null && _usedPct >= 80 ? ' &middot; overcommitted and nearly full' : ' &middot; thin-provisioned, physical space not under pressure') : '') + '</td></tr>' : '')
                 + '<tr><th style="' + thStyle + '" title="Share of data volumes whose space guarantee is none (thin). Thick volumes reserve their full size in the aggregate; both are valid. Root volumes are excluded.">Thin data volumes</th><td style="' + tdStyle + '">' + (thinPct != null ? thinPct + '%' : emptyDash) + '</td>'
                 + '<th style="' + thStyle + '">Protocols</th><td style="' + tdStyle + '">' + valOrDash((lv.volumeProtocols || []).join(', ')) + '</td></tr>'
                 + '<tr><th style="' + thStyle + '">Total Snapshots</th><td style="' + tdStyle + '">' + (lv.volumeSnapshotCountTotal || 0) + '</td>'
-                + '<th style="' + thStyle + '">Snapshot Reserve Overflow</th><td style="' + tdStyle + (snapOverflow > 0 ? ';color:#f59e0b;font-weight:600;' : '') + '">' + snapOverflow + (snapOverflow > 0 ? ' volume(s) over 100% reserve' : '') + '</td></tr>'
+                + '<th style="' + thStyle + '">Snapshot Reserve Overflow</th><td style="' + tdStyle + (snapOverflow > 0 ? ';color:var(--hx-f59e0b);font-weight:600;' : '') + '">' + snapOverflow + (snapOverflow > 0 ? ' volume(s) over 100% reserve' : '') + '</td></tr>'
                 + '</table>'
                 + '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:6px;">' + _dfSanNasNote() + '</div>'
                 + ((lv.lunFetchTruncated || lv.volumeFetchTruncated) ? '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:6px;">Capacity is a partial sum -- this system has more LUNs/volumes than sampled.</div>' : '');
 
             html += `
-                <details style="border:1px solid rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
-                    <summary style="padding:10px 16px; background:rgba(255,255,255,0.025); font-weight:600; cursor:pointer; font-size:0.9rem;">LUN &amp; Volume Inventory</summary>
+                <details style="border:1px solid var(--wa-60); border-radius:6px; overflow:hidden;">
+                    <summary style="padding:10px 16px; background:var(--wa-25); font-weight:600; cursor:pointer; font-size:0.9rem;">LUN &amp; Volume Inventory</summary>
                     <div style="padding:16px;">
                         ${lvHtml}
                     </div>
@@ -34976,7 +35023,7 @@ function generateActionPlan() {
     `;
     issues.forEach(iss => {
       html += `
-        <tr style="border-bottom: 1px dashed rgba(255,255,255,0.05); font-size: 0.8rem;">
+        <tr style="border-bottom: 1px dashed var(--wa-50); font-size: 0.8rem;">
           <td style="padding: 8px 0; font-weight: 600; color: #fff;">${iss.name} <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">${iss.model || ''}</span></td>
           <td style="padding: 8px 0; font-family: monospace;">${iss.serial}</td>
           <td style="padding: 8px 0;"><span class="badge ${iss.type === 'Disabled' ? 'critical' : 'warning'}" style="font-size: 0.65rem; padding: 2px 6px;">${iss.type}</span></td>
@@ -35009,7 +35056,7 @@ function generateActionPlan() {
   function enrBadge(key) {
     const n = ec[key] || 0;
     if (n === 0) return '';
-    return `<span style="display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,rgba(56,189,248,0.12),rgba(139,92,246,0.12));border:1px solid rgba(56,189,248,0.3);border-radius:10px;padding:1px 8px;font-size:0.65rem;font-weight:600;color:#38bdf8;margin-left:8px;white-space:nowrap;letter-spacing:0.3px;" title="${n} KB intelligence article${n > 1 ? 's' : ''} enriching this deliverable with actionable context, CLI commands, and vendor documentation references"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;"><path d="M8 1L10 6H15L11 9.5L12.5 15L8 11.5L3.5 15L5 9.5L1 6H6L8 1Z" fill="#38bdf8" opacity="0.9"/></svg> ${n} KB ref${n > 1 ? 's' : ''}</span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,rgba(56,189,248,0.12),rgba(139,92,246,0.12));border:1px solid rgba(56,189,248,0.3);border-radius:10px;padding:1px 8px;font-size:0.65rem;font-weight:600;color:var(--hx-38bdf8);margin-left:8px;white-space:nowrap;letter-spacing:0.3px;" title="${n} KB intelligence article${n > 1 ? 's' : ''} enriching this deliverable with actionable context, CLI commands, and vendor documentation references"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;"><path d="M8 1L10 6H15L11 9.5L12.5 15L8 11.5L3.5 15L5 9.5L1 6H6L8 1Z" fill="#38bdf8" opacity="0.9"/></svg> ${n} KB ref${n > 1 ? 's' : ''}</span>`;
   }
 
   // ── KB Intelligence Summary Panel (rendered above deliverable cards) ──
@@ -35020,33 +35067,33 @@ function generateActionPlan() {
           <div>
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1L10 6H15L11 9.5L12.5 15L8 11.5L3.5 15L5 9.5L1 6H6L8 1Z" fill="#8b5cf6" opacity="0.9"/></svg>
-              <span style="font-size:0.82rem;font-weight:700;color:#e2e8f0;letter-spacing:0.5px;">ARIA Knowledge Base Intelligence</span>
-              <span style="font-size:0.6rem;background:rgba(139,92,246,0.15);color:#a78bfa;border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:1px 6px;font-weight:600;">v4.0</span>
+              <span style="font-size:0.82rem;font-weight:700;color:var(--hx-e2e8f0);letter-spacing:0.5px;">ARIA Knowledge Base Intelligence</span>
+              <span style="font-size:0.6rem;background:rgba(139,92,246,0.15);color:var(--hx-a78bfa);border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:1px 6px;font-weight:600;">v4.0</span>
             </div>
             <p style="font-size:0.78rem;color:var(--text-muted);margin:0;line-height:1.5;">
-              <strong style="color:#38bdf8;">${totalEnrich}</strong> contextual intelligence reference${totalEnrich !== 1 ? 's' : ''} injected across <strong style="color:#38bdf8;">13</strong> deliverables &mdash;
+              <strong style="color:var(--hx-38bdf8);">${totalEnrich}</strong> contextual intelligence reference${totalEnrich !== 1 ? 's' : ''} injected across <strong style="color:var(--hx-38bdf8);">13</strong> deliverables &mdash;
               each enriched with fleet-specific CLI commands, remediation guidance, estimated effort, and vendor documentation links.
             </p>
           </div>
           <div style="display:grid;grid-template-columns:repeat(3,auto);gap:8px 16px;font-size:0.72rem;color:var(--text-muted);white-space:nowrap;flex-shrink:0;">
             <div title="Risk-focused deliverables (A, B, C)">⬥ Risk: <strong style="color:var(--status-critical);">${(ec.problemStatements||0)+(ec.changeTickets||0)+(ec.implementationPlans||0)}</strong></div>
             <div title="Customer-facing deliverables (D, E, F)">⬥ Customer: <strong style="color:var(--accent-cyan);">${(ec.customerComms||0)+(ec.solutionProposals||0)+(ec.salesProposals||0)}</strong></div>
-            <div title="Security deliverables (H, I)">⬥ Security: <strong style="color:#f472b6;">${(ec.securityBrief||0)+(ec.riskRemediationBrief||0)}</strong></div>
+            <div title="Security deliverables (H, I)">⬥ Security: <strong style="color:var(--hx-f472b6);">${(ec.securityBrief||0)+(ec.riskRemediationBrief||0)}</strong></div>
             <div title="TAM operations deliverables (G, J)">⬥ TAM Ops: <strong style="color:var(--status-normal);">${(ec.customerSuccessPlan||0)+(ec.handoverBrief||0)}</strong></div>
-            <div title="MSP and QBR deliverables (H, I)">⬥ QBR/MSP: <strong style="color:#fbbf24;">${(ec.qbrPack||0)+(ec.mspReport||0)}</strong></div>
-            <div title="Sustainability report (M)">⬥ ESG: <strong style="color:#34d399;">${ec.sustainabilityReport||0}</strong></div>
+            <div title="MSP and QBR deliverables (H, I)">⬥ QBR/MSP: <strong style="color:var(--hx-fbbf24);">${(ec.qbrPack||0)+(ec.mspReport||0)}</strong></div>
+            <div title="Sustainability report (M)">⬥ ESG: <strong style="color:var(--hx-34d399);">${ec.sustainabilityReport||0}</strong></div>
           </div>
         </div>
-        ${fleetProfile ? `<div style="margin-top:10px;font-size:0.7rem;color:var(--text-muted);border-top:1px solid rgba(255,255,255,0.05);padding-top:8px;">
-          <span style="color:#8b5cf6;font-weight:600;">Fleet Profile:</span> ${fleetProfile}
+        ${fleetProfile ? `<div style="margin-top:10px;font-size:0.7rem;color:var(--text-muted);border-top:1px solid var(--wa-50);padding-top:8px;">
+          <span style="color:var(--hx-8b5cf6);font-weight:600;">Fleet Profile:</span> ${fleetProfile}
         </div>` : ''}
         ${docs._imtFindingsCount > 0 ? `<div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:0.72rem;">
-          <span style="display:inline-flex;align-items:center;gap:4px;background:linear-gradient(135deg,rgba(251,191,36,0.12),rgba(245,158,11,0.08));border:1px solid rgba(251,191,36,0.3);border-radius:10px;padding:2px 10px;font-weight:600;color:#fbbf24;white-space:nowrap;">
+          <span style="display:inline-flex;align-items:center;gap:4px;background:linear-gradient(135deg,rgba(251,191,36,0.12),rgba(245,158,11,0.08));border:1px solid rgba(251,191,36,0.3);border-radius:10px;padding:2px 10px;font-weight:600;color:var(--hx-fbbf24);white-space:nowrap;">
             <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;"><path d="M2 2h12v12H2V2zm2 2v8h8V4H4zm2 2h4v1H6V6zm0 2h4v1H6V8z" fill="#fbbf24" opacity="0.9"/></svg>
             IMT: ${docs._imtFindingsCount} finding${docs._imtFindingsCount !== 1 ? 's' : ''}
           </span>
-          <span style="color:var(--text-muted);">across <strong style="color:#fbbf24;">${Object.keys(docs._fleetSignals || {}).filter(k => docs._fleetSignals[k]).length}</strong> detected integrations</span>
-          ${docs._imtFindings.filter(f => f.severity === 'critical').length > 0 ? `<span style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:1px 6px;font-size:0.6rem;font-weight:600;color:#ef4444;">${docs._imtFindings.filter(f => f.severity === 'critical').length} CRITICAL</span>` : ''}
+          <span style="color:var(--text-muted);">across <strong style="color:var(--hx-fbbf24);">${Object.keys(docs._fleetSignals || {}).filter(k => docs._fleetSignals[k]).length}</strong> detected integrations</span>
+          ${docs._imtFindings.filter(f => f.severity === 'critical').length > 0 ? `<span style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:1px 6px;font-size:0.6rem;font-weight:600;color:var(--hx-ef4444);">${docs._imtFindings.filter(f => f.severity === 'critical').length} CRITICAL</span>` : ''}
         </div>` : ''}
         ${(() => { const fws = docs._firmwareSummary; if (!fws) return ''; const score = fws.overallFwScore; const color = score >= 80 ? '#34d399' : score >= 50 ? '#fbbf24' : '#ef4444'; const label = score >= 80 ? 'CURRENT' : score >= 50 ? 'AT RISK' : 'CRITICAL'; return `<div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:0.72rem;">
           <span style="display:inline-flex;align-items:center;gap:4px;background:linear-gradient(135deg,${color}18,${color}0d);border:1px solid ${color}4d;border-radius:10px;padding:2px 10px;font-weight:600;color:${color};white-space:nowrap;">
@@ -35083,23 +35130,23 @@ function generateActionPlan() {
           A total of <strong>${targetSystems.length}</strong> storage configuration(s) were audited.
         </p>
         <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin: 20px 0;">
-          <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="Total count of Active IQ predictive risk signatures (critical, high, medium, low) across all systems in scope. Each risk includes a root cause analysis and remediation steps.">
+          <div style="background: var(--wa-20); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="Total count of Active IQ predictive risk signatures (critical, high, medium, low) across all systems in scope. Each risk includes a root cause analysis and remediation steps.">
             <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Total Risks</div>
             <div style="font-size: 1.3rem; font-weight: 700; color: ${allRisks.length > 0 ? "var(--status-critical)" : "var(--status-normal)"}">${allRisks.length}</div>
           </div>
-          <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="CVE-linked security vulnerabilities matched against the installed ONTAP versions and firmware. Each advisory includes mitigation steps and links to the NetApp Security Advisory portal.">
+          <div style="background: var(--wa-20); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="CVE-linked security vulnerabilities matched against the installed ONTAP versions and firmware. Each advisory includes mitigation steps and links to the NetApp Security Advisory portal.">
             <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Security Advisories</div>
             <div style="font-size: 1.3rem; font-weight: 700; color: ${allSecurityAdvisories.length > 0 ? "var(--status-critical)" : "var(--status-normal)"}">${allSecurityAdvisories.length}</div>
           </div>
-          <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="Support cases from NetApp Support portal. Shows active cases prominently; total includes closed/processing cases.">
+          <div style="background: var(--wa-20); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="Support cases from NetApp Support portal. Shows active cases prominently; total includes closed/processing cases.">
             <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Support Cases</div>
             <div style="font-size: 1.3rem; font-weight: 700; color: ${allSupportCases.filter(c => c._isActive).length > 0 ? "var(--status-warning)" : "var(--status-normal)"}">${allSupportCases.filter(c => c._isActive).length}<span style="font-size: 0.7rem; color: var(--text-muted); font-weight: 400;"> / ${allSupportCases.length}</span></div>
           </div>
-          <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="Systems whose support contract (real isContractActive/overallContractEndDate from Active IQ) expires within 90 days. Requires proactive renewal engagement to avoid service coverage gaps.">
+          <div style="background: var(--wa-20); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="Systems whose support contract (real isContractActive/overallContractEndDate from Active IQ) expires within 90 days. Requires proactive renewal engagement to avoid service coverage gaps.">
             <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Contract Expiring</div>
             <div style="font-size: 1.3rem; font-weight: 700; color: ${expiringContracts.length > 0 ? "var(--status-critical)" : "var(--status-normal)"}">${expiringContracts.length}</div>
           </div>
-          <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="NetApp-issued field actions (FAs) requiring customer action — typically proactive hardware replacements, firmware updates, or configuration changes mandated by engineering.">
+          <div style="background: var(--wa-20); padding: 12px; border-radius: var(--radius-sm); text-align: center; border: 1px solid var(--border-color); cursor: help;" title="NetApp-issued field actions (FAs) requiring customer action — typically proactive hardware replacements, firmware updates, or configuration changes mandated by engineering.">
             <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Active Field Actions</div>
             <div style="font-size: 1.3rem; font-weight: 700; color: ${activeFAs.length > 0 ? "var(--status-warning)" : "var(--status-normal)"}">${activeFAs.length}</div>
           </div>
@@ -35108,7 +35155,7 @@ function generateActionPlan() {
         ${mcConfiguredSystems.length > 0 ? `
         <!-- MetroCluster Health Section -->
         <div style="background: linear-gradient(135deg, rgba(255, 152, 0, 0.06), rgba(255, 87, 34, 0.04)); border: 1px solid rgba(255, 152, 0, 0.3); padding: 20px; border-radius: var(--radius-sm); margin-top: 20px;">
-          <h3 style="font-size: 0.95rem; margin: 0 0 12px 0; color: #ff9800; display: flex; align-items: center; gap: 8px;">
+          <h3 style="font-size: 0.95rem; margin: 0 0 12px 0; color: var(--hx-ff9800); display: flex; align-items: center; gap: 8px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
             MetroCluster Infrastructure Health
           </h3>
@@ -35117,28 +35164,28 @@ function generateActionPlan() {
             <strong>${mcConfiguredSystems.length}</strong> MetroCluster system(s) in scope${mcSystems.length > 0 ? `, <strong>${mcSystems.length}</strong> with findings requiring attention` : ' — no MetroCluster-specific findings detected'}.
           </p>
           <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px;">
-            <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: var(--radius-sm); text-align: center; border-left: 3px solid ${mcRisks.length > 0 ? '#ff9800' : 'var(--status-normal)'}">
+            <div style="background: var(--bk-200); padding: 10px; border-radius: var(--radius-sm); text-align: center; border-left: 3px solid ${mcRisks.length > 0 ? '#ff9800' : 'var(--status-normal)'}">
               <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">MC Findings</div>
-              <div style="font-size: 1.2rem; font-weight: 700; color: #ff9800;">${mcRisks.length}${mcConfiguredSystems.length > 1 ? ` <span style="font-size:0.6rem; font-weight:400; color:var(--text-muted);">(${mcConfiguredSystems.length} nodes)</span>` : ''}</div>
+              <div style="font-size: 1.2rem; font-weight: 700; color: var(--hx-ff9800);">${mcRisks.length}${mcConfiguredSystems.length > 1 ? ` <span style="font-size:0.6rem; font-weight:400; color:var(--text-muted);">(${mcConfiguredSystems.length} nodes)</span>` : ''}</div>
             </div>
-            <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: var(--radius-sm); text-align: center; border-left: 3px solid ${hasMediatorIssue ? 'var(--status-critical)' : 'var(--status-normal)'}" title="${hasMediatorIssue ? _esc(mcMediatorSystems.join(', ')) : ''}">
+            <div style="background: var(--bk-200); padding: 10px; border-radius: var(--radius-sm); text-align: center; border-left: 3px solid ${hasMediatorIssue ? 'var(--status-critical)' : 'var(--status-normal)'}" title="${hasMediatorIssue ? _esc(mcMediatorSystems.join(', ')) : ''}">
               <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Mediator</div>
               <div style="font-size: 0.85rem; font-weight: 700; color: ${hasMediatorIssue ? 'var(--status-critical)' : 'var(--status-normal)'};">${hasMediatorIssue ? '⚠ UNREACHABLE' : '✓ OK'}</div>
               ${hasMediatorIssue ? `<div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${_esc(mcMediatorSystems.join(', '))}</div>` : ''}
             </div>
-            <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: var(--radius-sm); text-align: center; border-left: 3px solid ${hasMausoDisabled ? 'var(--status-critical)' : 'var(--status-normal)'}" title="${hasMausoDisabled ? _esc(mcMausoSystems.join(', ')) : ''}">
+            <div style="background: var(--bk-200); padding: 10px; border-radius: var(--radius-sm); text-align: center; border-left: 3px solid ${hasMausoDisabled ? 'var(--status-critical)' : 'var(--status-normal)'}" title="${hasMausoDisabled ? _esc(mcMausoSystems.join(', ')) : ''}">
               <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">MAUSO</div>
               <div style="font-size: 0.85rem; font-weight: 700; color: ${hasMausoDisabled ? 'var(--status-critical)' : 'var(--status-normal)'};">${hasMausoDisabled ? '⚠ DISABLED' : '✓ ENABLED'}</div>
               ${hasMausoDisabled ? `<div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${_esc(mcMausoSystems.join(', '))}</div>` : ''}
             </div>
-            <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: var(--radius-sm); text-align: center; border-left: 3px solid ${hasMcBug ? 'var(--status-warning)' : 'var(--status-normal)'}" title="${hasMcBug ? _esc(mcBugSystems.join(', ')) : ''}">
+            <div style="background: var(--bk-200); padding: 10px; border-radius: var(--radius-sm); text-align: center; border-left: 3px solid ${hasMcBug ? 'var(--status-warning)' : 'var(--status-normal)'}" title="${hasMcBug ? _esc(mcBugSystems.join(', ')) : ''}">
               <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Known Bugs</div>
               <div style="font-size: 0.85rem; font-weight: 700; color: ${hasMcBug ? 'var(--status-warning)' : 'var(--status-normal)'};">${hasMcBug ? '⚠ ACTIVE' : '✓ CLEAR'}</div>
               ${hasMcBug ? `<div style="font-size:0.62rem; color:var(--text-muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${_esc(mcBugSystems.join(', '))}</div>` : ''}
             </div>
           </div>
           <div style="font-size: 0.78rem; color: var(--text-muted);">
-            MetroCluster systems in scope: <strong>${mcConfiguredSystems.join(', ') || 'N/A'}</strong>${mcSystems.length > 0 ? `<br>Affected by findings: <strong style="color:#ff9800;">${mcSystems.join(', ')}</strong>` : ''}
+            MetroCluster systems in scope: <strong>${mcConfiguredSystems.join(', ') || 'N/A'}</strong>${mcSystems.length > 0 ? `<br>Affected by findings: <strong style="color:var(--hx-ff9800);">${mcSystems.join(', ')}</strong>` : ''}
           </div>
         </div>
         ` : ''}
@@ -35172,7 +35219,7 @@ function generateActionPlan() {
     html += `
       <div style="background: linear-gradient(135deg, rgba(255, 152, 0, 0.05), rgba(255, 87, 34, 0.03)); border: 1px solid rgba(255, 152, 0, 0.25); padding: 20px; border-radius: var(--radius-sm); margin-bottom: 24px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-          <h3 style="font-size: 1rem; margin: 0; color: #ff9800; display: flex; align-items: center; gap: 8px;">
+          <h3 style="font-size: 1rem; margin: 0; color: var(--hx-ff9800); display: flex; align-items: center; gap: 8px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
             MetroCluster Configuration &amp; DR Readiness
           </h3>
@@ -35212,7 +35259,7 @@ function generateActionPlan() {
         actionHtml = `<a href="${r.advisoryUrl}" target="_blank" style="color: var(--accent-cyan); text-decoration: underline; font-size: 0.78rem; cursor: pointer;" onclick="window.open(this.href,'_blank');return false;">View advisory →</a>`;
       }
       html += `
-        <div style="background: rgba(0,0,0,0.15); border-left: 4px solid ${borderColor}; padding: 14px 16px; border-radius: var(--radius-sm); margin-bottom: 10px;">
+        <div style="background: var(--bk-150); border-left: 4px solid ${borderColor}; padding: 14px 16px; border-radius: var(--radius-sm); margin-bottom: 10px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
             <strong style="font-size: 0.88rem; color: #fff;">MC-${idx + 1}: ${r.description || r.shortName || 'MetroCluster Finding'}</strong>
             <span class="badge ${isHigh ? 'critical' : 'warning'}" style="font-size: 0.65rem; flex-shrink: 0; margin-left: 8px;">${r.severity}</span>
@@ -35249,7 +35296,7 @@ function generateActionPlan() {
       else if (r.severity === "medium") badgeColor = "var(--status-warning)";
 
       html += `
-        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-left: 4px solid ${badgeColor}; padding: 18px; border-radius: var(--radius-sm); margin-bottom: 16px;">
+        <div style="background: var(--wa-20); border: 1px solid var(--border-color); border-left: 4px solid ${badgeColor}; padding: 18px; border-radius: var(--radius-sm); margin-bottom: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <strong style="font-size: 0.95rem; color: #fff;">Item 2.${idx + 1}: ${r.category} Risk - ${r.systemName}</strong>
             <span class="badge ${r.severity}" style="font-size: 0.7rem;">${r.severity}</span>
@@ -35262,7 +35309,7 @@ function generateActionPlan() {
 
           <div style="font-size: 0.85rem; color: var(--text-primary); margin-bottom: 8px;"><span class="rk-tag rk-tag-finding" title="Detected on this system">FINDING</span> <strong>Issue</strong>: ${r.description}</div>
           ${_rrHtml(typeof sys !== 'undefined' ? sys : null, r)}
-          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; background: rgba(0,0,0,0.15); padding: 10px; border-radius: var(--radius-sm);">
+          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; background: var(--bk-150); padding: 10px; border-radius: var(--radius-sm);">
             <strong>Root Cause Analysis:</strong><br>${r.remediationPlan ? r.remediationPlan.cause : "Undetermined"}
           </div>
           <div style="font-size: 0.85rem; color: var(--status-critical); margin-bottom: 12px; background: rgba(255, 51, 102, 0.03); padding: 10px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 51, 102, 0.15); margin-top: 8px;">
@@ -35348,7 +35395,7 @@ function generateActionPlan() {
         : `<a href="https://security.netapp.com/" target="_blank" style="color: var(--accent-cyan); text-decoration: underline; cursor: pointer; font-size: 0.8rem;" onclick="window.open(this.href, '_blank'); return false;">Search NetApp Security Advisories →</a>`;
 
       html += `
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 16px; border-radius: var(--radius-sm); margin-bottom: 12px;">
+        <div style="background: var(--wa-10); border: 1px solid var(--border-color); padding: 16px; border-radius: var(--radius-sm); margin-bottom: 12px;">
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
             <strong>${s.id}</strong>
             <span class="${badgeClass}" style="font-size: 0.7rem;">${s.severity === 'unknown' ? 'Not Reported' : s.severity}</span>
@@ -35375,7 +35422,7 @@ function generateActionPlan() {
     html += `
       <div style="margin-top:20px;">
         <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 0 0 8px 0;">Portfolio Exposure <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;text-transform:none;">-- also affecting other managed customers</span></h3>
-        <div class="tam-table-wrapper" style="overflow-x:auto; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); border-radius:var(--radius-md); padding:16px;">
+        <div class="tam-table-wrapper" style="overflow-x:auto; background:var(--bk-200); border:1px solid var(--wa-100); border-radius:var(--radius-md); padding:16px;">
           <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
             <thead><tr>
               ${_sth('text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;', 'CVE')}
@@ -35387,10 +35434,10 @@ function generateActionPlan() {
             </tr></thead>
             <tbody>
             ${_portfolioCveExposure.map(c => `
-              <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+              <tr style="border-bottom:1px solid var(--wa-40);">
                 <td style="padding:6px 10px;font-weight:600;">${c.id}</td>
                 <td style="padding:6px 10px;text-transform:capitalize;">${c.sev || '-'}</td>
-                <td style="padding:6px 10px;">${c.kev ? '<span style="color:#ef4444;font-weight:700;">Yes</span>' : '—'}</td>
+                <td style="padding:6px 10px;">${c.kev ? '<span style="color:var(--hx-ef4444);font-weight:700;">Yes</span>' : '—'}</td>
                 <td style="padding:6px 10px;text-align:right;">${c.scopeSystemCount}</td>
                 <td style="padding:6px 10px;text-align:right;font-weight:700;color:var(--accent-cyan);">${c.otherCustomerCount} (${c.otherSystemCount} systems)</td>
                 <td style="padding:6px 10px;font-size:0.75rem;color:var(--text-muted);">${c.otherCustomers.slice(0, 4).join(', ')}${c.otherCustomers.length > 4 ? ` +${c.otherCustomers.length - 4} more` : ''}</td>
@@ -35434,11 +35481,11 @@ function generateActionPlan() {
           <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Processing</div>
           <div style="font-size: 1.3rem; font-weight: 700; color: ${inactiveCases.length > 0 ? '#ff9800' : 'var(--status-normal)'};"> ${inactiveCases.length}</div>
         </div>
-        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 10px 16px; border-radius: var(--radius-sm); text-align: center; min-width: 100px;">
+        <div style="background: var(--wa-20); border: 1px solid var(--border-color); padding: 10px 16px; border-radius: var(--radius-sm); text-align: center; min-width: 100px;">
           <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Closed</div>
           <div style="font-size: 1.3rem; font-weight: 700; color: var(--text-muted);"> ${closedCases.length}</div>
         </div>
-        <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 10px 16px; border-radius: var(--radius-sm); text-align: center; min-width: 100px;">
+        <div style="background: var(--wa-20); border: 1px solid var(--border-color); padding: 10px 16px; border-radius: var(--radius-sm); text-align: center; min-width: 100px;">
           <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;">Total</div>
           <div style="font-size: 1.3rem; font-weight: 700; color: var(--text-primary);"> ${allSupportCases.length}</div>
         </div>
@@ -35472,10 +35519,10 @@ function generateActionPlan() {
       const resLine = c.resolution ? `<div style="font-size: 0.82rem; color: var(--status-normal); margin-top: 6px; padding: 4px 8px; background: rgba(0,230,118,0.05); border-left: 2px solid var(--status-normal); border-radius: 4px;"><strong>Resolution:</strong> ${c.resolution}</div>` : '';
       const bugLine = (c.bugIds && c.bugIds.length) ? `<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 6px;"><strong>Linked bugs:</strong> ${c.bugIds.join(', ')}</div>` : '';
       const rmaLine = (c.rmaParts && c.rmaParts.length) ? `<div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 6px;"><strong>Replacement parts:</strong> ${c.rmaParts.map(p => (p.partNumber || '') + (p.partDescription ? ' ' + p.partDescription : '') + (p.partRequestDeliveryDate ? ' (delivery ' + String(p.partRequestDeliveryDate).slice(0, 10) + ')' : '')).join('; ')}</div>` : '';
-      const notesLine = c.ownerNotes ? `<div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 8px; font-style: italic; background: rgba(0,0,0,0.2); padding: 6px 10px; border-radius: 4px; border-left: 3px solid var(--accent-cyan);"><strong>Latest Notes:</strong> ${c.ownerNotes}</div>` : '';
+      const notesLine = c.ownerNotes ? `<div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 8px; font-style: italic; background: var(--bk-200); padding: 6px 10px; border-radius: 4px; border-left: 3px solid var(--accent-cyan);"><strong>Latest Notes:</strong> ${c.ownerNotes}</div>` : '';
 
       html += `
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); border-left: 4px solid ${borderColor}; padding: 16px; border-radius: var(--radius-sm); margin-bottom: 12px; opacity: ${opacity};">
+        <div style="background: var(--wa-10); border: 1px solid var(--border-color); border-left: 4px solid ${borderColor}; padding: 16px; border-radius: var(--radius-sm); margin-bottom: 12px; opacity: ${opacity};">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <div style="display: flex; align-items: center; gap: 10px;">
               <strong>Case ID: ${c.id} - ${c.systemName || 'N/A'}</strong>
@@ -35483,7 +35530,7 @@ function generateActionPlan() {
             </div>
             <span class="${badgeClass}" style="font-size: 0.7rem;">${c.severity}</span>
           </div>
-          <div style="display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.78rem; color: var(--text-muted); margin-bottom: 8px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04);">
+          <div style="display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.78rem; color: var(--text-muted); margin-bottom: 8px; padding: 4px 0; border-bottom: 1px solid var(--wa-40);">
             ${c.customerName ? '<span><strong>Customer:</strong> ' + c.customerName + '</span>' : ''}
             ${c.serialNumber ? '<span><strong>S/N:</strong> <code style="font-size: 0.75rem; color: var(--text-secondary);">' + c.serialNumber + '</code></span>' : ''}
             ${c.clusterName ? '<span><strong>Cluster:</strong> ' + c.clusterName + '</span>' : ''}
@@ -35525,7 +35572,7 @@ function generateActionPlan() {
     if (!_parity) return '';
     return `
     <div style="background:rgba(148,163,184,0.06); border:1px solid rgba(148,163,184,0.25); border-radius:6px; padding:14px 16px; margin-bottom:16px; font-size:0.82rem;">
-      <strong style="color:#94a3b8;">Cross-Site Version Parity Recommendation (Critical NetApp Issues, Non-CVE):</strong>
+      <strong style="color:var(--hx-94a3b8);">Cross-Site Version Parity Recommendation (Critical NetApp Issues, Non-CVE):</strong>
       ${_dfPlural(_parity.issueSystemCount, 'system')} in this account ${_parity.issueSystemCount === 1 ? 'has' : 'have'} ${_dfPlural(_parity.totalIssueCount, 'outstanding critical/high non-CVE finding')} (see each system's own card below for details). To maintain a consistent version across every site for this customer:
       <ul style="margin:6px 0 0 18px; padding:0;">
         ${_parity.results.map(r => `<li>All ${r.label} systems should match at <code>${r.version}</code> (highest of Active IQ's recommended releases, driven by: ${r.driverSystems.slice(0, 3).join(', ')}${r.driverSystems.length > 3 ? ` +${r.driverSystems.length - 3} more` : ''})</li>`).join('')}
@@ -35549,7 +35596,7 @@ function generateActionPlan() {
           <!-- Node 1: Current -->
           <div style="display:flex; flex-direction:column; align-items:center; min-width:130px;">
             <div style="font-size:0.68rem; font-weight:700; letter-spacing:0.06em; color:var(--text-muted); text-transform:uppercase; margin-bottom:4px;">Current Version</div>
-            <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:6px 14px; font-size:0.88rem; font-weight:700; color:#e2e8f0; font-family:monospace; white-space:nowrap;">${currentVer}</div>
+            <div style="background:var(--wa-50); border:1px solid var(--wa-120); border-radius:6px; padding:6px 14px; font-size:0.88rem; font-weight:700; color:var(--hx-e2e8f0); font-family:monospace; white-space:nowrap;">${currentVer}</div>
           </div>
           <!-- Arrow 1 -->
           <div style="flex:1; min-width:28px; display:flex; flex-direction:column; align-items:center; padding:0 4px; padding-top:18px;">
@@ -35559,7 +35606,7 @@ function generateActionPlan() {
           <!-- Node 2: Min Required -->
           <div style="display:flex; flex-direction:column; align-items:center; min-width:130px;">
             <div style="font-size:0.68rem; font-weight:700; letter-spacing:0.06em; color:var(--accent-cyan); text-transform:uppercase; margin-bottom:4px;">Min. Required (To Fix)</div>
-            <div style="background:rgba(45,212,191,0.08); border:1px solid rgba(45,212,191,0.4); border-radius:6px; padding:6px 14px; font-size:0.88rem; font-weight:700; color:#2dd4bf; font-family:monospace; white-space:nowrap;">${minVer}</div>
+            <div style="background:rgba(45,212,191,0.08); border:1px solid rgba(45,212,191,0.4); border-radius:6px; padding:6px 14px; font-size:0.88rem; font-weight:700; color:var(--hx-2dd4bf); font-family:monospace; white-space:nowrap;">${minVer}</div>
           </div>
           <!-- Arrow 2 -->
           <div style="flex:1; min-width:28px; display:flex; flex-direction:column; align-items:center; padding:0 4px; padding-top:18px;">
@@ -35569,7 +35616,7 @@ function generateActionPlan() {
           <!-- Node 3: Latest Supported -->
           <div style="display:flex; flex-direction:column; align-items:center; min-width:130px;">
             <div style="font-size:0.68rem; font-weight:700; letter-spacing:0.06em; color:var(--status-normal); text-transform:uppercase; margin-bottom:4px;">Latest Supported</div>
-            <div style="background:rgba(74,222,128,0.08); border:1px solid rgba(74,222,128,0.3); border-radius:6px; padding:6px 14px; font-size:0.88rem; font-weight:700; color:#4ade80; font-family:monospace; white-space:nowrap;">${latestVer}</div>
+            <div style="background:rgba(74,222,128,0.08); border:1px solid rgba(74,222,128,0.3); border-radius:6px; padding:6px 14px; font-size:0.88rem; font-weight:700; color:var(--hx-4ade80); font-family:monospace; white-space:nowrap;">${latestVer}</div>
           </div>
         </div>`;
 
@@ -35578,12 +35625,12 @@ function generateActionPlan() {
       if (!isDirect && hops.length > 1) {
         const hopItems = hops.map((hop, i) => `
           <div style="display:flex; align-items:flex-start; gap:10px; margin-bottom:${i < hops.length-1 ? '10px' : '0'};">
-            <div style="flex-shrink:0; width:22px; height:22px; border-radius:50%; background:rgba(251,191,36,0.15); border:1px solid rgba(251,191,36,0.4); display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700; color:#fbbf24; margin-top:1px;">${i+1}</div>
+            <div style="flex-shrink:0; width:22px; height:22px; border-radius:50%; background:rgba(251,191,36,0.15); border:1px solid rgba(251,191,36,0.4); display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700; color:var(--hx-fbbf24); margin-top:1px;">${i+1}</div>
             <div style="flex:1;">
-              <div style="font-size:0.82rem; color:#e2e8f0; margin-bottom:3px;">
-                <code style="color:#94a3b8; font-size:0.78rem;">${hop.from}</code>
+              <div style="font-size:0.82rem; color:var(--hx-e2e8f0); margin-bottom:3px;">
+                <code style="color:var(--hx-94a3b8); font-size:0.78rem;">${hop.from}</code>
                 <span style="color:#6b7280; margin:0 6px;">→</span>
-                <code style="color:#2dd4bf; font-size:0.78rem;">${hop.to}</code>
+                <code style="color:var(--hx-2dd4bf); font-size:0.78rem;">${hop.to}</code>
               </div>
               ${hop.steps && hop.steps.length ? `<div style="font-size:0.76rem; color:var(--text-muted); line-height:1.5; padding-left:2px;">${hop.steps.slice(0,2).join(' &nbsp;·&nbsp; ')}</div>` : ''}
             </div>
@@ -35592,7 +35639,7 @@ function generateActionPlan() {
         ).join('');
         hopChainHtml = `
           <div style="margin-top:10px; padding:12px 14px; background:rgba(251,191,36,0.04); border:1px solid rgba(251,191,36,0.15); border-radius:6px;">
-            <div style="font-size:0.72rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#fbbf24; margin-bottom:10px; display:flex; align-items:center; gap:6px;">
+            <div style="font-size:0.72rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--hx-fbbf24); margin-bottom:10px; display:flex; align-items:center; gap:6px;">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
               ${hops.length}-Hop Upgrade Path Required
             </div>
@@ -35607,7 +35654,7 @@ function generateActionPlan() {
       }
 
       html += `
-        <div style="background: rgba(255,255,255,0.015); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm); margin-bottom: 14px;">
+        <div style="background: var(--wa-15); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm); margin-bottom: 14px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
             <div>
               <strong style="font-size:0.95rem;">${u.systemName}</strong>
@@ -35617,7 +35664,7 @@ function generateActionPlan() {
           </div>
           ${versionRail}
           ${hopChainHtml}
-          <div style="font-size:0.82rem; color:var(--text-secondary); margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.06);">
+          <div style="font-size:0.82rem; color:var(--text-secondary); margin-top:12px; padding-top:10px; border-top:1px solid var(--wa-60);">
             <strong>Expected Upgrade Benefits:</strong> ${u.benefits}
           </div>
           ${(() => {
@@ -35646,7 +35693,7 @@ function generateActionPlan() {
           ${(() => {
             const _sysM = targetSystems.find(s => s.serialNumber === u.serialNumber), _m = _sysM && _minSafeRelease(_sysM);
             if (!_m || !_m.behind) return '';
-            return `<div style="margin-top:10px; padding:10px 14px; background:rgba(245,158,11,0.06); border:1px solid #f59e0b44; border-radius:6px; font-size:0.78rem;" title="${_esc(_m.reason)}"><strong style="color:#f59e0b;">Minimum safe release for ${_m.line}:</strong> <code style="color:#f59e0b;">${_m.minSafe}</code>. This system runs ${_m.current}, below it: NetApp lists a fix in ${_m.minSafe} or later for at least one advisory rated high or critical.</div>`;
+            return `<div style="margin-top:10px; padding:10px 14px; background:rgba(245,158,11,0.06); border:1px solid #f59e0b44; border-radius:6px; font-size:0.78rem;" title="${_esc(_m.reason)}"><strong style="color:var(--hx-f59e0b);">Minimum safe release for ${_m.line}:</strong> <code style="color:var(--hx-f59e0b);">${_m.minSafe}</code>. This system runs ${_m.current}, below it: NetApp lists a fix in ${_m.minSafe} or later for at least one advisory rated high or critical.</div>`;
           })()}
           ${(() => {
             // Critical/high NetApp issues that are NOT CVEs -- a deliberately
@@ -35662,7 +35709,7 @@ function generateActionPlan() {
             const _list = _issues.items.slice(0, 5).map(it => `<li><strong>[${it.category}]</strong> ${_esc(it.description)}</li>`).join('');
             return `
           <div style="margin-top:10px; padding:10px 14px; background:rgba(148,163,184,0.06); border:1px solid rgba(148,163,184,0.25); border-radius:6px; font-size:0.78rem;">
-            <strong style="color:#94a3b8;">Critical NetApp Issues (non-CVE):</strong> ${_dfPlural(_issues.count, 'critical/high finding')} on this system that ${_issues.count === 1 ? "doesn't" : "don't"} reduce to a single required software version (firmware, configuration, or hardware-refresh fixes instead) -- review each individually:
+            <strong style="color:var(--hx-94a3b8);">Critical NetApp Issues (non-CVE):</strong> ${_dfPlural(_issues.count, 'critical/high finding')} on this system that ${_issues.count === 1 ? "doesn't" : "don't"} reduce to a single required software version (firmware, configuration, or hardware-refresh fixes instead) -- review each individually:
             <ul style="margin:6px 0 0 18px; padding:0;">${_list}</ul>
             ${_issues.count > 5 ? `<div style="margin-top:4px; color:var(--text-muted);">+${_issues.count - 5} more</div>` : ''}
           </div>`;
@@ -35746,7 +35793,7 @@ function generateActionPlan() {
       }
 
       html += `
-        <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 0.85rem; line-height: 1.4;">
+        <div style="background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 0.85rem; line-height: 1.4;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <strong style="font-size: 0.95rem; color: #fff;">${sw.model} (${sw.type})</strong>
             <span class="${badgeClass}" style="font-size: 0.7rem;">${sw.status}</span>
@@ -35795,7 +35842,7 @@ function generateActionPlan() {
     const logisticsDiffs = getLogisticsUpdateTicketsAndDiffs(sys);
     
     html += `
-      <div style="background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 0.85rem; line-height: 1.4;">
+      <div style="background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 0.85rem; line-height: 1.4;">
         <div style="font-weight: 700; font-size: 0.95rem; border-bottom: 1px dashed var(--border-color); padding-bottom: 6px; margin-bottom: 10px; color: var(--accent-cyan);">${sys.systemName} <span style="font-weight:400;color:var(--text-muted);font-size:0.82rem;">${sys.platform || ''}</span> (S/N: ${sys.serialNumber})</div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
           <div>
@@ -35861,10 +35908,10 @@ function generateActionPlan() {
         const _bannerText = _urgentCount > 0
           ? '\u26a0 ' + _urgentCount + ' item' + (_urgentCount !== 1 ? 's' : '') + ' require attention before scheduling maintenance'
           : '\u2713 No blocking items \u2014 safe to schedule routine maintenance';
-        let secA = '<div style="padding:8px 14px;margin-bottom:14px;border-left:3px solid ' + _bannerColor + ';background:rgba(255,255,255,0.02);border-radius:4px;font-size:0.85rem;font-weight:600;color:' + _bannerColor + ';">' + _bannerText + '</div>';
+        let secA = '<div style="padding:8px 14px;margin-bottom:14px;border-left:3px solid ' + _bannerColor + ';background:var(--wa-20);border-radius:4px;font-size:0.85rem;font-weight:600;color:' + _bannerColor + ';">' + _bannerText + '</div>';
         secA += '<div style="margin-bottom:18px;">';
         secA += '<h4 style="font-size:0.95rem;color:var(--accent-cyan);margin-bottom:6px;">A. Pre-Change Assessment \u2014 ' + custLabel + '</h4>';
-        secA += '<p style="font-size:0.85rem;line-height:1.4;color:var(--text-secondary);margin-bottom:10px;"><strong>' + sysCount + ' system' + (sysCount !== 1 ? 's' : '') + ' in scope:</strong> ' + sysNames.map(n => '<code style="font-size:0.78rem;background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;">' + n + '</code>').join(' ') + '</p>';
+        secA += '<p style="font-size:0.85rem;line-height:1.4;color:var(--text-secondary);margin-bottom:10px;"><strong>' + sysCount + ' system' + (sysCount !== 1 ? 's' : '') + ' in scope:</strong> ' + sysNames.map(n => '<code style="font-size:0.78rem;background:var(--wa-60);padding:1px 5px;border-radius:3px;">' + n + '</code>').join(' ') + '</p>';
         secA += '<ul style="margin-left:20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.5;margin-top:6px;">';
         if (upgradeList.length > 0) {
           secA += '<li><strong>OS Upgrade Pre-checks</strong>: Before upgrading, run <code>system health alert show</code> and confirm zero HA takeover blocks on:<ul style="margin-top:4px;margin-left:16px;">' + upgradeList.map(u => '<li><code>' + u.systemName + '</code> \u2014 ' + (u.currentVersion || 'current') + ' \u2192 <strong>' + u.targetVersion + '</strong>' + (u.upgradeHops && u.upgradeHops.length > 1 ? ' (via ' + u.upgradeHops.join(' \u2192 ') + ')' : '') + '</li>').join('') + '</ul></li>';
@@ -35927,7 +35974,7 @@ function generateActionPlan() {
         }
         if (actions.length === 0) actions.push({ priority: 'P4', text: '<strong>Continue routine monitoring</strong> \u2014 no critical actions outstanding. Schedule a follow-up Active IQ review in 30 days.' });
 
-        const _prioStyle = { P1: 'background:rgba(248,113,113,0.18);color:#f87171;border:1px solid rgba(248,113,113,0.35);', P2: 'background:rgba(251,146,60,0.18);color:#fb923c;border:1px solid rgba(251,146,60,0.35);', P3: 'background:rgba(251,191,36,0.15);color:#fbbf24;border:1px solid rgba(251,191,36,0.3);', P4: 'background:rgba(96,165,250,0.15);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);' };
+        const _prioStyle = { P1: 'background:rgba(248,113,113,0.18);color:var(--hx-f87171);border:1px solid rgba(248,113,113,0.35);', P2: 'background:rgba(251,146,60,0.18);color:var(--hx-fb923c);border:1px solid rgba(251,146,60,0.35);', P3: 'background:rgba(251,191,36,0.15);color:var(--hx-fbbf24);border:1px solid rgba(251,191,36,0.3);', P4: 'background:rgba(96,165,250,0.15);color:var(--hx-60a5fa);border:1px solid rgba(96,165,250,0.3);' };
         const sortedActions = actions.slice().sort((a, b) => a.priority.localeCompare(b.priority));
         const secC = '<div><h4 style="font-size:0.95rem;color:var(--accent-cyan);margin-bottom:6px;">' + label + '. Priority Action Items for ' + custLabel + '</h4><ol style="margin-left:20px;font-size:0.85rem;color:var(--text-secondary);line-height:1.6;margin-top:6px;">' + sortedActions.map(a => '<li><span style="display:inline-block;' + _prioStyle[a.priority] + 'border-radius:8px;padding:0px 7px;font-size:0.65rem;font-weight:700;margin-right:6px;vertical-align:2px;">' + a.priority + '</span>' + a.text + '</li>').join('') + '</ol></div>';
         return secA + secB + secC;
@@ -35944,31 +35991,31 @@ function generateActionPlan() {
         <div style="flex: 1; height: 1px; background: linear-gradient(90deg, var(--status-critical), transparent);"></div>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">A. Executive Risk Assessment${enrBadge('problemStatements')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('PROBLEM_STATEMENTS')">Download Draft</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Consolidated risk posture with account team context, operational health scorecard (ASUP/ARP/firmware/contract compliance), and prioritized corrective actions grouped by fix.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.problemStatements}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.problemStatements}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">B. ITIL Change Control &amp; Dispatch Tickets${enrBadge('changeTickets')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('TICKET')">Download Draft</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Per-system ITIL-aligned change tickets with pre-checks, task lists, upgrade steps, and post-change verification CLI commands.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.changeTickets}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.changeTickets}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">C. CLI Runbooks &amp; Upgrade Execution Plans${enrBadge('implementationPlans')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('IMPLEMENTATION')">Download Runbook</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Step-by-step remediation runbooks with exact ONTAP CLI syntax, multi-hop upgrade paths, and platform-specific checks (ASA SAN, E-Series).</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.implementationPlans}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.implementationPlans}</textarea>
       </div>
     </div>
 
@@ -35976,7 +36023,7 @@ function generateActionPlan() {
     <div class="plan-section" data-section-index="23" style="display: none; margin-top: 32px;">
       <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--accent-cyan); padding-bottom: 8px; margin-bottom: 16px;">
         <h2 style="font-size: 1.15rem; margin: 0; border: none; padding: 0;">Customer &amp; Sales Deliverables</h2>
-        <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px; border-color: rgba(255,215,0,0.3); color: #ffd700;" onclick="downloadDeliverableCategory('SALES')" data-tooltip="Download all 6 deliverables in this tab as individual files in the format chosen on the left.">⬇ Download All (6)</button>
+        <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px; border-color: rgba(255,215,0,0.3); color: var(--hx-ffd700);" onclick="downloadDeliverableCategory('SALES')" data-tooltip="Download all 6 deliverables in this tab as individual files in the format chosen on the left.">⬇ Download All (6)</button>
       </div>
       <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0 0 20px; line-height: 1.5; max-width: 700px;">Part of the ★ Executable Account Deliverables Suite (15 total, split by audience across three tabs) -- customer communications, technical and sales proposals, and the risk/security briefs a sales cycle needs.</p>
 
@@ -35986,59 +36033,59 @@ function generateActionPlan() {
         <div style="flex: 1; height: 1px; background: linear-gradient(90deg, var(--accent-cyan), transparent);"></div>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">D. Customer Advisory &amp; QBR Communications${enrBadge('customerComms')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('EMAIL')">Download Draft</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Advisory email template with health snapshot, sustainability score, and lifecycle milestones. QBR executive summary with compliance indicators and priority actions.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.customerComms}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.customerComms}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">E. Technical Solution &amp; Architecture Proposals${enrBadge('solutionProposals')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('SOLUTION_PROPOSAL')">Download Draft</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Solution design with prioritized corrections, OS upgrade targets, and a phased implementation timeline (6-week remediation roadmap).</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.solutionProposals}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.solutionProposals}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">F. Sales Refresh &amp; Renewal Proposals${enrBadge('salesProposals')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('SALES_PROPOSAL')">Download Draft</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Warranty renewals, TAM renewal pipeline with tech refresh status, lifecycle refresh candidates, and security/compliance upsell opportunities.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.salesProposals}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.salesProposals}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">G. Risk & Remediation Brief${enrBadge('riskRemediationBrief')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('RISK_REMEDIATION_BRIEF')">Download Brief</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Quantifiable account metrics, fleet tracking dimensions (Metrics, Ownership, Standards & Adoption, etc.), risk evaluation, and cost of inaction summaries.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.riskRemediationBrief}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.riskRemediationBrief}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">H. Security Posture Executive Brief${enrBadge('securityBrief')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('SECURITY_BRIEF')">Download Brief</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Security health summary, CVE exposure matrix, ransomware protection gaps, and security roadmap.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.securityBrief}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.securityBrief}</textarea>
       </div>
 
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">I. Sustainability &amp; ESG Report${enrBadge('sustainabilityReport')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('SUSTAINABILITY_REPORT')">Download Report</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Sustainability score, data reduction impact, capacity growth and optimization recommendations.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.sustainabilityReport}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.sustainabilityReport}</textarea>
       </div>
     </div>
 
@@ -36046,7 +36093,7 @@ function generateActionPlan() {
     <div class="plan-section" data-section-index="24" style="display: none; margin-top: 32px;">
       <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--accent-cyan); padding-bottom: 8px; margin-bottom: 16px;">
         <h2 style="font-size: 1.15rem; margin: 0; border: none; padding: 0;">TAM / MSP Operations Deliverables</h2>
-        <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px; border-color: rgba(255,215,0,0.3); color: #ffd700;" onclick="downloadDeliverableCategory('TAM')" data-tooltip="Download all 6 deliverables in this tab as individual files in the format chosen on the left.">⬇ Download All (6)</button>
+        <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px; border-color: rgba(255,215,0,0.3); color: var(--hx-ffd700);" onclick="downloadDeliverableCategory('TAM')" data-tooltip="Download all 6 deliverables in this tab as individual files in the format chosen on the left.">⬇ Download All (6)</button>
       </div>
       <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0 0 20px; line-height: 1.5; max-width: 700px;">Part of the ★ Executable Account Deliverables Suite (15 total, split by audience across three tabs) -- account plans, QBR/handover material, and customer-facing lifecycle reporting.</p>
 
@@ -36056,58 +36103,58 @@ function generateActionPlan() {
         <div style="flex: 1; height: 1px; background: linear-gradient(90deg, var(--status-normal), transparent);"></div>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">J. TAM Success &amp; Posture Optimization Plan${enrBadge('customerSuccessPlan')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('SUCCESS_PLAN')">Download TAM Success Plan</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Phased TAM roadmap (Phase 1: critical mitigation, Phase 2: OS upgrades, Phase 3: compliance audits) with ITIL governance guidelines.</p>
-        <textarea style="width: 100%; height: 220px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.customerSuccessPlan}</textarea>
+        <textarea style="width: 100%; height: 220px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.customerSuccessPlan}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">K. TAM Quarterly Business Review (QBR) Pack${enrBadge('qbrPack')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('QBR_PACK')">Download QBR Pack</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Structured QBR document with account overview, operational health scorecard (A-F grade), sustainability metrics, lifecycle pipeline, AIQ recommendations, and templated action items.</p>
-        <textarea style="width: 100%; height: 220px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.qbrPack}</textarea>
+        <textarea style="width: 100%; height: 220px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.qbrPack}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">L. MSP Service Delivery Report${enrBadge('mspReport')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('MSP_REPORT')">Download MSP Report</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Managed services SLA compliance matrix (ASUP/ARP/firmware/contracts with MET/MISSED indicators), incident management, contract portfolio, and capacity efficiency analysis.</p>
-        <textarea style="width: 100%; height: 220px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.mspReport}</textarea>
+        <textarea style="width: 100%; height: 220px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.mspReport}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">M. Account Handover &amp; Transition Brief${enrBadge('handoverBrief')}</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('HANDOVER_BRIEF')">Download Handover Brief</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Comprehensive account profile for SAM/TAM transitions &mdash; environment inventory, personnel, risk posture, contract status, recent activity, and auto-generated talking points.</p>
-        <textarea style="width: 100%; height: 220px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.handoverBrief}</textarea>
+        <textarea style="width: 100%; height: 220px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.handoverBrief}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">N. Customer Value Report</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('VALUE_REPORT')">Download Report</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Executive summary, value delivered, security and planning, optimisation opportunities, renewals and decisions needed -- as plain text with one heading per slide, to copy into your own template.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.valueReport}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.valueReport}</textarea>
       </div>
 
-      <div style="margin-bottom: 24px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">O. Customer Health &amp; Lifecycle Report</h4>
           <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('CUSTOMER_REPORT')">Download Report</button>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Customer-facing report: estate, support and lifecycle dates, security, monitoring, capacity, data protection, open cases and next steps. Contains only this customer's data; no internal notes.</p>
-        <textarea style="width: 100%; height: 160px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.customerReport}</textarea>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.customerReport}</textarea>
       </div>
     </div>
 
@@ -36390,7 +36437,7 @@ function generateActionPlan() {
     planBody.innerHTML = `<div style="padding:40px;text-align:center;">
       <div style="color:var(--status-critical);font-weight:700;font-size:1.1rem;margin-bottom:12px;">⚠ Action Plan Generation Failed</div>
       <div style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:16px;">An unexpected error occurred while compiling the plan.</div>
-      <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:16px;text-align:left;font-family:monospace;font-size:0.78rem;color:#f87171;max-height:200px;overflow:auto;">${(err.stack || err.message || String(err)).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+      <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:8px;padding:16px;text-align:left;font-family:monospace;font-size:0.78rem;color:var(--hx-f87171);max-height:200px;overflow:auto;">${(err.stack || err.message || String(err)).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
       <button class="action-btn" style="margin-top:16px;" onclick="generateActionPlan()">Retry</button>
     </div>`;
   }
@@ -39383,9 +39430,9 @@ function showDiagnosticsModal(results) {
     const bg     = !r.ep ? "rgba(126,232,250,0.08)" : "";
     return `<tr style="background:${bg}">
       <td style="padding:4px 8px;color:${color};font-weight:${!r.ep?700:400}">${r.label}</td>
-      <td style="padding:4px 8px;color:#94a3b8;font-size:11px;word-break:break-all">${r.ep}</td>
+      <td style="padding:4px 8px;color:var(--hx-94a3b8);font-size:11px;word-break:break-all">${r.ep}</td>
       <td style="padding:4px 8px;color:${color}">${r.status}${r.ms ? " ("+r.ms+"ms)" : ""}</td>
-      <td style="padding:4px 8px;color:#cbd5e1;font-size:11px">${r.preview}</td>
+      <td style="padding:4px 8px;color:var(--hx-cbd5e1);font-size:11px">${r.preview}</td>
     </tr>`;
   }).join("");
 
@@ -39395,10 +39442,10 @@ function showDiagnosticsModal(results) {
   modal.innerHTML = `
     <div style="background:#0f1729;border:1px solid #334155;border-radius:12px;padding:24px;max-width:900px;width:95%;max-height:85vh;overflow-y:auto">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <h3 style="color:#7ee8fa;margin:0;font-size:16px">🔬 API Diagnostics Report</h3>
-        <button onclick="document.getElementById('diagModal').remove()" style="background:#1e3a5f;color:#7ee8fa;border:none;border-radius:6px;padding:6px 14px;cursor:pointer">Close</button>
+        <h3 style="color:var(--hx-7ee8fa);margin:0;font-size:16px">🔬 API Diagnostics Report</h3>
+        <button onclick="document.getElementById('diagModal').remove()" style="background:#1e3a5f;color:var(--hx-7ee8fa);border:none;border-radius:6px;padding:6px 14px;cursor:pointer">Close</button>
       </div>
-      <p style="color:#94a3b8;font-size:12px;margin-bottom:16px">
+      <p style="color:var(--hx-94a3b8);font-size:12px;margin-bottom:16px">
         Green = data returned. Red = error/empty. Share this table if you need support.
       </p>
       <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:monospace">
@@ -39465,7 +39512,7 @@ function renderAccountsRows() {
         <input type="text" class="form-input" style="font-size:0.78rem; padding:6px 8px;" placeholder="Customer name" value="${(acct.label || '').replace(/"/g, '&quot;')}" oninput="state._accountsUI[${i}].label = this.value">
       </div>
       <div style="flex:1; min-width:200px;">
-        <div class="form-helper" style="margin:0 0 3px;">Refresh Token ${acct.hasToken ? '<span style="color:#34d399;">(saved — leave blank to keep)</span>' : '<span style="color:#f59e0b;">(required)</span>'}</div>
+        <div class="form-helper" style="margin:0 0 3px;">Refresh Token ${acct.hasToken ? '<span style="color:var(--hx-34d399);">(saved — leave blank to keep)</span>' : '<span style="color:var(--hx-f59e0b);">(required)</span>'}</div>
         <input type="password" class="form-input" style="font-size:0.78rem; padding:6px 8px; font-family:var(--font-mono);" placeholder="${acct.hasToken ? '•••••••• (unchanged)' : 'Paste refresh token...'}" oninput="state._accountsUI[${i}]._tokenInput = this.value">
       </div>
       <div style="flex:1; min-width:180px;">
@@ -39675,7 +39722,7 @@ async function runConnectionCheck(testTokens) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     const icon = { ok: '✔', warn: '⚠', fail: '✖', info: 'ℹ' }, col = { ok: 'var(--status-normal)', warn: '#f59e0b', fail: 'var(--status-critical)', info: 'var(--text-muted)' };
-    box.innerHTML = (d.checks || []).map(c => `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);"><span style="color:${col[c.status] || 'inherit'};font-weight:700;">${icon[c.status] || ''}</span> <b>${_esc(c.label)}</b>${c.detail ? `<div style="color:var(--text-secondary);margin-left:18px;">${_esc(c.detail)}</div>` : ''}${c.hint ? `<div style="color:#f59e0b;margin-left:18px;">${_esc(c.hint)}</div>` : ''}</div>`).join('') || 'No result.';
+    box.innerHTML = (d.checks || []).map(c => `<div style="padding:5px 0;border-bottom:1px solid var(--wa-50);"><span style="color:${col[c.status] || 'inherit'};font-weight:700;">${icon[c.status] || ''}</span> <b>${_esc(c.label)}</b>${c.detail ? `<div style="color:var(--text-secondary);margin-left:18px;">${_esc(c.detail)}</div>` : ''}${c.hint ? `<div style="color:var(--hx-f59e0b);margin-left:18px;">${_esc(c.hint)}</div>` : ''}</div>`).join('') || 'No result.';
   } catch (e) { box.innerHTML = `The check could not run: ${_esc(e.message)}`; }
   if (btn) btn.disabled = false;
 }
@@ -39726,7 +39773,7 @@ async function librarySearch(q) {
   box.textContent = 'Searching…';
   const r = await fetch('/api/library/search?q=' + encodeURIComponent(q) + '&limit=15'); const d = await r.json().catch(() => ({}));
   if (!r.ok) { box.textContent = d.error || 'Search failed.'; return; }
-  box.innerHTML = (d.results || []).length ? `<div style="color:var(--text-muted);margin-bottom:6px;">${d.total} document(s) match${d.total > 15 ? '; showing the best 15' : ''}.</div>` + d.results.map(x => `<div style="padding:8px 0;border-top:1px solid var(--border-color);"><a href="#" onclick="openLibraryDoc(${_esc(JSON.stringify(x.path)).replace(/&quot;/g, '&quot;')});return false;" style="color:#38bdf8;font-weight:600;">${_esc(x.title)}</a> <span style="color:var(--text-muted);font-size:0.7rem;">${_esc(x.category)} · ${_esc(x.fetched ? 'fetched ' + x.fetched : 'modified ' + x.modified)}</span><div style="color:var(--text-secondary);margin-top:2px;">${_esc(x.snippet)}</div>${x.source ? `<div><a href="${_esc(x.source)}" target="_blank" rel="noopener" style="color:var(--text-muted);font-size:0.7rem;">${_esc(x.source)}</a></div>` : ''}</div>`).join('') : 'No document contains all of those words.';
+  box.innerHTML = (d.results || []).length ? `<div style="color:var(--text-muted);margin-bottom:6px;">${d.total} document(s) match${d.total > 15 ? '; showing the best 15' : ''}.</div>` + d.results.map(x => `<div style="padding:8px 0;border-top:1px solid var(--border-color);"><a href="#" onclick="openLibraryDoc(${_esc(JSON.stringify(x.path)).replace(/&quot;/g, '&quot;')});return false;" style="color:var(--hx-38bdf8);font-weight:600;">${_esc(x.title)}</a> <span style="color:var(--text-muted);font-size:0.7rem;">${_esc(x.category)} · ${_esc(x.fetched ? 'fetched ' + x.fetched : 'modified ' + x.modified)}</span><div style="color:var(--text-secondary);margin-top:2px;">${_esc(x.snippet)}</div>${x.source ? `<div><a href="${_esc(x.source)}" target="_blank" rel="noopener" style="color:var(--text-muted);font-size:0.7rem;">${_esc(x.source)}</a></div>` : ''}</div>`).join('') : 'No document contains all of those words.';
 }
 async function openLibraryDoc(path) {
   const r = await fetch('/api/library/doc?path=' + encodeURIComponent(path)); const d = await r.json().catch(() => ({}));
@@ -40299,7 +40346,7 @@ function _showSetupBanner(message) {
       </div>
       <button onclick="switchTab('settings'); document.getElementById('setupRequiredBanner').remove();"
         style="
-          background: #1c1a12; color: #f59e0b; border: none; border-radius: 8px;
+          background: #1c1a12; color: var(--hx-f59e0b); border: none; border-radius: 8px;
           padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
           white-space: nowrap; transition: opacity 0.2s;"
         onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
@@ -40504,19 +40551,19 @@ async function loadProductionData(forceRefresh = false) {
         'animation:_toastSlideUp 0.3s ease'
       ].join(';');
       _zeroToast.innerHTML = [
-        '<div style="font-weight:700;font-size:0.85rem;color:#ef4444;margin-bottom:6px;">Active IQ: API Connected — No Systems Returned</div>',
+        '<div style="font-weight:700;font-size:0.85rem;color:var(--hx-ef4444);margin-bottom:6px;">Active IQ: API Connected — No Systems Returned</div>',
         '<div style="font-size:0.8rem;color:rgba(255,255,255,0.8);line-height:1.5;">',
         'GraphQL returned 0 systems. Possible causes:<br>',
-        '&bull; API token lacks <code style="background:rgba(255,255,255,0.08);padding:1px 4px;border-radius:3px;">unfiltered_system_access</code><br>',
+        '&bull; API token lacks <code style="background:var(--wa-80);padding:1px 4px;border-radius:3px;">unfiltered_system_access</code><br>',
         '&bull; Watchlist IDs are stale or not set<br>',
         '&bull; Account has no registered systems',
         '</div>',
         '<div style="margin-top:10px;display:flex;gap:8px;">',
         '<button onclick="switchTab(\'settings\');this.closest(\'div[style*=position:fixed]\').remove();"',
         ' style="font-size:0.75rem;padding:5px 12px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);',
-        'color:#ef4444;border-radius:6px;cursor:pointer;">Open Settings</button>',
+        'color:var(--hx-ef4444);border-radius:6px;cursor:pointer;">Open Settings</button>',
         '<button onclick="this.closest(\'div[style*=position:fixed]\').remove();"',
-        ' style="font-size:0.75rem;padding:5px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);',
+        ' style="font-size:0.75rem;padding:5px 12px;background:var(--wa-50);border:1px solid var(--wa-100);',
         'color:rgba(255,255,255,0.6);border-radius:6px;cursor:pointer;">Dismiss</button>',
         '</div>'
       ].join('');
@@ -41583,7 +41630,7 @@ function renderSuggestedPlans() {
     const preview = `
       <div style="margin-bottom:10px;">
         <div style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.4px; color:var(--text-muted); font-weight:700; margin-bottom:4px;">Customer Challenges &amp; Goals</div>
-        <div style="font-size:0.78rem; color:var(--text-secondary); white-space:pre-wrap; background:rgba(0,0,0,0.2); border-radius:6px; padding:10px; font-family:var(--font-mono, monospace);">${esc(payload.challengesFull)}</div>
+        <div style="font-size:0.78rem; color:var(--text-secondary); white-space:pre-wrap; background:var(--bk-200); border-radius:6px; padding:10px; font-family:var(--font-mono, monospace);">${esc(payload.challengesFull)}</div>
       </div>
       <div style="margin-bottom:10px;">
         <div style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.4px; color:var(--text-muted); font-weight:700; margin-bottom:4px;">Objectives</div>
@@ -41597,7 +41644,7 @@ function renderSuggestedPlans() {
       </div>
       <div>
         <div style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.4px; color:var(--text-muted); font-weight:700; margin-bottom:4px;">TAM Notes</div>
-        <div style="font-size:0.76rem; color:var(--text-muted); white-space:pre-wrap; background:rgba(0,0,0,0.2); border-radius:6px; padding:10px; font-family:var(--font-mono, monospace); max-height:220px; overflow-y:auto;">${esc(payload.tamNotes)}</div>
+        <div style="font-size:0.76rem; color:var(--text-muted); white-space:pre-wrap; background:var(--bk-200); border-radius:6px; padding:10px; font-family:var(--font-mono, monospace); max-height:220px; overflow-y:auto;">${esc(payload.tamNotes)}</div>
       </div>
       <div style="font-size:0.7rem; color:var(--text-muted); margin-top:8px; font-style:italic;">This is exactly what will be written to Active IQ if adopted -- nothing changes between this preview and the actual write-back.</div>`;
     return `
@@ -41611,7 +41658,7 @@ function renderSuggestedPlans() {
         </div>
         <button id="suggestedPlanToggle-${i}" onclick="event.stopPropagation(); toggleSuggestedPlanPreview(${i})" class="action-btn secondary" style="font-size:0.7rem; padding:5px 10px; flex-shrink:0; white-space:nowrap;">▸ Preview full plan</button>
       </div>
-      <div id="suggestedPlanPreview-${i}" style="display:none; padding:12px 14px 14px 40px; border-top:1px solid var(--border-color); background:rgba(255,255,255,0.02);">
+      <div id="suggestedPlanPreview-${i}" style="display:none; padding:12px 14px 14px 40px; border-top:1px solid var(--border-color); background:var(--wa-20);">
         ${preview}
       </div>
     </div>`;
@@ -41754,7 +41801,7 @@ function _cspOutcomeCell(p) {
   const bits = [];
   if (o.hasSystems && o.baselineCount != null && o.resolved != null) bits.push(`<span style="color:${(Array.isArray(o.resolved) ? o.resolved.length : o.resolved) ? 'var(--status-normal)' : 'var(--text-muted)'};">${Array.isArray(o.resolved) ? o.resolved.length : o.resolved} of ${o.baselineCount} systems no longer affected</span>`);
   if (o.targetMet && !o.closed) bits.push('<span style="color:var(--status-normal);font-weight:600;">target met: consider closing</span>');
-  if (o.staleDays) bits.push(`<span style="color:#f59e0b;">not updated for ${o.staleDays} days</span>`);
+  if (o.staleDays) bits.push(`<span style="color:var(--hx-f59e0b);">not updated for ${o.staleDays} days</span>`);
   return bits.length ? `<div style="font-size:0.7rem;margin-top:2px;">${bits.join(' · ')}</div>` : '';
 }
 function _cspOutcomesText(plans) {
@@ -41773,7 +41820,7 @@ function _cspRenderEvidence(plan) {
   const esc2 = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const list = (label, arr, col) => arr && arr.length ? `<div style="font-size:0.72rem;margin-top:4px;"><span style="color:${col};font-weight:600;">${label} (${arr.length}):</span> ${arr.map(esc2).join(', ')}</div>` : '';
   el.innerHTML = `<div style="border:1px solid var(--border-color);border-radius:6px;padding:10px 12px;"><div style="font-size:0.78rem;font-weight:600;margin-bottom:4px;">Outcome measured by ARIA ${o.closed ? '(recorded at closing)' : ''}</div>`
-    + `<div style="font-size:0.76rem;">${esc2(o.metricLabel || '')}: <b>${esc2(o.baselineValue)} → ${esc2(o.currentValue)}</b> ${o.targetMet && !o.closed ? '<span style="color:var(--status-normal);font-weight:600;">· target met, consider closing this plan</span>' : ''}${o.staleDays ? `<span style="color:#f59e0b;"> · plan not updated for ${o.staleDays} days</span>` : ''}</div>`
+    + `<div style="font-size:0.76rem;">${esc2(o.metricLabel || '')}: <b>${esc2(o.baselineValue)} → ${esc2(o.currentValue)}</b> ${o.targetMet && !o.closed ? '<span style="color:var(--status-normal);font-weight:600;">· target met, consider closing this plan</span>' : ''}${o.staleDays ? `<span style="color:var(--hx-f59e0b);"> · plan not updated for ${o.staleDays} days</span>` : ''}</div>`
     + (o.hasSystems && !o.closed ? list('No longer affected', o.resolved, 'var(--status-normal)') + list('Still affected', o.still, 'var(--status-warning)') + list('No longer in the data', o.gone, 'var(--text-muted)') + list('Newly affected since', o.fresh, 'var(--status-critical)')
       : (o.closed ? '' : `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:4px;">This plan was adopted before ARIA stored the covered systems, so only the metric is compared.</div>`))
     + (!o.closed ? `<div style="margin-top:8px;"><button class="action-btn secondary" onclick="addPlanEvidenceToNotes('${esc2(String(plan.id))}')">Add this evidence to the notes</button> <span style="font-size:0.68rem;color:var(--text-muted);">Nothing is sent to Active IQ until you save the plan.</span></div>` : '')
@@ -42373,12 +42420,12 @@ function _trackerSlaBadge(item) {
   const isSlaDefault = !item.dueDate;
   const suffix = isSlaDefault ? ' (SLA default)' : '';
   if (daysLeft < 0) {
-    return `<span style="color:#ef4444;font-weight:700;font-size:0.72rem;" title="${Math.abs(daysLeft)} day(s) past due${suffix}">✗ Breached</span>`;
+    return `<span style="color:var(--hx-ef4444);font-weight:700;font-size:0.72rem;" title="${Math.abs(daysLeft)} day(s) past due${suffix}">✗ Breached</span>`;
   }
   if (daysLeft <= 3) {
-    return `<span style="color:#f59e0b;font-weight:700;font-size:0.72rem;" title="Due in ${daysLeft} day(s)${suffix}">⚠ Due Soon</span>`;
+    return `<span style="color:var(--hx-f59e0b);font-weight:700;font-size:0.72rem;" title="Due in ${daysLeft} day(s)${suffix}">⚠ Due Soon</span>`;
   }
-  return `<span style="color:#22c55e;font-size:0.72rem;" title="Due in ${daysLeft} day(s)${suffix}">✓ On Track</span>`;
+  return `<span style="color:var(--hx-22c55e);font-size:0.72rem;" title="Due in ${daysLeft} day(s)${suffix}">✓ On Track</span>`;
 }
 
 // Clicking a tracked finding's title navigates to where that finding
@@ -42469,7 +42516,7 @@ function showTrackerRemediationModal(item) {
   }
   const sevColor = item.severity === 'critical' ? '#ef4444' : item.severity === 'high' ? '#f59e0b' : item.severity === 'medium' ? '#eab308' : '#94a3b8';
   modal.innerHTML = `
-    <div style="background:var(--bg-card,#1a1f2e);border:1px solid var(--border-color,rgba(255,255,255,0.1));border-radius:8px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;padding:24px;">
+    <div style="background:var(--bg-card,#1a1f2e);border:1px solid var(--border-color,var(--wa-100));border-radius:8px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;padding:24px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">
         <div>
           <span style="color:${sevColor};font-weight:700;font-size:0.72rem;text-transform:uppercase;">${item.severity || ''}</span>
@@ -42506,9 +42553,9 @@ function renderTrackerRecentActivity(scopedItems) {
   card.innerHTML = `
     <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 10px;">Recent Activity — Last 7 Days</div>
     <div style="display: flex; gap: 28px; flex-wrap: wrap; font-size: 0.85rem;">
-      <div><span style="color:#22c55e;font-weight:700;font-size:1.1rem;">${resolvedRecently.length}</span> <span style="color:var(--text-secondary);">resolved</span></div>
-      <div><span style="color:#f59e0b;font-weight:700;font-size:1.1rem;">${newlyOpened.length}</span> <span style="color:var(--text-secondary);">newly tracked</span></div>
-      <div><span style="color:#ef4444;font-weight:700;font-size:1.1rem;">${newlyBreached.length}</span> <span style="color:var(--text-secondary);">stale &amp; now SLA-breached (no update in 7+ days)</span></div>
+      <div><span style="color:var(--hx-22c55e);font-weight:700;font-size:1.1rem;">${resolvedRecently.length}</span> <span style="color:var(--text-secondary);">resolved</span></div>
+      <div><span style="color:var(--hx-f59e0b);font-weight:700;font-size:1.1rem;">${newlyOpened.length}</span> <span style="color:var(--text-secondary);">newly tracked</span></div>
+      <div><span style="color:var(--hx-ef4444);font-weight:700;font-size:1.1rem;">${newlyBreached.length}</span> <span style="color:var(--text-secondary);">stale &amp; now SLA-breached (no update in 7+ days)</span></div>
     </div>
     ${resolvedRecently.length === 0 && newlyOpened.length === 0 ? '<div style="color:var(--text-muted);font-size:0.78rem;margin-top:6px;">No activity in the last 7 days -- nothing new tracked, nothing resolved. Re-run "Import Findings Into Tracker" after your next sync to catch newly-appeared risks.</div>' : ''}
   `;
@@ -42598,7 +42645,7 @@ function renderTrackerTab() {
     kpiRow.innerHTML = `
       <div class="card kpi-card"><div class="card-title">Open</div><div class="card-value" style="color:${TRACKER_STATUS_COLORS.open};">${openCount}</div></div>
       <div class="card kpi-card"><div class="card-title">In Progress</div><div class="card-value" style="color:${TRACKER_STATUS_COLORS.in_progress};">${inProgCount}</div></div>
-      <div class="card kpi-card" data-tooltip="Active items past their due date (manually set, or the SLA policy default for their severity if none was set)."><div class="card-title">SLA Breached</div><div class="card-value" style="color:#ef4444;">${overdueCount}</div></div>
+      <div class="card kpi-card" data-tooltip="Active items past their due date (manually set, or the SLA policy default for their severity if none was set)."><div class="card-title">SLA Breached</div><div class="card-value" style="color:var(--hx-ef4444);">${overdueCount}</div></div>
       <div class="card kpi-card" data-tooltip="Percentage of open/in-progress items still within their due date or SLA policy default."><div class="card-title">SLA Compliance</div><div class="card-value" style="color:${slaColor};">${slaCompliancePct}%</div></div>
       <div class="card kpi-card"><div class="card-title">Resolved</div><div class="card-value" style="color:${TRACKER_STATUS_COLORS.resolved};">${resolvedCount}</div></div>
       <div class="card kpi-card"><div class="card-title">Total Tracked</div><div class="card-value">${scopedItems.length}</div></div>
@@ -42641,10 +42688,10 @@ function renderTrackerTab() {
       <td style="padding:8px 10px;font-size:0.8rem;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(i.customerName || '').replace(/"/g, '&quot;')}">${i.customerName || '—'}</td>
       <td style="padding:8px 10px;font-size:0.8rem;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${(i.systemName || '').replace(/"/g, '&quot;')}">${i.systemName || '—'}</td>
       <td style="padding:8px 10px;font-size:0.8rem;width:220px;max-width:220px;overflow-wrap:anywhere;word-break:break-word;"><a href="#" onclick="trackerGoToFinding(${i.id});return false;" style="color:var(--accent-cyan);text-decoration:none;" title="Go to this finding and show remediation steps">${i.title}</a>${i.detail ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${i.detail.replace(/"/g, '&quot;')}">${_trackerTruncate(i.detail, 60)}</div>` : ''}</td>
-      <td style="padding:8px 10px;"><input type="text" value="${(i.owner || '').replace(/"/g, '&quot;')}" placeholder="Unassigned" onchange="updateTrackerItem(${i.id}, {owner: this.value})" style="background:rgba(255,255,255,0.04);border:1px solid var(--border-color);border-radius:4px;padding:4px 6px;font-size:0.78rem;width:85px;color:var(--text-primary);"></td>
+      <td style="padding:8px 10px;"><input type="text" value="${(i.owner || '').replace(/"/g, '&quot;')}" placeholder="Unassigned" onchange="updateTrackerItem(${i.id}, {owner: this.value})" style="background:var(--wa-40);border:1px solid var(--border-color);border-radius:4px;padding:4px 6px;font-size:0.78rem;width:85px;color:var(--text-primary);"></td>
       <td style="padding:8px 10px;"><input type="date" value="${i.dueDate || ''}" placeholder="SLA default" onchange="updateTrackerItem(${i.id}, {dueDate: this.value})" style="background:${isOverdue ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.04)'};border:1px solid ${isOverdue ? '#ef4444' : 'var(--border-color)'};border-radius:4px;padding:4px 6px;font-size:0.75rem;width:120px;color:var(--text-primary);" title="${i.dueDate ? '' : 'No manual due date set -- using SLA policy default for ' + (i.severity||'medium') + ' severity'}"></td>
       <td style="padding:8px 10px;font-size:0.72rem;color:var(--text-muted);white-space:nowrap;">${i.lastSeenAt ? new Date(i.lastSeenAt).toLocaleDateString() : '—'}</td>
-      <td style="padding:8px 10px;"><input type="text" value="${(i.notes || '').replace(/"/g, '&quot;')}" placeholder="Notes..." onchange="updateTrackerItem(${i.id}, {notes: this.value})" style="background:rgba(255,255,255,0.04);border:1px solid var(--border-color);border-radius:4px;padding:4px 6px;font-size:0.78rem;width:100px;color:var(--text-primary);"></td>
+      <td style="padding:8px 10px;"><input type="text" value="${(i.notes || '').replace(/"/g, '&quot;')}" placeholder="Notes..." onchange="updateTrackerItem(${i.id}, {notes: this.value})" style="background:var(--wa-40);border:1px solid var(--border-color);border-radius:4px;padding:4px 6px;font-size:0.78rem;width:100px;color:var(--text-primary);"></td>
       <td style="padding:8px 10px;"><button onclick="deleteTrackerItem(${i.id})" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:0.9rem;" title="Remove from tracker">✕</button></td>
     </tr>`;
   }).join('');
@@ -44095,7 +44142,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
       const isActive = s.serialNumber === sys.serialNumber;
       const btnStyle = isActive
         ? "background: var(--accent-cyan); color: #0b0f19; border-color: var(--accent-cyan); font-weight: 600; box-shadow: 0 0 8px rgba(0, 229, 255, 0.35);"
-        : "background: rgba(255,255,255,0.04); color: var(--text-secondary); border-color: var(--border-color);" + (e.unverified ? " border-style: dashed;" : "");
+        : "background: var(--wa-40); color: var(--text-secondary); border-color: var(--border-color);" + (e.unverified ? " border-style: dashed;" : "");
       tabsHtml += `
         <button class="action-btn" style="${btnStyle} padding: 5px 12px; font-size: 0.72rem; border-radius: var(--radius-sm); transition: background-color 0.2s ease, color 0.2s ease;"
                 onclick="selectVisualNode('${s.serialNumber}')">
@@ -44149,7 +44196,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
       // platforms, so this only flags DATA-role ports below the 9000 jumbo-frame
       // threshold, using real harvested maxTransmissionUnitBytes.
       const mtuFlag = (port.type === 'data' && d.mtu < 9000)
-        ? ` <span style="color:#f59e0b;" title="Data port below the 9000-byte jumbo-frame threshold — verify this is intentional for this network segment, not a misconfiguration.">⚠ non-jumbo</span>`
+        ? ` <span style="color:var(--hx-f59e0b);" title="Data port below the 9000-byte jumbo-frame threshold — verify this is intentional for this network segment, not a misconfiguration.">⚠ non-jumbo</span>`
         : '';
       detailParts.push('MTU: ' + d.mtu + mtuFlag);
     }
@@ -44161,7 +44208,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
       ? `<span style="display: inline-flex; align-items: center; gap: 4px; color: var(--status-normal); border: 1px solid rgba(0, 230, 118, 0.25); background: rgba(0, 230, 118, 0.05); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 600;">✓ Optimal</span>`
       : (port.status === "offline"
         ? `<span style="display: inline-flex; align-items: center; gap: 4px; color: var(--status-critical); border: 1px solid rgba(255, 51, 102, 0.25); background: rgba(255, 51, 102, 0.05); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 700; box-shadow: 0 0 6px rgba(255,51,102,0.1);">✗ Link Down</span>`
-        : `<span style="display: inline-flex; align-items: center; gap: 4px; color: #f59e0b; border: 1px solid rgba(245,158,11,0.45); background: rgba(245,158,11,0.08); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 600;">● Unknown</span>`);
+        : `<span style="display: inline-flex; align-items: center; gap: 4px; color: var(--hx-f59e0b); border: 1px solid rgba(245,158,11,0.45); background: rgba(245,158,11,0.08); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 600;">● Unknown</span>`);
 
     const _cfgInf = port.inferred ? `<span style="font-size:0.75rem;color:var(--text-secondary);">FC port, inferred from ${port.lifNames.length} LIF${port.lifNames.length !== 1 ? 's' : ''} (${port.lifNames.slice(0, 3).join(', ')}${port.lifNames.length > 3 ? ', ...' : ''}); state is the LIF state, not a link measurement.<br><span style="color:var(--text-muted);">The physical port's own WWPN is not reported by Active IQ; a LIF's WWPN is a separate virtual address (see the LIF inventory), not this port's.</span></span>` : null;
     const partnerCell = port.partnerName || '<span style="color:var(--text-muted);font-style:italic;">Not available via API</span>';
@@ -44270,7 +44317,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
                   if (p === "CIFS") c = "#10b981";
                   if (p === "iSCSI" || p === "ISCSI") c = "#f59e0b";
                   if (p === "FCP") c = "#eab308";
-                  return '<span style="background:rgba(255,255,255,0.05);color:' + c + ';border:1px solid rgba(255,255,255,0.08);padding:2px 6px;border-radius:4px;font-size:0.66rem;font-weight:600;margin-right:3px;font-family:monospace;">' + p + '</span>';
+                  return '<span style="background:var(--wa-50);color:' + c + ';border:1px solid var(--wa-80);padding:2px 6px;border-radius:4px;font-size:0.66rem;font-weight:600;margin-right:3px;font-family:monospace;">' + p + '</span>';
                 }).join("")}
               </td>
               <td style="padding:8px 10px;font-size:0.75rem;color:var(--text-secondary);">${l.servicePolicy || "—"}</td>
@@ -44292,10 +44339,10 @@ function renderNodeVisualLayout(selectedSystems, sys) {
               <span style="font-size:0.72rem;color:var(--text-muted);">${totalNodeLifs} LIF${totalNodeLifs !== 1 ? 's' : ''} on this node</span>
               ${migratedAlert}
             </div>
-            <div class="data-table-container" style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:rgba(15,22,38,0.3);">
+            <div class="data-table-container" style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
               <table class="data-table" style="width:100%;border-collapse:collapse;font-size:0.78rem;">
                 <thead>
-                  <tr style="background:rgba(255,255,255,0.015);border-bottom:1px solid var(--border-color);text-align:left;">
+                  <tr style="background:var(--wa-15);border-bottom:1px solid var(--border-color);text-align:left;">
                     <th style="padding:8px 10px;font-weight:600;color:var(--text-secondary);">LIF Name</th>
                     <th style="padding:8px 10px;font-weight:600;color:var(--text-secondary);">SVM</th>
                     <th style="padding:8px 10px;font-weight:600;color:var(--text-secondary);">IP / WWPN</th>
@@ -44328,10 +44375,10 @@ function renderNodeVisualLayout(selectedSystems, sys) {
     <div id="bpPortWrap" class="${_bpShowLogical ? '' : 'bp-logical-hidden'}" style="flex:1 1 430px;min-width:0;">
     <style>.bp-logical-hidden .bp-logical-row{display:none}</style>
     ${ports.some(p => !_bpNum[p.name]) ? `<label style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--text-secondary);margin-bottom:6px;cursor:pointer;"><input type="checkbox" ${_bpShowLogical ? 'checked' : ''} onchange="bpToggleLogical(this.checked)"> Show logical interfaces (${ports.filter(p => !_bpNum[p.name]).length} interface groups / VLANs, no physical connector)</label>` : ''}
-    <div class="data-table-container" style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: auto; max-height: 760px; background: rgba(15,22,38,0.3);">
+    <div class="data-table-container" style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow: auto; max-height: 760px; background: var(--navy-300);">
       <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
         <thead>
-          <tr style="background: rgba(255, 255, 255, 0.015); border-bottom: 1px solid var(--border-color); text-align: left;">
+          <tr style="background: var(--wa-15); border-bottom: 1px solid var(--border-color); text-align: left;">
             <th style="padding: 10px; font-weight: 600; color: var(--text-secondary);">#</th>
             <th style="padding: 10px; font-weight: 600; color: var(--text-secondary);">Port</th>
             <th style="padding: 10px; font-weight: 600; color: var(--text-secondary);">Type</th>
@@ -44424,7 +44471,7 @@ function _bpFillCards(sys) {
   const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const adapters = ((sys && sys.platformExtras && sys.platformExtras.adapters) || []).filter(x => x && x.slot != null);
   const note = 'font-size:0.68rem;color:var(--text-muted);margin-top:8px;';
-  const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.72rem;border-bottom:1px solid rgba(255,255,255,0.04);';
+  const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.72rem;border-bottom:1px solid var(--wa-40);';
   if (!adapters.length) {
     el.innerHTML = `<div style="${note}">Active IQ reports no adapter inventory for this system, so the drawing shows the platform's standard layout with the ports Active IQ reports. The installed cards are not known.</div>`;
     return;
@@ -44449,13 +44496,13 @@ function _bpFillCards(sys) {
     else if (cardPorts && !rep) { flag = 'no port of this card is in the network port list'; issues.push(`slot ${s}: ${cards.map(x => x.name).join(', ')}`); }
     const role = docSlots[s] ? (docSlots[s].label || (docSlots[s].roles || []).join(', ')) : '';
     const cardIssue = x => _cardFwKnownIssues(sys).filter(h => String(h.slot) === String(s) && h.card === x.name).map(h => h.rule.id).join(', ');
-    return cards.map(x => `<tr><td style="${td}font-weight:700;">${esc(s === '0' ? 'onboard' : s)}</td><td style="${td}">${esc(x.name)}</td><td style="${td}">${esc(String(x.type || '').toLowerCase().replace(/_/g, ' '))}</td><td style="${td}">${esc(x.ports == null ? '' : x.ports)}</td><td style="${td}">${esc(x.fw || '')}</td><td style="${td}">${esc(role)}</td><td style="${td}color:#f59e0b;">${esc(flag)}${cardIssue(x) ? `${flag ? '<br>' : ''}<span style="color:#ef4444;">Known issue of this firmware: ${esc(cardIssue(x))}</span>` : ''}</td></tr>`).join('');
+    return cards.map(x => `<tr><td style="${td}font-weight:700;">${esc(s === '0' ? 'onboard' : s)}</td><td style="${td}">${esc(x.name)}</td><td style="${td}">${esc(String(x.type || '').toLowerCase().replace(/_/g, ' '))}</td><td style="${td}">${esc(x.ports == null ? '' : x.ports)}</td><td style="${td}">${esc(x.fw || '')}</td><td style="${td}">${esc(role)}</td><td style="${td}color:var(--hx-f59e0b);">${esc(flag)}${cardIssue(x) ? `${flag ? '<br>' : ''}<span style="color:var(--hx-ef4444);">Known issue of this firmware: ${esc(cardIssue(x))}</span>` : ''}</td></tr>`).join('');
   }).filter(Boolean).join('');
   Object.keys(reported).forEach(s => { if (!bySlot[s]) issues.push(`slot ${s}: ${reported[s]} port${reported[s] > 1 ? 's' : ''} reported but no card in the inventory`); });
-  el.innerHTML = `<details open style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:rgba(15,22,38,0.3);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.8rem;font-weight:600;">Installed cards (reported by Active IQ)</summary><div style="padding:0 12px 12px;">`
+  el.innerHTML = `<details open style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--navy-300);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.8rem;font-weight:600;">Installed cards (reported by Active IQ)</summary><div style="padding:0 12px 12px;">`
     + `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Slot</th><th style="${th}">Card</th><th style="${th}">Type</th><th style="${th}">Ports</th><th style="${th}">Firmware</th><th style="${th}">Documentation role of the slot</th><th style="${th}">Check</th></tr></thead><tbody>${rows}</tbody></table>`
     + (onboardTotal ? `<div style="${note}">Onboard: the inventory lists ${onboardTotal} ports, Active IQ's network port list has ${reported['0'] || 0}. The difference is normally ports that are not network ports in ONTAP (storage-shelf connections, the service processor, internal links), so it is not by itself a fault.</div>` : '')
-    + (issues.length ? `<div style="${note}color:#f59e0b;">In the adapter inventory but with no port in the network port list: ${esc(issues.join('; '))}. ONTAP does not list ports for a card it has not brought up as a network port (unused, or used for something other than Ethernet networking), so this does not by itself mean a missing or failed card; check the card on the system.</div>` : '')
+    + (issues.length ? `<div style="${note}color:var(--hx-f59e0b);">In the adapter inventory but with no port in the network port list: ${esc(issues.join('; '))}. ONTAP does not list ports for a card it has not brought up as a network port (unused, or used for something other than Ethernet networking), so this does not by itself mean a missing or failed card; check the card on the system.</div>` : '')
     + `<div style="${note}">From the adapter inventory in this system's AutoSupport data. The drawing above is the platform's standard layout with the ports Active IQ reports.</div></div></details>`;
 }
 async function _bpFillDocs(platform, sys) {
@@ -44469,12 +44516,12 @@ async function _bpFillDocs(platform, sys) {
   const hit = _hwDocsEntry(platform), el2 = document.getElementById('bpDocsPanel'); if (!el2) return;
   if (!hit) { el2.innerHTML = ''; return; }
   const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const e = hit.e, th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.72rem;border-bottom:1px solid rgba(255,255,255,0.05);vertical-align:top;';
+  const e = hit.e, th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;font-size:0.72rem;border-bottom:1px solid var(--wa-50);vertical-align:top;';
   const slotRows = Object.keys(e.slots || {}).sort((a, b) => a - b).map(k => { const s = e.slots[k]; return `<tr><td style="${td}font-weight:700;">${esc(k)}</td><td style="${td}">${esc(s.label || s.roles.join(', '))}</td><td style="${td}font-family:monospace;">${esc((s.ports || []).join(' '))}</td><td style="${td}color:var(--text-muted);">${esc((s.evidence || [])[0])}</td></tr>`; }).join('');
   const tbl = Object.keys(e.slotTable || {}).sort((a, b) => a - b).map(k => `<tr><td style="${td}font-weight:700;">${esc(k)}</td><td style="${td}" colspan="3">${esc(e.slotTable[k])}</td></tr>`).join('');
   const portRows = Object.keys(e.ports || {}).sort().map(k => { const p = e.ports[k]; return `<tr><td style="${td}font-family:monospace;font-weight:700;">${esc(k)}</td><td style="${td}">${esc((p.roles || []).join(', '))}</td><td style="${td}">${esc((p.speed || []).join(' / '))}</td><td style="${td}color:var(--text-muted);">${esc((p.evidence || [])[0])}</td></tr>`; }).join('');
   const ks = Object.entries(e.keySpecs || {}).map(([k, v]) => `${esc(k)}: ${esc(Array.isArray(v) ? v.join('; ') : v)}`).join(' · ');
-  el2.innerHTML = `<details style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:rgba(15,22,38,0.3);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.78rem;font-weight:700;color:#fff;">NetApp documentation: slot and port assignments for ${esc((e.models || []).join(' / '))} <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">(harvested ${esc(String(_HW_DOCS.fetchedAt || '').slice(0, 10))} from NetApp's official documentation)</span></summary><div style="padding:0 12px 12px;">` +
+  el2.innerHTML = `<details style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--navy-300);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.78rem;font-weight:700;color:#fff;">NetApp documentation: slot and port assignments for ${esc((e.models || []).join(' / '))} <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">(harvested ${esc(String(_HW_DOCS.fetchedAt || '').slice(0, 10))} from NetApp's official documentation)</span></summary><div style="padding:0 12px 12px;">` +
     (ks ? `<div style="font-size:0.7rem;color:var(--text-secondary);margin:4px 0 8px;">${ks}</div>` : '') +
     (tbl ? `<div style="font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;margin:6px 0 2px;">I/O slot numbering</div><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Slot</th><th style="${th}" colspan="3">Documented role</th></tr></thead><tbody>${tbl}</tbody></table>` : '') +
     (slotRows ? `<div style="font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;margin:8px 0 2px;">Slots the documentation names</div><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Slot</th><th style="${th}">Role</th><th style="${th}">Ports</th><th style="${th}">Documentation says</th></tr></thead><tbody>${slotRows}</tbody></table>` : '') +
@@ -44693,8 +44740,8 @@ function renderStorageGridStatus(view) {
 }
 function _storageGridHtml(view) {
   const esc = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  const stat = (label, val, color, sub) => `<div style="background:rgba(0,0,0,0.2);padding:10px;border-radius:var(--radius-sm);text-align:center;border-left:3px solid ${color};"><div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${label}</div><div style="font-size:1.1rem;font-weight:700;color:${color};">${val}</div>${sub ? `<div style="font-size:0.62rem;color:var(--text-muted);margin-top:2px;">${sub}</div>` : ''}</div>`;
-  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:6px 8px;font-size:0.78rem;border-bottom:1px solid rgba(255,255,255,0.05);vertical-align:top;';
+  const stat = (label, val, color, sub) => `<div style="background:var(--bk-200);padding:10px;border-radius:var(--radius-sm);text-align:center;border-left:3px solid ${color};"><div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${label}</div><div style="font-size:1.1rem;font-weight:700;color:${color};">${val}</div>${sub ? `<div style="font-size:0.62rem;color:var(--text-muted);margin-top:2px;">${sub}</div>` : ''}</div>`;
+  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:6px 8px;font-size:0.78rem;border-bottom:1px solid var(--wa-50);vertical-align:top;';
   const hi = view.findings.filter(f => f.severity === 'high').length, md = view.findings.filter(f => f.severity === 'medium').length;
   const sevColor = { high: 'var(--status-critical)', medium: 'var(--status-warning)', info: 'var(--text-muted)' };
   const t = view.totals;
@@ -44703,7 +44750,7 @@ function _storageGridHtml(view) {
     stat('Tenants / buckets', t.tenants + ' / ' + t.buckets, 'var(--accent-cyan)') + stat('ILM rules', t.rules, 'var(--accent-cyan)') +
     stat('Findings', hi + ' high / ' + md + ' med', hi ? 'var(--status-critical)' : md ? 'var(--status-warning)' : 'var(--status-normal)') + `</div>`;
   view.grids.forEach(g => {
-    html += `<details open style="margin-bottom:12px;border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius-sm);padding:10px 12px;"><summary style="cursor:pointer;font-weight:600;">${esc(g.gridName)} <span style="color:var(--text-muted);font-weight:400;font-size:0.75rem;">${esc(g.customerName)} &middot; ${g.sites.length} site${g.sites.length !== 1 ? 's' : ''} &middot; ${g.nodeTotal || 0} node${g.nodeTotal !== 1 ? 's' : ''}${g.rolesText ? ' (' + esc(g.rolesText) + ')' : ''}${g.formsText ? ' &middot; ' + esc(g.formsText) : ''} &middot; ${esc(g.version)}${g.licenseCapacity ? ' &middot; licence ' + esc(g.licenseCapacity) + ' TB (' + esc(g.licenseType || '') + ')' : ''}</span></summary>`;
+    html += `<details open style="margin-bottom:12px;border:1px solid var(--wa-80);border-radius:var(--radius-sm);padding:10px 12px;"><summary style="cursor:pointer;font-weight:600;">${esc(g.gridName)} <span style="color:var(--text-muted);font-weight:400;font-size:0.75rem;">${esc(g.customerName)} &middot; ${g.sites.length} site${g.sites.length !== 1 ? 's' : ''} &middot; ${g.nodeTotal || 0} node${g.nodeTotal !== 1 ? 's' : ''}${g.rolesText ? ' (' + esc(g.rolesText) + ')' : ''}${g.formsText ? ' &middot; ' + esc(g.formsText) : ''} &middot; ${esc(g.version)}${g.licenseCapacity ? ' &middot; licence ' + esc(g.licenseCapacity) + ' TB (' + esc(g.licenseType || '') + ')' : ''}</span></summary>`;
     if (g.nodes.length) {
       html += `<div style="overflow-x:auto;margin-top:10px;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Site</th><th style="${th}">Node</th><th style="${th}">Role</th><th style="${th}">Appliance</th><th style="${th}">Reports to Active IQ</th><th style="${th}">Crit/High risks</th><th style="${th}">Last ASUP</th><th style="${th}">RAID</th><th style="${th}">Drives</th><th style="${th}">Version</th></tr></thead><tbody>` +
         g.nodes.map(n => `<tr><td style="${td}">${esc(n.site)}</td><td style="${td}">${esc(n.hostName)}${g.primaryAdmin && n.hostName === g.primaryAdmin ? ' <span style="color:var(--accent-cyan);font-size:0.68rem;">primary</span>' : ''}</td><td style="${td}">${esc(n.storageNodeType || '—')}</td><td style="${td}">${esc(_dfSgForm(n).label)}</td><td style="${td}color:${n.reporting ? 'var(--status-normal)' : 'var(--status-warning)'};">${n.reporting ? 'Yes' : 'No'}</td><td style="${td}">${n.health ? n.health.crit + '/' + n.health.high : '—'}</td><td style="${td}">${n.health && n.health.asupDays != null ? n.health.asupDays + 'd' : '—'}</td><td style="${td}">${esc(n.raidMode || '—')}</td><td style="${td}">${n.driveType ? esc(n.driveType) + (n.driveSizeGB ? ' ' + n.driveSizeGB + ' GB' : '') : '—'}</td><td style="${td}">${esc(n.osVersion || '—')}</td></tr>`).join('') + `</tbody></table></div>`;
@@ -44716,7 +44763,7 @@ function _storageGridHtml(view) {
       html += `<div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;margin:12px 0 4px;">ILM rules as reported by Active IQ</div><div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:6px;">Active IQ returns one ILM rule set per grid (from AutoSupport) and does not say which rules belong to the active policy. Confirm in Grid Manager > ILM > Policies.</div><div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Rule</th><th style="${th}">Default</th><th style="${th}">Placement</th><th style="${th}">Reference</th><th style="${th}">Ingest</th><th style="${th}">Applies to</th></tr></thead><tbody>` +
         g.rules.map(r => `<tr><td style="${td}font-weight:600;">${esc(r.ruleName)}</td><td style="${td}">${r.isDefaultRule ? 'Yes' : 'No'}</td><td style="${td}">${esc(r._p.text)}</td><td style="${td}">${esc(r.referenceTime || '—')}</td><td style="${td}">${esc(r.ingestBehavior || '—')}</td><td style="${td}">${r.filter ? esc(r.filter) : 'All objects'}</td></tr>`).join('') + `</tbody></table></div>`;
     }
-    if (g.findings.length) html += `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">` + g.findings.map(f => `<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-left:3px solid ${sevColor[f.severity]};border-radius:var(--radius-sm);padding:8px 12px;"><div style="font-size:0.78rem;font-weight:600;">${esc(f.title)} <span style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${f.severity}</span></div><div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">${esc(f.detail)}</div>${f.recommendation ? `<div style="font-size:0.72rem;color:var(--accent-cyan);margin-top:4px;">Recommendation: ${esc(f.recommendation)}</div>` : ''}</div>`).join('') + `</div>`;
+    if (g.findings.length) html += `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">` + g.findings.map(f => `<div style="background:var(--wa-30);border:1px solid var(--wa-100);border-left:3px solid ${sevColor[f.severity]};border-radius:var(--radius-sm);padding:8px 12px;"><div style="font-size:0.78rem;font-weight:600;">${esc(f.title)} <span style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${f.severity}</span></div><div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">${esc(f.detail)}</div>${f.recommendation ? `<div style="font-size:0.72rem;color:var(--accent-cyan);margin-top:4px;">Recommendation: ${esc(f.recommendation)}</div>` : ''}</div>`).join('') + `</div>`;
     if (g.tenants.length) {
       html += `<div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;margin:12px 0 4px;">Tenants &amp; buckets</div><div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Tenant</th><th style="${th}">Buckets</th><th style="${th}">Versioned</th><th style="${th}">Immutable</th><th style="${th}">CloudMirror</th></tr></thead><tbody>` +
         g.tenants.map(tn => { const b = tn.buckets || []; return `<tr><td style="${td}">${esc(tn.tenantId)}</td><td style="${td}">${b.length}</td><td style="${td}">${b.filter(x => String(x.versioning || '').toUpperCase() === 'ENABLED').length}</td><td style="${td}">${b.filter(x => x.isS3ObjectLockingEnabled || x.isLegacyComplianceEnabled).length}</td><td style="${td}">${b.filter(x => x.isCloudMirror).length}</td></tr>`; }).join('') + `</tbody></table></div>`;
@@ -44793,7 +44840,7 @@ function renderMetroClusterStatus(mcSystems) {
   const { pairs, unpaired } = _dfMcPairs(clusterNames, byCluster);
   const realCount = pairs.filter(p => p[2]).length;
   const riskFor = c => allMcRisks.filter(r => byCluster[c].some(x => x.systemName === r.systemName));
-  const stat = (label, val, color, sub) => `<div style="background:rgba(0,0,0,0.2);padding:10px;border-radius:var(--radius-sm);text-align:center;border-left:3px solid ${color};"><div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${label}</div><div style="font-size:1.1rem;font-weight:700;color:${color};">${val}</div>${sub ? `<div style="font-size:0.62rem;color:var(--text-muted);margin-top:2px;">${sub}</div>` : ''}</div>`;
+  const stat = (label, val, color, sub) => `<div style="background:var(--bk-200);padding:10px;border-radius:var(--radius-sm);text-align:center;border-left:3px solid ${color};"><div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${label}</div><div style="font-size:1.1rem;font-weight:700;color:${color};">${val}</div>${sub ? `<div style="font-size:0.62rem;color:var(--text-muted);margin-top:2px;">${sub}</div>` : ''}</div>`;
   let html = `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:14px;">` +
     stat('MetroCluster configurations', pairs.length + (unpaired.length ? ' + ' + unpaired.length + ' unpaired' : ''), '#ff9800', pairs.length ? `${realCount} confirmed by Active IQ${pairs.length - realCount ? `, ${pairs.length - realCount} inferred` : ''}` : 'pairs inferred from cluster names') +
     stat('Clusters / nodes', clusterNames.length + ' / ' + mcSystems.length, '#ff9800', _mcExtraN ? `includes ${_mcExtraN} node${_mcExtraN !== 1 ? 's' : ''} outside the current selection` : '') +
@@ -44801,7 +44848,7 @@ function renderMetroClusterStatus(mcSystems) {
     stat('Auto switchover (AUSO)', hasMausoDisabled ? '⚠ DISABLED' : 'No issue reported', hasMausoDisabled ? 'var(--status-warning)' : 'var(--status-normal)', hasMausoDisabled ? 'from an Active IQ finding' : 'absence of a finding, not a live check') +
     stat('MC findings', allMcRisks.length, allMcRisks.length > 0 ? '#ff9800' : 'var(--status-normal)') + `</div>`;
 
-  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:6px 8px;font-size:0.78rem;border-bottom:1px solid rgba(255,255,255,0.05);';
+  const th = 'text-align:left;padding:6px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:6px 8px;font-size:0.78rem;border-bottom:1px solid var(--wa-50);';
   const partnerOf = c => { const p = pairs.find(x => x[0] === c || x[1] === c); return p ? { name: p[0] === c ? p[1] : p[0], real: p[2] } : null; };
   html += `<div style="overflow-x:auto;margin-bottom:14px;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Cluster</th><th style="${th}">DR partner</th><th style="${th}">Nodes</th><th style="${th}">Model</th><th style="${th}">ONTAP</th><th style="${th}">Site</th><th style="${th}">MC findings</th></tr></thead><tbody>` +
     clusterNames.map(c => { const ns = byCluster[c], f = riskFor(c).length; const vers = [...new Set(ns.map(x => x.ontapVersion || x.osVersion).filter(Boolean))].join(', '), models = [...new Set(ns.map(x => x.model || x.platform).filter(Boolean))].join(', '), site = [...new Set(ns.map(x => x.siteCity).filter(Boolean))].join(', ');
@@ -44814,7 +44861,7 @@ function renderMetroClusterStatus(mcSystems) {
     html += `<div style="display:flex;flex-direction:column;gap:8px;">`;
     allMcRisks.forEach(r => {
       const sevColor = { critical: 'var(--status-critical)', high: '#ff9800', medium: 'var(--status-warning)' }[r.severity] || 'var(--text-muted)';
-      html += `<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-left:3px solid ${sevColor};border-radius:var(--radius-sm);padding:10px 12px;">
+      html += `<div style="background:var(--wa-30);border:1px solid var(--wa-100);border-left:3px solid ${sevColor};border-radius:var(--radius-sm);padding:10px 12px;">
         <div style="font-size:0.78rem;font-weight:600;color:#fff;">${r.systemName}: ${r.description || r.shortName || 'MetroCluster finding'}</div>
         <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;text-transform:uppercase;">${r.severity || ''}</div>
       </div>`;
@@ -44846,7 +44893,7 @@ function renderEseriesHardwareAudit(sys) {
     const bbuColor = bbuOptimal ? "var(--status-normal)" : "var(--status-warning)";
     
     controllersHtml += `
-      <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 16px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 16px; display: flex; flex-direction: column; gap: 8px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
           <h4 style="font-weight: 600; color: #fff; font-size: 0.9rem; margin: 0;">${ctrl.name}</h4>
           <span style="font-size: 0.72rem; color: ${statusColor}; font-weight: 700;">● ${ctrl.status}</span>
@@ -44869,7 +44916,7 @@ function renderEseriesHardwareAudit(sys) {
     const usedTB = (pool.capacityTB - pool.freeTB).toFixed(1);
     const pct = ((usedTB / pool.capacityTB) * 100).toFixed(0);
     poolsHtml += `
-      <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; display: flex; flex-direction: column; gap: 6px;">
+      <div style="background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; display: flex; flex-direction: column; gap: 6px;">
         <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;">
           <strong style="color: #fff;">${pool.name}</strong>
           <span style="color: var(--status-info); font-size: 0.72rem; font-weight: 600;">${pool.raidType}</span>
@@ -44877,7 +44924,7 @@ function renderEseriesHardwareAudit(sys) {
         <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
           Capacity: ${usedTB} TB / ${pool.capacityTB} TB (${pct}% Used)
         </div>
-        <div style="background: rgba(255,255,255,0.08); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 6px;">
+        <div style="background: var(--wa-80); height: 8px; border-radius: 4px; overflow: hidden; margin-top: 6px;">
           <div style="background: var(--accent-cyan); width: ${pct}%; height: 100%;"></div>
         </div>
       </div>
@@ -44899,7 +44946,7 @@ function renderEseriesHardwareAudit(sys) {
       
       disksHtml += `
         <div class="eseries-disk-slot" data-tooltip="${tooltip}"
-             style="background: rgba(255,255,255,0.04); border: 1px solid var(--border-color); border-radius: 3px; padding: 8px 4px; text-align: center; cursor: pointer; transition: background-color 0.2s ease, border-color 0.2s ease;"
+             style="background: var(--wa-40); border: 1px solid var(--border-color); border-radius: 3px; padding: 8px 4px; text-align: center; cursor: pointer; transition: background-color 0.2s ease, border-color 0.2s ease;"
              onmouseenter="this.style.borderColor='var(--accent-cyan)'; this.style.background='rgba(0, 229, 255, 0.05)';"
              onmouseleave="this.style.borderColor=''; this.style.background='';">
           <div style="font-size: 0.65rem; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px;">Bay ${disk.bay}</div>
@@ -44908,7 +44955,7 @@ function renderEseriesHardwareAudit(sys) {
           ${isSSD ? `
             <div style="margin-top: 6px; padding: 0 4px;">
               <div style="font-size: 0.52rem; color: var(--text-muted); margin-bottom: 2px;">Wear: ${disk.wearLife}%</div>
-              <div style="background: rgba(255,255,255,0.1); height: 3px; border-radius: 1.5px; overflow: hidden;">
+              <div style="background: var(--wa-100); height: 3px; border-radius: 1.5px; overflow: hidden;">
                 <div style="background: ${disk.wearLife < 85 ? 'var(--status-warning)' : 'var(--status-normal)'}; width: ${disk.wearLife}%; height: 100%;"></div>
               </div>
             </div>
@@ -44918,7 +44965,7 @@ function renderEseriesHardwareAudit(sys) {
     });
 
     shelvesHtml += `
-      <div style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 16px; background: rgba(15,22,38,0.2); display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
+      <div style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 16px; background: var(--navy-200); display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
           <span style="font-weight: 600; color: #fff; font-size: 0.82rem;">${shelf.name} (${shelf.model})</span>
           <span style="font-size: 0.72rem; color: var(--text-secondary);">DE224C Multi-Interface SAS</span>
@@ -45022,7 +45069,7 @@ function renderHardeningScorecard() {
   card.style.display = 'block';
   const esc2 = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const withGap = h.rows.filter(r => r.gap.length).length;
-  const td = 'padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.76rem;vertical-align:top;';
+  const td = 'padding:6px 8px;border-bottom:1px solid var(--wa-50);font-size:0.76rem;vertical-align:top;';
   card.innerHTML = `<div class="section-title" style="margin-bottom:6px;color:var(--accent-cyan);display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;"><span>Security hardening scorecard</span><span style="font-size:0.75rem;font-weight:500;color:var(--text-muted);">${h.evaluated} ONTAP system${h.evaluated !== 1 ? 's' : ''} in the current filter</span></div>`
     + `<div style="font-size:0.78rem;margin-bottom:10px;">${withGap} of ${h.rows.length} controls have a gap raised by Active IQ on at least one system; ${h.rows.length - withGap} have none. <span style="color:var(--text-muted);">"No gap raised" means Active IQ ran its check and found nothing; it does not confirm the setting.</span></div>`
     + `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-muted);font-size:0.7rem;text-transform:uppercase;"><th style="padding:4px 8px;">Area</th><th>Control</th><th>Result</th><th>Systems with a gap</th></tr></thead><tbody>`
@@ -45073,7 +45120,7 @@ function renderSvmSecurityAudit(sys) {
     // absence of one. If SMBv1/audit posture is unreported (the normal case,
     // since the AIQ API doesn't expose it), show "Not Reported" instead of a
     // false-positive "✓ Secure".
-    let secStatusBadge = `<span class="badge" style="background: rgba(148,163,184,0.1); border-color: rgba(148,163,184,0.25); color: #94a3b8;">Not Reported</span>`;
+    let secStatusBadge = `<span class="badge" style="background: rgba(148,163,184,0.1); border-color: rgba(148,163,184,0.25); color: var(--hx-94a3b8);">Not Reported</span>`;
     if (isSmb1 || isInsecureNfs) {
       secStatusBadge = `<span class="badge critical" style="background: rgba(255, 51, 102, 0.08); border-color: rgba(255, 51, 102, 0.25); color: var(--status-critical);">✗ At Risk</span>`;
     } else if (isAuditDisabled) {
@@ -45094,7 +45141,7 @@ function renderSvmSecurityAudit(sys) {
       if (p === "CIFS") color = "#10b981";
       if (p === "iSCSI") color = "#f59e0b";
       if (p === "FCP") color = "#eab308";
-      return `<span style="background: rgba(255,255,255,0.05); color: ${color}; border: 1px solid rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; margin-right: 4px; font-family: monospace;">${p}</span>`;
+      return `<span style="background: var(--wa-50); color: ${color}; border: 1px solid var(--wa-80); padding: 2px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; margin-right: 4px; font-family: monospace;">${p}</span>`;
     }).join("") : `<span style="color: var(--text-muted); font-size: 0.72rem;">Not Reported</span>`;
 
     svmRowsHtml += `
@@ -45126,7 +45173,7 @@ function renderSvmSecurityAudit(sys) {
   // system-specific findings (e.g. an actual migrated-LIF count) stay
   // visible in the status text itself, never hidden in the tooltip.
   const _checkRow = (label, statusText, color, tooltip) => `
-    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.05);"${tooltip ? ` data-tooltip="${_xe(tooltip)}"` : ''}>
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--wa-50);"${tooltip ? ` data-tooltip="${_xe(tooltip)}"` : ''}>
       <span style="font-size: 0.78rem; color: #fff;">${label}</span>
       <span style="font-size: 0.75rem; font-weight: 700; color: ${color}; white-space: nowrap; text-align: right;">${statusText}</span>
     </div>`;
@@ -45159,10 +45206,10 @@ function renderSvmSecurityAudit(sys) {
     <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; align-items: start;">
       
       <!-- SVM Inventory Table -->
-      <div class="data-table-container" style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow-x: auto; background: rgba(15,22,38,0.2);">
+      <div class="data-table-container" style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); overflow-x: auto; background: var(--navy-200);">
         <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
           <thead>
-            <tr style="background: rgba(255, 255, 255, 0.015); border-bottom: 1px solid var(--border-color); text-align: left;">
+            <tr style="background: var(--wa-15); border-bottom: 1px solid var(--border-color); text-align: left;">
               <th style="padding: 10px; font-weight: 600; color: var(--text-secondary);">SVM / Vserver</th>
               <th style="padding: 10px; font-weight: 600; color: var(--text-secondary);">Status</th>
               <th style="padding: 10px; font-weight: 600; color: var(--text-secondary);">Protocols</th>
@@ -45179,7 +45226,7 @@ function renderSvmSecurityAudit(sys) {
       </div>
 
       <!-- Hardening Audit Checklist -->
-      <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px 16px;">
+      <div style="background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px 16px;">
         <h4 style="font-size: 0.82rem; font-weight: 700; color: #fff; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">Protocol Security Checklist <span style="font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--text-muted); font-size: 0.68rem;">(hover a row for detail)</span></h4>
         <div>
           ${smb1Row}${nfsRow}${auditRow}${tlsRow}${lifRow}
@@ -45237,7 +45284,7 @@ function showWhatsNewModal() {
           s.items.map(function(i){ return '<li style="font-size:0.76rem;color:var(--text-muted);padding:2px 0;">' + _wnEsc(i) + '</li>'; }).join('') +
         '</ul></div>';
     }).join('');
-    return '<div style="padding:8px 12px;border-radius:6px;background:rgba(255,255,255,0.03);margin-bottom:6px;cursor:pointer;border:1px solid rgba(255,255,255,0.06);" onclick="var b=this.querySelector(\'.prev-body\');b.style.display=b.style.display===\'none\'?\'block\':\'none\';">' +
+    return '<div style="padding:8px 12px;border-radius:6px;background:var(--wa-30);margin-bottom:6px;cursor:pointer;border:1px solid var(--wa-60);" onclick="var b=this.querySelector(\'.prev-body\');b.style.display=b.style.display===\'none\'?\'block\':\'none\';">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;">' +
         '<span style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);">' + entry.title + '</span>' +
         '<span style="font-size:0.7rem;color:var(--text-muted);">' + entry.date + ' \u203a</span>' +
@@ -45249,10 +45296,10 @@ function showWhatsNewModal() {
   var overlay = document.createElement('div');
   overlay.id = 'whatsNewModal';
   var _isWin = document.body.classList.contains('perf-mode-win');
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,' + (_isWin ? '0.88' : '0.72') + ');' + (_isWin ? '' : 'backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);') + 'animation:_wnFadeIn 0.25s ease';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:' + (_isWin ? 'var(--ov-win)' : 'var(--ov)') + ';' + (_isWin ? '' : 'backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);') + 'animation:_wnFadeIn 0.25s ease';
 
   var prevBlock = APP_CHANGELOG.length > 1
-    ? '<div style="margin-top:8px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.07);">' +
+    ? '<div style="margin-top:8px;padding-top:16px;border-top:1px solid var(--wa-70);">' +
         '<div style="font-size:0.68rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px;">Previous Releases</div>' +
         prevVersionsHtml +
       '</div>'
@@ -45263,11 +45310,11 @@ function showWhatsNewModal() {
       '@keyframes _wnFadeIn{from{opacity:0}to{opacity:1}}' +
       '@keyframes _wnSlideUp{from{opacity:0;transform:translateY(24px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}' +
       '#whatsNewModal .wn-card{animation:_wnSlideUp 0.3s cubic-bezier(0.16,1,0.3,1) both}' +
-      '#whatsNewModal .wn-dismiss:hover{background:rgba(255,255,255,0.12)!important}' +
+      '#whatsNewModal .wn-dismiss:hover{background:var(--wa-120)!important}' +
       '#whatsNewModal .wn-got-it:hover{filter:brightness(1.1)}' +
       '#whatsNewModal .wn-x:hover{color:var(--text-primary)!important}' +
     '</style>' +
-    '<div class="wn-card" style="background:linear-gradient(160deg,#0f1629 0%,#111827 100%);border:1px solid rgba(45,212,191,0.25);border-radius:16px;width:560px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,0.6);position:relative;overflow:hidden;">' +
+    '<div class="wn-card" style="background:var(--wn-card-bg);border:1px solid rgba(45,212,191,0.25);border-radius:16px;width:560px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,0.6);position:relative;overflow:hidden;">' +
       '<div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#2dd4bf,#818cf8,transparent);border-radius:16px 16px 0 0;"></div>' +
       '<div style="padding:24px 24px 0;">' +
         '<div style="display:flex;align-items:flex-start;justify-content:space-between;">' +
@@ -45275,12 +45322,12 @@ function showWhatsNewModal() {
             '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">' +
               '<div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#2dd4bf22,#818cf822);border:1px solid rgba(45,212,191,0.3);display:flex;align-items:center;justify-content:center;font-size:1.1rem;">\uD83D\uDE80</div>' +
               '<div>' +
-                '<div style="font-size:0.65rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#2dd4bf;margin-bottom:1px;">What\'s New</div>' +
+                '<div style="font-size:0.65rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--hx-2dd4bf);margin-bottom:1px;">What\'s New</div>' +
                 '<div style="font-size:1.05rem;font-weight:700;color:var(--text-primary);line-height:1.2;">' + latest.title + '</div>' +
               '</div>' +
             '</div>' +
             '<div style="display:flex;align-items:center;gap:8px;margin-top:8px;">' +
-              '<span style="display:inline-flex;align-items:center;padding:3px 10px;background:rgba(45,212,191,0.12);border:1px solid rgba(45,212,191,0.25);border-radius:20px;font-size:0.68rem;font-weight:700;color:#2dd4bf;letter-spacing:0.05em;">v' + latest.version + '</span>' +
+              '<span style="display:inline-flex;align-items:center;padding:3px 10px;background:rgba(45,212,191,0.12);border:1px solid rgba(45,212,191,0.25);border-radius:20px;font-size:0.68rem;font-weight:700;color:var(--hx-2dd4bf);letter-spacing:0.05em;">v' + latest.version + '</span>' +
               '<span style="font-size:0.72rem;color:var(--text-muted);">' + latest.date + '</span>' +
             '</div>' +
           '</div>' +
@@ -45291,7 +45338,7 @@ function showWhatsNewModal() {
         sectionsHtml +
         prevBlock +
       '</div>' +
-      '<div style="padding:16px 24px 20px;border-top:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;">' +
+      '<div style="padding:16px 24px 20px;border-top:1px solid var(--wa-70);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;">' +
         '<label style="display:flex;align-items:center;gap:7px;font-size:0.78rem;color:var(--text-secondary);cursor:pointer;user-select:none;">' +
           '<input type="checkbox" id="wnDontShowAgain" checked style="width:15px;height:15px;accent-color:#2dd4bf;cursor:pointer;">' +
           'Don\'t show this again until the next update' +
@@ -45522,7 +45569,7 @@ function _handleAsupMatchResult(matchInfo, system) {
       <div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.35);border-radius:8px;padding:14px 16px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
           <span style="font-size:1.1rem;">🔎</span>
-          <span style="font-weight:700;color:#10b981;font-size:0.9rem;">Matched to existing AIQ-synced system</span>
+          <span style="font-weight:700;color:var(--hx-10b981);font-size:0.9rem;">Matched to existing AIQ-synced system</span>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:0.8rem;">
           <div><span style="color:var(--text-secondary);">System:</span> <strong style="color:var(--text-primary);">${_esc(es.systemName || es.serialNumber)}</strong></div>
@@ -45530,7 +45577,7 @@ function _handleAsupMatchResult(matchInfo, system) {
           <div><span style="color:var(--text-secondary);">Platform:</span> ${_esc(es.platform || '—')}</div>
           <div><span style="color:var(--text-secondary);">ONTAP:</span> ${_esc(es.osVersion || '—')}</div>
         </div>
-        <div style="margin-top:8px;font-size:0.78rem;color:#6ee7b7;">
+        <div style="margin-top:8px;font-size:0.78rem;color:var(--hx-6ee7b7);">
           ✅ ASUP data will fill any null fields in the AIQ record and be persisted alongside it.
         </div>
       </div>`;
@@ -45539,7 +45586,7 @@ function _handleAsupMatchResult(matchInfo, system) {
       <div style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:14px 16px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
           <span style="font-size:1.1rem;">🔄</span>
-          <span style="font-weight:700;color:#60a5fa;font-size:0.9rem;">Matched to a previous ASUP import</span>
+          <span style="font-weight:700;color:var(--hx-60a5fa);font-size:0.9rem;">Matched to a previous ASUP import</span>
         </div>
         <div style="font-size:0.8rem;color:var(--text-secondary);">
           This serial number was already imported. The bundle data will be refreshed and your existing association details are pre-filled below — update as needed.
@@ -45550,7 +45597,7 @@ function _handleAsupMatchResult(matchInfo, system) {
       <div style="background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.25);border-radius:8px;padding:12px 16px;">
         <div style="display:flex;align-items:center;gap:8px;">
           <span style="font-size:1rem;">🆕</span>
-          <span style="font-weight:700;color:#c084fc;font-size:0.88rem;">New system — not found in database</span>
+          <span style="font-weight:700;color:var(--hx-c084fc);font-size:0.88rem;">New system — not found in database</span>
           <span style="font-size:0.78rem;color:var(--text-secondary);margin-left:4px;">Complete the association below to add it.</span>
         </div>
       </div>`;
@@ -45713,7 +45760,7 @@ function _renderAsupCoverage(cov) {
   const sectionsEl = _el('asupCoverageSections');
   if (sectionsEl && cov.sections) {
     sectionsEl.innerHTML = (cov.sections || []).map(s => `
-      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.82rem;">
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--wa-50);font-size:0.82rem;">
         <span>${s.found ? '✅' : '❌'}</span>
         <span style="color:${s.found ? 'var(--text-primary)' : 'var(--text-secondary)'};">${s.label}</span>
         ${s.note ? `<span style="color:var(--text-secondary);font-size:0.75rem;margin-left:auto;">${s.note}</span>` : ''}
@@ -45722,7 +45769,7 @@ function _renderAsupCoverage(cov) {
   const computedEl = _el('asupCoverageComputed');
   if (computedEl && cov.computed) {
     computedEl.innerHTML = (cov.computed || []).map(s => `
-      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.82rem;">
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--wa-50);font-size:0.82rem;">
         <span>⚡</span>
         <span style="color:var(--accent-cyan);">${s.label}</span>
         <span style="color:var(--text-secondary);font-size:0.75rem;margin-left:auto;">${s.note || ''}</span>
@@ -45731,7 +45778,7 @@ function _renderAsupCoverage(cov) {
   const unavailEl = _el('asupCoverageUnavailable');
   if (unavailEl && cov.unavailable) {
     unavailEl.innerHTML = (cov.unavailable || []).map(s => `
-      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.82rem;">
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--wa-50);font-size:0.82rem;">
         <span>🔒</span>
         <span style="color:var(--text-secondary);">${s.label}</span>
         <span style="color:var(--text-secondary);font-size:0.75rem;margin-left:auto;opacity:0.6;">${s.reason || ''}</span>
@@ -45742,7 +45789,7 @@ function _renderAsupCoverage(cov) {
     const warnings = (cov.warnings || []).filter(Boolean);
     if (warnings.length) {
       warnEl.style.display = 'block';
-      warnEl.innerHTML = `<div style="background:rgba(255,193,7,0.08);border:1px solid rgba(255,193,7,0.25);border-radius:6px;padding:10px 12px;font-size:0.78rem;color:#fbbf24;">
+      warnEl.innerHTML = `<div style="background:rgba(255,193,7,0.08);border:1px solid rgba(255,193,7,0.25);border-radius:6px;padding:10px 12px;font-size:0.78rem;color:var(--hx-fbbf24);">
         ⚠️ <strong>Warnings:</strong><br>${warnings.map(w => `• ${w}`).join('<br>')}
       </div>`;
     } else {
@@ -45754,9 +45801,9 @@ function _renderAsupCoverage(cov) {
 // ── Imports list ─────────────────────────────────────────────────────────────
 
 const _matchBadge = {
-  api_synced:  '<span style="font-size:0.7rem;background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3);border-radius:3px;padding:1px 5px;">AIQ synced</span>',
-  asup_import: '<span style="font-size:0.7rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:3px;padding:1px 5px;">ASUP import</span>',
-  new:         '<span style="font-size:0.7rem;background:rgba(168,85,247,0.12);color:#c084fc;border:1px solid rgba(168,85,247,0.25);border-radius:3px;padding:1px 5px;">offline only</span>',
+  api_synced:  '<span style="font-size:0.7rem;background:rgba(16,185,129,0.15);color:var(--hx-10b981);border:1px solid rgba(16,185,129,0.3);border-radius:3px;padding:1px 5px;">AIQ synced</span>',
+  asup_import: '<span style="font-size:0.7rem;background:rgba(59,130,246,0.15);color:var(--hx-60a5fa);border:1px solid rgba(59,130,246,0.3);border-radius:3px;padding:1px 5px;">ASUP import</span>',
+  new:         '<span style="font-size:0.7rem;background:rgba(168,85,247,0.12);color:var(--hx-c084fc);border:1px solid rgba(168,85,247,0.25);border-radius:3px;padding:1px 5px;">offline only</span>',
 };
 
 async function loadAsupImportsList() {
@@ -45776,7 +45823,7 @@ async function loadAsupImportsList() {
           <div style="display:flex;align-items:flex-start;gap:10px;">
             <div style="flex:1;min-width:0;">
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">
-                <span style="font-weight:700;color:#c084fc;">🔌 ${_esc(imp.customerName || imp.serialNumber)}</span>
+                <span style="font-weight:700;color:var(--hx-c084fc);">🔌 ${_esc(imp.customerName || imp.serialNumber)}</span>
                 ${_matchBadge[imp.matchType] || _matchBadge.new}
               </div>
               <div style="color:var(--text-secondary);font-size:0.76rem;">
@@ -45790,7 +45837,7 @@ async function loadAsupImportsList() {
             </div>
             <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">
               <button onclick="asupEditAssociation('${_esc(imp.serialNumber)}','${_esc(imp.customerName)}','${_esc(imp.siteName)}','${_esc(imp.notes)}')"
-                style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);color:#60a5fa;border-radius:4px;padding:4px 8px;font-size:0.75rem;cursor:pointer;white-space:nowrap;">
+                style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);color:var(--hx-60a5fa);border-radius:4px;padding:4px 8px;font-size:0.75rem;cursor:pointer;white-space:nowrap;">
                 ✏️ Edit
               </button>
               <button onclick="deleteAsupImport('${_esc(imp.serialNumber)}')"
@@ -45984,13 +46031,13 @@ document.addEventListener('DOMContentLoaded', function() {
       if (!me || me.mode === 'none') return;
       const d = document.createElement('div');
       d.id = 'ariaSessionBadge';
-      d.style.cssText = 'font-size:0.7rem;color:#cbd5e1;white-space:nowrap;';
+      d.style.cssText = 'font-size:0.7rem;color:var(--hx-cbd5e1);white-space:nowrap;';
       d.textContent = me.role && me.role !== me.user ? me.user + ' (' + me.role + ')' : me.user;
       if (me.mode === 'local') {
         const b = document.createElement('a');
         b.textContent = 'Sign out';
         b.href = '#';
-        b.style.cssText = 'margin-left:6px;color:#38bdf8;text-decoration:none;';
+        b.style.cssText = 'margin-left:6px;color:var(--hx-38bdf8);text-decoration:none;';
         b.onclick = ev => { ev.preventDefault(); fetch('/logout', { method: 'POST' }).finally(() => { location.href = '/login'; }); };
         d.appendChild(b);
       }
@@ -46071,7 +46118,7 @@ async function userAdminLoad() {
     const head = t.insertRow(); ['User', 'Role', 'Status', 'Created', ''].forEach(h => { const c = document.createElement('th'); c.style.cssText = th; c.textContent = h; head.appendChild(c); });
     d.users.sort((a, b) => a.name.localeCompare(b.name)).forEach(u => {
       const r = t.insertRow();
-      const cell = () => { const c = r.insertCell(); c.style.cssText = 'padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);'; return c; };
+      const cell = () => { const c = r.insertCell(); c.style.cssText = 'padding:5px 10px;border-bottom:1px solid var(--wa-40);'; return c; };
       cell().textContent = u.name;
       const sel = document.createElement('select'); sel.className = 'form-input'; sel.style.cssText = 'padding:3px 6px;max-width:130px;';
       [['viewer', 'Viewer'], ['admin', 'Administrator']].forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; if (u.role === v) o.selected = true; sel.appendChild(o); });

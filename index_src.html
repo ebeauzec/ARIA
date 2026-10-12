@@ -42,11 +42,17 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=5.6.316-1">
+  <link rel="stylesheet" href="styles.css?v=5.6.317-1">
   
   <!-- Load Chart.js locally -->
-  <script src="chart.js?v=5.6.316-1"></script>
-  <script src="pptxgen.bundle.js?v=5.6.316-1"></script>
+  <script src="chart.js?v=5.6.317-1"></script>
+  <script src="pptxgen.bundle.js?v=5.6.317-1"></script>
+<script>
+  /* theme: 'dark' (default), 'light' or 'system'; applied before the page paints */
+  (function () { var m = 'dark'; try { m = localStorage.getItem('aria_theme') || 'dark'; } catch (e) {}
+    var light = m === 'light' || (m === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+    document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark'); })();
+</script>
 </head>
 <body>
 
@@ -131,12 +137,14 @@
         
         <div class="header-status" style="margin-left: auto;">
 
+          <button id="themeToggleBtn" class="action-btn secondary" onclick="cycleTheme()" title="Switch between dark and light" aria-label="Switch between dark and light"></button>
+
           <!-- Manual Refresh Button -->
           <button
             id="manualRefreshBtn"
             onclick="manualRefresh()"
             class="action-btn"
-            style="padding: 7px 13px; display: flex; align-items: center; gap: 6px; font-size: 0.8rem; border-color: rgba(0,115,230,0.45); color: #60a5fa; background: rgba(0,115,230,0.08); transition: background 0.2s, border-color 0.2s, transform 0.1s;"
+            style="padding: 7px 13px; display: flex; align-items: center; gap: 6px; font-size: 0.8rem; border-color: rgba(0,115,230,0.45); color: var(--hx-60a5fa); background: rgba(0,115,230,0.08); transition: background 0.2s, border-color 0.2s, transform 0.1s;"
             onmouseover="this.style.background='rgba(0,115,230,0.18)'; this.style.borderColor='rgba(0,115,230,0.7)';"
             onmouseout="this.style.background='rgba(0,115,230,0.08)'; this.style.borderColor='rgba(0,115,230,0.45)';"
             onmousedown="this.style.transform='scale(0.96)'" onmouseup="this.style.transform=''"
@@ -159,7 +167,7 @@
               id="importExportMenuBtn"
               onclick="toggleImportExportMenu(event)"
               class="action-btn"
-              style="padding: 7px 13px; display: flex; align-items: center; gap: 6px; font-size: 0.8rem; border-color: rgba(168,85,247,0.45); color: #c084fc; background: rgba(168,85,247,0.08); transition: background 0.2s, border-color 0.2s, transform 0.1s;"
+              style="padding: 7px 13px; display: flex; align-items: center; gap: 6px; font-size: 0.8rem; border-color: rgba(168,85,247,0.45); color: var(--hx-c084fc); background: rgba(168,85,247,0.08); transition: background 0.2s, border-color 0.2s, transform 0.1s;"
               onmouseover="this.style.background='rgba(168,85,247,0.18)'; this.style.borderColor='rgba(168,85,247,0.7)';"
               onmouseout="this.style.background='rgba(168,85,247,0.08)'; this.style.borderColor='rgba(168,85,247,0.45)';"
               onmousedown="this.style.transform='scale(0.96)'" onmouseup="this.style.transform=''"
@@ -194,7 +202,7 @@
             <span id="connectionStatusText" style="font-weight: 500;">Offline</span>
           </div>
           <!-- Enrichment status badge -->
-          <div id="enrichBadge" onclick="showEnrichLog()" title="Click to view enrichment log" style="display:none; align-items:center; gap:5px; cursor:pointer; padding:4px 12px; border-radius:20px; background:rgba(45,212,191,0.12); border:1px solid rgba(45,212,191,0.3); font-size:0.72rem; font-weight:600; color:#2dd4bf; transition:background 0.2s; flex-wrap:wrap;" onmouseover="this.style.background='rgba(45,212,191,0.22)'" onmouseout="this.style.background='rgba(45,212,191,0.12)'">
+          <div id="enrichBadge" onclick="showEnrichLog()" title="Click to view enrichment log" style="display:none; align-items:center; gap:5px; cursor:pointer; padding:4px 12px; border-radius:20px; background:rgba(45,212,191,0.12); border:1px solid rgba(45,212,191,0.3); font-size:0.72rem; font-weight:600; color:var(--hx-2dd4bf); transition:background 0.2s; flex-wrap:wrap;" onmouseover="this.style.background='rgba(45,212,191,0.22)'" onmouseout="this.style.background='rgba(45,212,191,0.12)'">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
             <span id="enrichBadgeText">0 enriched</span>
           </div>
@@ -369,7 +377,7 @@
 
         <!-- MetroCluster Status & Health Card -->
         <div id="tamMetroClusterCard" class="card" style="margin-bottom: 24px; padding: 24px; display: none;">
-          <div class="section-title" style="margin-bottom: 16px; color: #ff9800; display: flex; align-items: center; justify-content: space-between;">
+          <div class="section-title" style="margin-bottom: 16px; color: var(--hx-ff9800); display: flex; align-items: center; justify-content: space-between;">
             <span>⬡ MetroCluster Configuration &amp; DR Health</span>
             <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">Synchronous Replication &amp; Switchover Readiness</span>
           </div>
@@ -536,13 +544,13 @@
             <span style="font-size: 0.75rem; font-weight: 500; color: var(--text-muted);">Real Active IQ SVM/LIF Data</span>
           </div>
           <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px;">
-            <div class="sub-card-details" id="samWorkloadVirtualization" style="background: rgba(255, 255, 255, 0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+            <div class="sub-card-details" id="samWorkloadVirtualization" style="background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
               <!-- JS injected Virtualization details -->
             </div>
-            <div class="sub-card-details" id="samWorkloadDatabase" style="background: rgba(255, 255, 255, 0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+            <div class="sub-card-details" id="samWorkloadDatabase" style="background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
               <!-- JS injected Database details -->
             </div>
-            <div class="sub-card-details" id="samWorkloadBackup" style="background: rgba(255, 255, 255, 0.02); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+            <div class="sub-card-details" id="samWorkloadBackup" style="background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
               <!-- JS injected Backup details -->
             </div>
           </div>
@@ -647,7 +655,7 @@
             <div class="section-title" style="color: var(--accent-cyan); font-weight: 700;">Storage Capacity &amp; Performance Forecasting Projections</div>
             <div style="display:flex; align-items:center; gap:12px;">
               <div style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;" id="csmGrowthRateText">Average Growth: -</div>
-              <div style="display:flex; gap:4px; background:rgba(255,255,255,0.04); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:3px;" id="capViewToggle">
+              <div style="display:flex; gap:4px; background:var(--wa-40); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:3px;" id="capViewToggle">
                 <button id="capViewAggrBtn" onclick="setCapacityView('aggregate')" style="font-size:0.75rem;font-weight:600;padding:4px 12px;border-radius:4px;border:none;cursor:pointer;background:var(--accent-cyan);color:#000;">Aggregate</button>
                 <button id="capViewNodeBtn" onclick="setCapacityView('node')" style="font-size:0.75rem;font-weight:600;padding:4px 12px;border-radius:4px;border:none;cursor:pointer;background:transparent;color:var(--text-secondary);">Per Node</button>
               </div>
@@ -657,7 +665,7 @@
             <div class="chart-wrapper" style="height: 260px;">
               <canvas id="csmProjectionsChart"></canvas>
             </div>
-            <div style="background-color: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 20px; border-radius: var(--radius-sm); display: flex; flex-direction: column; justify-content: space-between;">
+            <div style="background-color: var(--wa-20); border: 1px solid var(--border-color); padding: 20px; border-radius: var(--radius-sm); display: flex; flex-direction: column; justify-content: space-between;">
               <div>
                 <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Runway Projection</span>
                 <div style="font-size: 1.6rem; font-weight: 800; margin-top: 6px;" id="csmDaysToLimitText">-</div>
@@ -916,7 +924,7 @@
             <textarea id="successPlanNotes" class="form-input" style="min-height:70px;"></textarea>
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px;">
-            <button class="action-btn secondary" id="successPlanDeleteBtn" style="display:none; border-color:rgba(239,68,68,0.4); color:#ef4444;" onclick="closeSuccessPlanFromModal()">Close Plan</button>
+            <button class="action-btn secondary" id="successPlanDeleteBtn" style="display:none; border-color:rgba(239,68,68,0.4); color:var(--hx-ef4444);" onclick="closeSuccessPlanFromModal()">Close Plan</button>
             <div style="display:flex; gap:10px; margin-left:auto;">
               <button class="action-btn secondary" onclick="closeSuccessPlanModal()">Cancel</button>
               <button class="action-btn" onclick="saveSuccessPlanFromModal()">Save</button>
@@ -935,7 +943,7 @@
             <p class="settings-subtitle">Connect your Active IQ API, configure watchlists, and set how ARIA refreshes and reports.</p>
           </div>
           <div style="display: flex; gap: 8px; align-items: center; flex-shrink: 0;">
-            <button class="action-btn" onclick="manualRefresh()" style="padding: 10px 16px; font-size: 0.86rem; font-weight: 700; white-space: nowrap; display: flex; align-items: center; gap: 7px; border-color: rgba(56,189,248,0.45); color: #60a5fa; background: rgba(56,189,248,0.10);">
+            <button class="action-btn" onclick="manualRefresh()" style="padding: 10px 16px; font-size: 0.86rem; font-weight: 700; white-space: nowrap; display: flex; align-items: center; gap: 7px; border-color: rgba(56,189,248,0.45); color: var(--hx-60a5fa); background: rgba(56,189,248,0.10);">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="23 4 23 10 17 10"></polyline>
                 <polyline points="1 20 1 14 7 14"></polyline>
@@ -1032,7 +1040,7 @@
               <button class="action-btn" style="font-size: 0.76rem; padding: 7px 12px; flex: 1; background: linear-gradient(135deg, rgba(167,139,250,0.2), rgba(129,140,248,0.15)); border-color: rgba(167,139,250,0.4);" onclick="resolveAndImportWatchlists()">📋 Resolve &amp; Sync</button>
               <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 12px;" onclick="clearImportedWatchlists()">✕ Clear</button>
             </div>
-            <div class="form-helper">Find IDs at <a href="https://activeiq.netapp.com" target="_blank" style="color: #a78bfa;">activeiq.netapp.com</a> → Watchlists → copy UUID from URL.</div>
+            <div class="form-helper">Find IDs at <a href="https://activeiq.netapp.com" target="_blank" style="color: var(--hx-a78bfa);">activeiq.netapp.com</a> → Watchlists → copy UUID from URL.</div>
           </div>
         </div>
 
@@ -1045,7 +1053,7 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               </div>
               <div>
-                <div class="settings-card-title" style="color: #34d399;">Multiple Customer Accounts</div>
+                <div class="settings-card-title" style="color: var(--hx-34d399);">Multiple Customer Accounts</div>
                 <div class="settings-card-desc">Sync several separate Active IQ credentials — merged into one unified fleet view, tagged by account.</div>
               </div>
             </div>
@@ -1174,7 +1182,7 @@
               </label>
               <input type="password" id="settingsGithubToken" class="form-input" placeholder="ghp_… → 5,000 req/hr GitHub API" style="font-family: var(--font-mono); font-size: 0.76rem; border-color: rgba(129,140,248,0.25);">
           </div>
-          <div class="form-helper" style="margin-bottom: 12px;">Free NVD API key: <a href="https://nvd.nist.gov/developers/request-an-api-key" target="_blank" style="color: #34d399;">nvd.nist.gov/developers</a> — increases rate limit from 5 to 50 req/30s. GitHub PAT: <a href="https://github.com/settings/tokens?type=beta" target="_blank" style="color: #818cf8;">github.com/settings/tokens</a> — raises API rate limit from 60 to 5,000 req/hr.</div>
+          <div class="form-helper" style="margin-bottom: 12px;">Free NVD API key: <a href="https://nvd.nist.gov/developers/request-an-api-key" target="_blank" style="color: var(--hx-34d399);">nvd.nist.gov/developers</a> — increases rate limit from 5 to 50 req/30s. GitHub PAT: <a href="https://github.com/settings/tokens?type=beta" target="_blank" style="color: var(--hx-818cf8);">github.com/settings/tokens</a> — raises API rate limit from 60 to 5,000 req/hr.</div>
 
           <div id="enrichStatusPanel" style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(52,211,153,0.06); border: 1px solid rgba(52,211,153,0.15); margin-bottom: 12px; font-size: 0.78rem;">
             <div id="enrichStatusLed" style="width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0;"></div>
@@ -1188,6 +1196,20 @@
               Scan Now
             </button>
             <button class="action-btn secondary" style="font-size: 0.76rem; padding: 7px 14px;" onclick="refreshEnrichmentStatus()">↻ Status</button>
+          </div>
+        </div>
+
+        <div class="card settings-card" style="border-top: 2px solid #a78bfa; margin-bottom: 16px;" id="appearanceCard">
+          <div class="settings-card-header">
+            <div>
+              <div class="settings-card-title">Appearance</div>
+              <div class="settings-card-desc">Dark is the default. Light suits bright rooms and printing. "Match system" follows the operating system setting.</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;" id="themeChoices">
+            <button class="action-btn secondary" style="font-size:0.78rem; padding:7px 16px;" data-theme-choice="dark" onclick="setTheme('dark')">Dark</button>
+            <button class="action-btn secondary" style="font-size:0.78rem; padding:7px 16px;" data-theme-choice="light" onclick="setTheme('light')">Light</button>
+            <button class="action-btn secondary" style="font-size:0.78rem; padding:7px 16px;" data-theme-choice="system" onclick="setTheme('system')">Match system</button>
           </div>
         </div>
 
@@ -1290,19 +1312,19 @@
 
           <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px;">
             <div class="form-group" style="margin: 0;">
-              <label class="form-label" for="settingsSlaCritical" style="color:#ef4444;">Critical</label>
+              <label class="form-label" for="settingsSlaCritical" style="color:var(--hx-ef4444);">Critical</label>
               <input type="number" id="settingsSlaCritical" class="form-input" min="1" value="7" style="border-color: rgba(239,68,68,0.25);">
             </div>
             <div class="form-group" style="margin: 0;">
-              <label class="form-label" for="settingsSlaHigh" style="color:#f59e0b;">High</label>
+              <label class="form-label" for="settingsSlaHigh" style="color:var(--hx-f59e0b);">High</label>
               <input type="number" id="settingsSlaHigh" class="form-input" min="1" value="30" style="border-color: rgba(245,158,11,0.25);">
             </div>
             <div class="form-group" style="margin: 0;">
-              <label class="form-label" for="settingsSlaMedium" style="color:#eab308;">Medium</label>
+              <label class="form-label" for="settingsSlaMedium" style="color:var(--hx-eab308);">Medium</label>
               <input type="number" id="settingsSlaMedium" class="form-input" min="1" value="90" style="border-color: rgba(234,179,8,0.25);">
             </div>
             <div class="form-group" style="margin: 0;">
-              <label class="form-label" for="settingsSlaLow" style="color:#94a3b8;">Low</label>
+              <label class="form-label" for="settingsSlaLow" style="color:var(--hx-94a3b8);">Low</label>
               <input type="number" id="settingsSlaLow" class="form-input" min="1" value="180" style="border-color: rgba(148,163,184,0.25);">
             </div>
           </div>
@@ -1386,7 +1408,7 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label">Select Systems</label>
-                  <div id="groupManagerSystemsList" style="max-height: 160px; overflow-y: auto; background: rgba(0,0,0,0.15); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); display: flex; flex-direction: column;"></div>
+                  <div id="groupManagerSystemsList" style="max-height: 160px; overflow-y: auto; background: var(--bk-150); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); display: flex; flex-direction: column;"></div>
                 </div>
                 <div style="display: flex; gap: 10px;">
                   <button id="saveSubgroupBtn" class="action-btn" style="flex: 1; font-size: 0.8rem;" onclick="handleCreateGroup()">Create Subgroup</button>
@@ -1414,7 +1436,7 @@
               <div class="settings-card-subtitle" id="userAdminWho"></div>
             </div>
           </div>
-          <div id="userAdminSignIn" style="margin-bottom:12px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:rgba(255,255,255,0.02);">
+          <div id="userAdminSignIn" style="margin-bottom:12px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--wa-20);">
             <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between;">
               <div>
                 <div style="font-size:0.85rem;font-weight:600;" id="signInStatus">Sign-in</div>
@@ -1486,7 +1508,7 @@
                       <textarea id="sandboxGraphQLVariables" class="form-input" rows="4" style="font-family: monospace; font-size: 0.78rem; background-color: var(--bg-sidebar);" placeholder="{}"></textarea>
                     </div>
                     <button class="action-btn" style="width: 100%; font-size: 0.82rem; padding: 9px;" onclick="runSandboxGraphQLQuery()">Execute Query</button>
-                    <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 10px; border-radius: var(--radius-sm);">
+                    <div style="background: var(--wa-20); border: 1px solid var(--border-color); padding: 10px; border-radius: var(--radius-sm);">
                       <div style="font-size: 0.66rem; color: var(--text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">Execution Metrics</div>
                       <div style="font-size: 0.75rem; display: flex; justify-content: space-between; margin-bottom: 4px;"><span>Status:</span><strong id="sandboxQueryStatus" style="color: var(--text-muted);">Idle</strong></div>
                       <div style="font-size: 0.75rem; display: flex; justify-content: space-between;"><span>Latency:</span><strong id="sandboxQueryLatency" style="color: var(--text-muted);">-</strong></div>
@@ -1495,7 +1517,7 @@
                 </div>
                 <div style="border-top: 1px solid var(--border-color); padding-top: 12px;">
                   <label class="form-label" style="font-size: 0.72rem;">Response (JSON)</label>
-                  <div style="background-color: rgba(0,0,0,0.3); border: 1px solid var(--border-color); padding: 14px; border-radius: var(--radius-sm); max-height: 220px; overflow-y: auto; font-family: monospace; font-size: 0.76rem; color: var(--status-normal); white-space: pre-wrap;" id="sandboxGraphQLOutput">// Executed query result will render here...</div>
+                  <div style="background-color: var(--bk-300); border: 1px solid var(--border-color); padding: 14px; border-radius: var(--radius-sm); max-height: 220px; overflow-y: auto; font-family: monospace; font-size: 0.76rem; color: var(--status-normal); white-space: pre-wrap;" id="sandboxGraphQLOutput">// Executed query result will render here...</div>
                 </div>
               </div>
             </div>
@@ -1603,13 +1625,13 @@
   <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleJSONImport(event)">
 
   <!-- Javascript File -->
-  <script src="aria-api.js?v=5.6.316-1"></script>
-  <script src="data/reference_library.js?v=5.6.316-1"></script>
-  <script src="app.js?v=5.6.316-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
+  <script src="aria-api.js?v=5.6.317-1"></script>
+  <script src="data/reference_library.js?v=5.6.317-1"></script>
+  <script src="app.js?v=5.6.317-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
   <script>
     // Verify app.js parsed OK — if APP_VERSION is undefined, the file had a parse error
     if (typeof APP_VERSION === 'undefined') {
-      document.body.innerHTML = '<div style="background:#1a0000;color:#ef4444;padding:40px;font-family:monospace;font-size:16px;">' +
+      document.body.innerHTML = '<div style="background:#1a0000;color:var(--hx-ef4444);padding:40px;font-family:monospace;font-size:16px;">' +
         '<h1>❌ app.js Parse Error</h1>' +
         '<p>The application script failed to parse. Open the browser console (F12 → Console tab) to see the exact error.</p>' +
         '<p>This usually means a syntax error was introduced in a recent code edit.</p></div>';
@@ -1624,7 +1646,7 @@
   <div style="background:var(--bg-card); border:1px solid rgba(168,85,247,0.35); border-radius:12px; width:min(640px,92vw); max-height:88vh; overflow-y:auto; padding:28px; box-shadow:0 20px 60px rgba(0,0,0,0.6); position:relative;">
     <button onclick="closeAsupImportModal()" style="position:absolute;top:14px;right:16px;background:transparent;border:none;color:var(--text-secondary);font-size:1.3rem;cursor:pointer;line-height:1;">&times;</button>
 
-    <div style="color:#c084fc;font-size:1.1rem;font-weight:700;margin-bottom:4px;">📦 Import ASUP Bundle</div>
+    <div style="color:var(--hx-c084fc);font-size:1.1rem;font-weight:700;margin-bottom:4px;">📦 Import ASUP Bundle</div>
     <div style="color:var(--text-secondary);font-size:0.8rem;margin-bottom:20px;">Import an AutoSupport bundle onsite when Active IQ is unreachable. Supported formats: <code>.7z</code> &nbsp;<code>.tgz</code> &nbsp;<code>.zip</code> &nbsp;<code>.xml</code> &nbsp;<code>.gz</code></div>
 
     <!-- Drop zone -->
@@ -1633,7 +1655,7 @@
       ondragover="asupDragOver(event)" ondragleave="asupDragLeave(event)" ondrop="asupDrop(event)" onclick="document.getElementById('asupFileInput').click()">
       <div style="font-size:2rem;margin-bottom:8px;">📁</div>
       <div style="color:var(--text-primary);font-weight:600;margin-bottom:4px;">Drop bundle here or click to browse</div>
-      <div id="asupDropZoneFile" style="color:#c084fc;font-size:0.8rem;">No file selected</div>
+      <div id="asupDropZoneFile" style="color:var(--hx-c084fc);font-size:0.8rem;">No file selected</div>
     </div>
 
     <!-- Import button -->
@@ -1658,7 +1680,7 @@
     <!-- ════════════════════════════════════════════════════════
          ASSOCIATION FORM (shown after import for every result)
          ════════════════════════════════════════════════════════ -->
-    <div id="asupAssocPanel" style="display:none;margin-top:20px;background:rgba(255,255,255,0.03);border:1px solid var(--border-color);border-radius:10px;padding:20px;">
+    <div id="asupAssocPanel" style="display:none;margin-top:20px;background:var(--wa-30);border:1px solid var(--border-color);border-radius:10px;padding:20px;">
       <div style="font-weight:700;font-size:0.85rem;color:var(--text-primary);margin-bottom:14px;">🔗 Confirm Association</div>
 
       <!-- Customer: dropdown (existing) + free text (new) -->
@@ -1712,10 +1734,10 @@
       <div id="asupCoverageUnavailable" style="margin-bottom:16px;"></div>
       <div id="asupCoverageWarnings" style="display:none;margin-top:12px;"></div>
       <div style="display:flex;gap:10px;margin-top:16px;">
-        <button onclick="resetAsupImportForm()" style="flex:1;background:rgba(168,85,247,0.12);color:#c084fc;border:1px solid rgba(168,85,247,0.3);border-radius:8px;padding:10px;font-size:0.85rem;font-weight:600;cursor:pointer;">
+        <button onclick="resetAsupImportForm()" style="flex:1;background:rgba(168,85,247,0.12);color:var(--hx-c084fc);border:1px solid rgba(168,85,247,0.3);border-radius:8px;padding:10px;font-size:0.85rem;font-weight:600;cursor:pointer;">
           ➕ Import Another Bundle
         </button>
-        <button onclick="closeAsupImportModal();location.reload();" style="flex:1;background:rgba(16,185,129,0.12);color:#10b981;border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:10px;font-size:0.85rem;font-weight:600;cursor:pointer;">
+        <button onclick="closeAsupImportModal();location.reload();" style="flex:1;background:rgba(16,185,129,0.12);color:var(--hx-10b981);border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:10px;font-size:0.85rem;font-weight:600;cursor:pointer;">
           ✅ Done — Reload Dashboard
         </button>
       </div>

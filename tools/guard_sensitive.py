@@ -38,7 +38,11 @@ SAFE_EMAIL_DOMAINS = ("openssh.com", "example.com", "example.org", "example.net"
 SAFE_EMAIL_PREFIXES = ("noreply", "no-reply")
 PUBLIC_DOMAINS = {"netapp.com", "gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "microsoft.com", "github.com", "anthropic.com", "apple.com", "google.com", "icloud.com", "live.com"}
 GENERIC_TERMS = {"unnamed", "netapp", "default", "unknown", "none", "null", "true", "false", "customer", "system", "cluster", "site", "node", "watchlist", "all", "test",
-                 "demo", "admin", "root", "data", "example", "active", "not reported", "n/a", "ontap", "storagegrid", "santricity", "e-series", "aff", "fas", "asa"}
+                 "demo", "admin", "root", "data", "example", "active", "not reported", "n/a", "ontap", "storagegrid", "santricity", "e-series", "aff", "fas", "asa",
+                 # ordinary technical words. A harvested field that is literally one of these (a site called "Storage", a cluster called "Primary") identifies nobody, and as a term it
+                 # would match ordinary text all over the repository and block every commit until the next refresh.
+                 "storage", "server", "servers", "systems", "backup", "primary", "secondary", "production", "network", "archive", "recovery", "disaster", "management", "support",
+                 "virtual", "service", "services", "controller", "controllers", "volume", "volumes", "global", "general", "central", "remote", "software", "hardware", "firmware"}
 
 PATTERNS = [
     ("access token", re.compile(r"\b(?:eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b")),

@@ -1,8 +1,8 @@
 {
-  "version": "5.6.316",
+  "version": "5.6.317",
   "major": 5,
   "minor": 6,
-  "patch": 316,
+  "patch": 317,
   "date": "2026-10-11",
-  "notes": "Tool: reverse rear-panel check against NetApp documentation."
+  "notes": "Light theme (header toggle and Settings > Appearance); long system list in SAM/CSM header shortened."
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.317 (2026-10-12)
+
+### Added
+- Light theme. The sun/moon button in the header switches between dark and light, and Settings > Connection > Appearance offers Dark, Light or Match system. Dark stays the default and looks exactly as before (checked by comparing screenshots of the main tabs before and after: the only differences are the new button and the Appearance card). Light uses a soft cool-grey page, white cards with gentle shadows, a deeper sky-blue accent and darker status colours that stay readable on white. Charts, dialogs, badges and the header follow the theme. The rear-panel drawings keep their dark hardware colours in both themes. The choice is remembered, and it is applied before the page paints so there is no flash of the wrong theme.
+- Support & Ops and Value & ROI no longer write every system name into the page header when a large scope is selected (1,808 names, 33,000 characters, which pushed the page apart); they show the first six and the count, with the first sixty in the tooltip.
+- Repository guard (tools/guard_sensitive.py): ordinary technical words (for example "storage" or "primary") are no longer treated as sensitive harvested terms. A harvested field that was literally "Storage" made the guard match ordinary text in hundreds of places and block commits until the term list was next rebuilt.
+
 ## 5.6.316 (2026-10-12)
 
 ### Added
