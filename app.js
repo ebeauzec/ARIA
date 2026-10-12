@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.325";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.326";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.326",
+    date: "12 Oct 2026",
+    title: "Unified Manager findings kept off controllers",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Findings about the Unified Manager installation itself (for example OCUM end-of-version-support, ONTAP not supported by the detected Unified Manager, AIQUM database issues) are no longer listed against storage controllers; they move to the not-applicable list with the other findings that concern a different product. The pattern is data (otherProductFindings in resolution_rules.json).",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.325",
     date: "12 Oct 2026",
@@ -20971,7 +20986,7 @@ let RESOLUTION_RULES = {
   appliesTo: { ontap: ['ontap', 'bmc', 'bios'], eseries: ['santricity'], storagegrid: ['storagegrid'] },
   firmwareLabels: { SP: 'Service Processor / BMC firmware', BIOS: 'BIOS', DISK: 'disk firmware', SHELF: 'shelf module firmware', CLUSTER_SWITCH: 'cluster switch firmware', NONE: 'firmware' },
   guidanceVerbs: 'enable|disable|set|configure|upgrade|update|replace|add|remove|create|modify|verify|check|ensure|move|rebalance|apply|install|reboot|review|run|migrate|convert|change|reduce|increase|use|avoid|consider|restrict|limit|rotate|contact|discover|plan|enroll|register|schedule|rename|assign|expand|extend|resize',
-  bugPattern: '\\b(bug|burt)\\b\\s*#?\\s*(\\d{5,})', noWorkaround: '^(none|n/a|no workaround)',
+  otherProductFindings: 'unified manager|\bOCUM\b|\bAIQUM\b', bugPattern: '\\b(bug|burt)\\b\\s*#?\\s*(\\d{5,})', noWorkaround: '^(none|n/a|no workaround)',
   textRules: [{ pattern: 'reached end[- ]of[- ](availability|support|sale)|\\bEOA\\b|\\bEOS\\b|end of (availability|support)', kind: 'hardware', summary: 'Plan a hardware refresh: this platform is past end of availability, so check its end-of-support date and keep a support contract in place until it is replaced' }]
 };
 let _rrClassRx = null;
@@ -21332,7 +21347,7 @@ function _applyAdvisoryApplicability(systems) {
     all.forEach(r => _rrOwner.set(r, s));
     const keep = [], na = [], stale = [], unv = [];
     const _aiqEol = all.some(r => 'fixAction' in r && /end[- ]of[- ](availability|support)|\bEOA\b|\bEOS\b/i.test(String(r.description || '')));
-    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; if (ap && ap.applies === false) na.push(r); else if (_rrIsOwn(r) && _rrOwnRejected(s, r, _aiqEol)) unv.push(r); else if (_rrIsStale(s, r)) stale.push(r); else { if (_rrIsOwn(r) && r.category === 'Security') _rrAlignRisk(r); keep.push(r); } });
+    all.forEach(r => { const a = _advIdOf(r) || _advIdFromCve(_rrCveOf(r)); const ap = a ? _advApplicability(s, a) : null; if ((ap && ap.applies === false) || (!_rrIsOwn(r) && _rrRx(RESOLUTION_RULES.otherProductFindings || '(?!)').test(String(r.description || r.title || '')))) na.push(r); else if (_rrIsOwn(r) && _rrOwnRejected(s, r, _aiqEol)) unv.push(r); else if (_rrIsStale(s, r)) stale.push(r); else { if (_rrIsOwn(r) && r.category === 'Security') _rrAlignRisk(r); keep.push(r); } });
     if (na.length !== (s.risksNotApplicable || []).length || stale.length !== (s.risksStale || []).length || unv.length !== (s.risksUnverified || []).length || keep.length !== (s.risks || []).length) { moved++; s.risks = keep; s.risksNotApplicable = na; s.risksStale = stale; s.risksUnverified = unv; _recomputeStatusFromRisks(s); }
     // the system's advisory list (what the Security Advisories and CVE sections print) is built from the same advisories:
     // drop the ones that do not apply here, and put the resolution (not the generic "see the advisory") on the rest

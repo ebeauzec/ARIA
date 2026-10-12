@@ -55,6 +55,7 @@
   "guidanceVerbs": "enable|disable|set|configure|upgrade|update|replace|add|remove|create|modify|verify|check|ensure|move|rebalance|apply|install|reboot|review|run|migrate|convert|change|reduce|increase|use|avoid|consider|restrict|limit|rotate|contact|discover|plan|enroll|register|schedule|rename|assign|expand|extend|resize",
   "bugPattern": "\\b(bug|burt)\\b\\s*#?\\s*(\\d{5,})",
   "noWorkaround": "^(none|n/a|no workaround)",
+  "otherProductFindings": "unified manager|\bOCUM\b|\bAIQUM\b",
   "textRules": [
     {
       "_note": "When Active IQ and the advisory give no fix, the first rule whose pattern matches the finding's title or text decides the action. Add rules here for new kinds of finding.",

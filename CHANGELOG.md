@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.326 (2026-10-12)
+
+### Fixed
+- Findings about the Unified Manager installation itself (for example OCUM end-of-version-support, ONTAP not supported by the detected Unified Manager, AIQUM database issues) are no longer listed against storage controllers; they move to the not-applicable list with the other findings that concern a different product. The pattern is data (otherProductFindings in resolution_rules.json).
+
 ## 5.6.325 (2026-10-12)
 
 ### Fixed
