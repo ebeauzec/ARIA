@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.312 (2026-10-12)
+
+### Added
+- New security hardening scorecard on the Technical Audit tab and in the Security Posture Brief. Ten controls (ransomware protection, snapshots on all data volumes, Vscan, open NFS export rules, self-encrypting drive locking, cluster peering encryption, remote configuration backups, NTP and DNS redundancy, open critical or high advisories) each tied to the Active IQ check that evidences a gap, with the systems that have one and the NetApp reference.
+- The wording is exact: "no gap raised" means Active IQ ran its check and raised nothing; it does not confirm the setting. Controls Active IQ does not report (multi-admin verification, administrator authentication, TLS and FIPS settings, audit logging, login banner and timeouts) are listed separately with the command that shows their state on the array, and are never scored.
+
 ## 5.6.311 (2026-10-12)
 
 ### Added

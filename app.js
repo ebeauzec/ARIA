@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.311";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.312";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.312",
+    date: "12 October 2026",
+    title: "Security Hardening Scorecard",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New security hardening scorecard on the Technical Audit tab and in the Security Posture Brief. Ten controls (ransomware protection, snapshots on all data volumes, Vscan, open NFS export rules, self-encrypting drive locking, cluster peering encryption, remote configuration backups, NTP and DNS redundancy, open critical or high advisories) each tied to the Active IQ check that evidences a gap, with the systems that have one and the NetApp reference.",
+          "The wording is exact: \"no gap raised\" means Active IQ ran its check and raised nothing; it does not confirm the setting. Controls Active IQ does not report (multi-admin verification, administrator authentication, TLS and FIPS settings, audit logging, login banner and timeouts) are listed separately with the command that shows their state on the array, and are never scored.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.311",
     date: "12 October 2026",
@@ -31045,6 +31061,7 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   // 12. Security Posture Executive Brief
   let securityBrief = compileSecurityBrief(targetSystems, allRisks, expiringContracts, allSupportCases, scopeTitle, fw);
   if (_riskTrendText) securityBrief += _riskTrendText;
+  securityBrief += _dfHardeningText(targetSystems, '## Hardening Scorecard');
   // Portfolio Exposure: counts only, never names other customers -- see the comment
   // on the MSP report above.
 
@@ -42600,6 +42617,7 @@ function switchTab(tabId) {
     loadTrackerItems().then(() => { if (state.currentTab === 'overview') renderCustomerPortfolio(); });
   } else if (tabId === "tam") {
     renderTAMTab();
+    renderHardeningScorecard();
   } else if (tabId === "sam") {
     renderSAMTab();
   } else if (tabId === "csm") {
@@ -44861,6 +44879,75 @@ function renderEseriesHardwareAudit(sys) {
       ${shelvesHtml}
     </div>
   `;
+}
+
+// ── Security hardening scorecard ───────────────────────────────────────────────────────────────
+// Each control is a NetApp security best practice (ONTAP security hardening guide TR-4569 and the ONTAP anti-ransomware, SnapLock and NFS/SMB documentation) tied to the
+// Active IQ risk check that evidences a gap, where one exists. The wording is deliberately exact: "no gap raised" means Active IQ ran the check and raised nothing; it is not a
+// statement that the control is configured. Controls Active IQ does not report are listed apart, with the command that shows their state on the array.
+const HARDENING_CONTROLS = [
+  { id: 'arp', area: 'Ransomware protection', control: 'Autonomous Ransomware Protection enabled on NAS and SAN volumes', gap: /enable ontap anti-ransomware/i, enabled: s => s.isARPEnabled === true, ref: 'ONTAP anti-ransomware documentation' },
+  { id: 'snap', area: 'Ransomware protection', control: 'Snapshot copies enabled on all data volumes', gap: /snapshots are not enabled on all data volumes/i, ref: 'ONTAP data protection documentation; TR-4569' },
+  { id: 'vscan', area: 'Malware protection', control: 'Vscan (antivirus scanning) enabled for SMB', gap: /vscan is not enabled/i, ref: 'ONTAP SMB documentation' },
+  { id: 'export', area: 'Access control', control: 'No NFS export rule allows every client (0.0.0.0/0)', gap: /client match of 0\.0\.0\.0\/0/i, ref: 'ONTAP NFS documentation; TR-4569' },
+  { id: 'nse', area: 'Data at rest', control: 'Self-encrypting drives are locked', gap: /self encrypting drives \(sed\) are present but not lock/i, ref: 'ONTAP encryption documentation' },
+  { id: 'peerenc', area: 'Data in flight', control: 'Cluster peering encryption enabled', gap: /cluster peering encryption not enabled/i, ref: 'ONTAP cluster peering documentation' },
+  { id: 'cfgbackup', area: 'Recovery', control: 'Cluster configuration backups are copied to a remote location', gap: /config backups are not being pushed remotely/i, ref: 'ONTAP system administration documentation' },
+  { id: 'ntp', area: 'Time and name services', control: 'Redundant NTP servers that respond', gap: /ntp servers are not redundant|ntp servers are not responding/i, ref: 'TR-4569' },
+  { id: 'dns', area: 'Time and name services', control: 'More than one DNS server per SVM', gap: /single dns server configured/i, ref: 'ONTAP network documentation' },
+];
+const HARDENING_UNOBSERVED = [
+  { control: 'Multi-admin verification for destructive operations', cmd: 'security multi-admin-verify show', ref: 'ONTAP multi-admin verification documentation' },
+  { control: 'Administrator authentication: multifactor or key-based SSH, no unused or default accounts', cmd: 'security login show', ref: 'TR-4569' },
+  { control: 'TLS and FIPS settings', cmd: 'security config show', ref: 'TR-4569' },
+  { control: 'Audit logging', cmd: 'security audit show', ref: 'TR-4569' },
+  { control: 'Login banner and session timeouts', cmd: 'security login banner show; system timeout show', ref: 'TR-4569' },
+];
+function _dfHardeningRows(systems) {
+  const ontap = (systems || []).filter(s => _platformFamily(s) === 'ontap');
+  const rows = HARDENING_CONTROLS.map(c => {
+    const gapSys = [], enabledSys = [];
+    ontap.forEach(s => {
+      const hit = (s.risks || []).some(r => c.gap.test(String(r.description || '')));
+      if (hit) gapSys.push(s.systemName || s.serialNumber); else if (c.enabled && c.enabled(s)) enabledSys.push(s.systemName || s.serialNumber);
+    });
+    return { id: c.id, area: c.area, control: c.control, ref: c.ref, evaluated: ontap.length, gap: gapSys, enabled: enabledSys, hasConfirm: !!c.enabled };
+  });
+  // vulnerability management: critical or high severity advisories still open (published CVEs, with the CISA KEV flag where the bulletin data has it)
+  const vuln = [], kev = [];
+  ontap.forEach(s => {
+    const hit = (s.risks || []).filter(r => /^(critical|high)$/i.test(String(r.severity || '')) && /CVE-\d{4}-\d+|NTAP-\d{8}-\d{4}/i.test(String(r.description || '') + ' ' + String(r.riskDetail || '') + ' ' + String(r.advisoryId || '')));
+    if (hit.length) vuln.push(s.systemName || s.serialNumber);
+  });
+  rows.push({ id: 'vuln', area: 'Vulnerability management', control: 'No critical or high security advisory open against the installed release', ref: 'NetApp security advisories', evaluated: ontap.length, gap: vuln, enabled: [], hasConfirm: false });
+  return { rows, evaluated: ontap.length };
+}
+function _dfHardeningText(systems, heading) {
+  const h = _dfHardeningRows(systems); if (!h.evaluated) return '';
+  const cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  const withGap = h.rows.filter(r => r.gap.length).length;
+  let o = `\n${heading || '## Hardening Scorecard'}\n\n**Finding:** of ${h.rows.length} controls that Active IQ can evidence, ${withGap} have a gap raised on at least one of the ${h.evaluated} ONTAP systems in scope and ${h.rows.length - withGap} have no gap raised. "No gap raised" means Active IQ ran its check and raised nothing; it does not confirm the setting.\n\n`;
+  o += '| Area | Control | Result | Systems with a gap | Reference |\n|---|---|---|---|---|\n' + h.rows.map(r => `| ${cell(r.area)} | ${cell(r.control)} | ${r.gap.length ? `Gap on ${r.gap.length} of ${r.evaluated}` : `No gap raised on ${r.evaluated}` + (r.hasConfirm ? ` (enabled on ${r.enabled.length})` : '')} | ${cell(r.gap.join(', '))} | ${cell(r.ref)} |`).join('\n') + '\n\n';
+  o += '**Not reported by Active IQ.** These controls matter for hardening but Active IQ does not report their state, so ARIA cannot score them. Check them on the array:\n\n| Control | Command | Reference |\n|---|---|---|\n' + HARDENING_UNOBSERVED.map(u => `| ${cell(u.control)} | ${cell(u.cmd)} | ${cell(u.ref)} |`).join('\n') + '\n\n';
+  o += '**General guidance:** NetApp recommends reviewing the ONTAP security hardening guide (TR-4569) against each cluster and confirming command names for the installed ONTAP release.\n\n';
+  return o;
+}
+function renderHardeningScorecard() {
+  const card = document.getElementById('tamHardeningCard'); if (!card) return;
+  const systems = getFilteredSystems(true) || [], h = _dfHardeningRows(systems);
+  if (!h.evaluated) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const esc2 = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const withGap = h.rows.filter(r => r.gap.length).length;
+  const td = 'padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:0.76rem;vertical-align:top;';
+  card.innerHTML = `<div class="section-title" style="margin-bottom:6px;color:var(--accent-cyan);display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;"><span>Security hardening scorecard</span><span style="font-size:0.75rem;font-weight:500;color:var(--text-muted);">${h.evaluated} ONTAP system${h.evaluated !== 1 ? 's' : ''} in the current filter</span></div>`
+    + `<div style="font-size:0.78rem;margin-bottom:10px;">${withGap} of ${h.rows.length} controls have a gap raised by Active IQ on at least one system; ${h.rows.length - withGap} have none. <span style="color:var(--text-muted);">"No gap raised" means Active IQ ran its check and found nothing; it does not confirm the setting.</span></div>`
+    + `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-muted);font-size:0.7rem;text-transform:uppercase;"><th style="padding:4px 8px;">Area</th><th>Control</th><th>Result</th><th>Systems with a gap</th></tr></thead><tbody>`
+    + h.rows.map(r => { const bad = r.gap.length > 0, col = bad ? 'var(--status-warning)' : 'var(--status-normal)'; const names = r.gap.slice(0, 6).map(esc2).join(', ') + (r.gap.length > 6 ? ` +${r.gap.length - 6} more` : '');
+      return `<tr><td style="${td}">${esc2(r.area)}</td><td style="${td}">${esc2(r.control)}<div style="font-size:0.66rem;color:var(--text-muted);">${esc2(r.ref)}</div></td><td style="${td}color:${col};font-weight:600;white-space:nowrap;">${bad ? `Gap on ${r.gap.length} of ${r.evaluated}` : `No gap raised`}${r.hasConfirm ? `<div style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">enabled on ${r.enabled.length}</div>` : ''}</td><td style="${td}">${names}</td></tr>`; }).join('')
+    + `</tbody></table>`
+    + `<div style="font-size:0.78rem;font-weight:600;margin:14px 0 4px;">Not reported by Active IQ</div><div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:6px;">ARIA cannot score these. Check them on the array.</div>`
+    + `<table style="width:100%;border-collapse:collapse;"><tbody>` + HARDENING_UNOBSERVED.map(u => `<tr><td style="${td}">${esc2(u.control)}</td><td style="${td}font-family:monospace;">${esc2(u.cmd)}</td></tr>`).join('') + `</tbody></table>`;
 }
 
 function renderSvmSecurityAudit(sys) {

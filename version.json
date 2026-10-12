@@ -1,8 +1,8 @@
 {
-  "version": "5.6.311",
+  "version": "5.6.312",
   "major": 5,
   "minor": 6,
-  "patch": 311,
+  "patch": 312,
   "date": "2026-10-11",
-  "notes": "Success Plans: measured outcomes, systems no longer affected, evidence notes, closed-plan record."
+  "notes": "Hardening scorecard: controls tied to Active IQ checks, unobserved controls with verify commands."
 }
