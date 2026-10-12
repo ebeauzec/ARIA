@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.313";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.314";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.314",
+    date: "12 October 2026",
+    title: "Connection Check",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New \"Connection check\" card in Settings. It tests, without changing anything: the configured accounts, the system proxy, name lookup and TLS to the Active IQ REST and GraphQL services, the clock against Active IQ's, the last harvest of each account and any harvest warnings, and whether a local reference file is present. \"Also test the tokens\" asks Active IQ to accept each refresh token and reports only the HTTP status. Each failure comes with a plain-language fix: a rejected token, a proxy that answers for Active IQ, a security gateway re-signing HTTPS, or a wrong clock.",
+          "The sync-failure message no longer tells you to restart the launcher; it points to the connection check.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.313",
     date: "12 October 2026",
@@ -39620,6 +39636,19 @@ async function triggerEnrichmentScan() {
 }
 
 // ── Reference data freshness + NetApp Reference Library (read from a folder; no AI, no internet) ──
+async function runConnectionCheck(testTokens) {
+  const box = document.getElementById('doctorResults'), btn = document.getElementById('doctorBtn'); if (!box) return;
+  box.innerHTML = 'Checking' + (testTokens ? ' (including the tokens)' : '') + '…'; if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/doctor' + (testTokens ? '?exchange=1' : ''), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    const icon = { ok: '✔', warn: '⚠', fail: '✖', info: 'ℹ' }, col = { ok: 'var(--status-normal)', warn: '#f59e0b', fail: 'var(--status-critical)', info: 'var(--text-muted)' };
+    box.innerHTML = (d.checks || []).map(c => `<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);"><span style="color:${col[c.status] || 'inherit'};font-weight:700;">${icon[c.status] || ''}</span> <b>${_esc(c.label)}</b>${c.detail ? `<div style="color:var(--text-secondary);margin-left:18px;">${_esc(c.detail)}</div>` : ''}${c.hint ? `<div style="color:#f59e0b;margin-left:18px;">${_esc(c.hint)}</div>` : ''}</div>`).join('') || 'No result.';
+  } catch (e) { box.innerHTML = `The check could not run: ${_esc(e.message)}`; }
+  if (btn) btn.disabled = false;
+}
+
 async function loadReferenceStatus() {
   const tbl = document.getElementById('refDataTable'), ban = document.getElementById('refDataBanner');
   if (!tbl) return;
@@ -40627,7 +40656,7 @@ async function loadProductionData(forceRefresh = false) {
     console.error("[AIQ] Harvest error:", err);
     if (textLabel) textLabel.innerText = "Sync Failed";
     if (indicator)  indicator.className = "indicator disconnected";
-    alert("Sync failed: " + err.message + "\n\nMake sure the app is running via the launcher (python launcher.py).");
+    alert("Sync failed: " + err.message + "\n\nOpen Settings and run the connection check: it tests the token, the proxy, TLS and the clock, and says what to change.");
   }
 
   updateStatusIndicators();

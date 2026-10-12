@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.314 (2026-10-12)
+
+### Added
+- New "Connection check" card in Settings. It tests, without changing anything: the configured accounts, the system proxy, name lookup and TLS to the Active IQ REST and GraphQL services, the clock against Active IQ's, the last harvest of each account and any harvest warnings, and whether a local reference file is present. "Also test the tokens" asks Active IQ to accept each refresh token and reports only the HTTP status. Each failure comes with a plain-language fix: a rejected token, a proxy that answers for Active IQ, a security gateway re-signing HTTPS, or a wrong clock.
+- The sync-failure message no longer tells you to restart the launcher; it points to the connection check.
+
 ## 5.6.313 (2026-10-12)
 
 ### Added

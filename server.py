@@ -1088,6 +1088,130 @@ def _clear_account_failure(account_id):
         pass
 
 
+def _doctor_run(test_tokens=False):
+    """Connection check for the Settings page: each result is {id, status (ok | warn | fail | info), label, detail, hint}. It looks at the things that, in practice,
+    stop a new install from getting data: no token, a proxy that answers for Active IQ, a TLS or DNS problem, a wrong clock, a token Active IQ rejects, a harvest that
+    failed. Tokens are never read out or logged; a token test reports only the HTTP status."""
+    import email.utils, socket
+    out = []
+    def add(cid, status, label, detail="", hint=""):
+        out.append({"id": cid, "status": status, "label": label, "detail": detail, "hint": hint})
+    try:
+        ver = json.loads((SCRIPT_DIR / "version.json").read_text(encoding="utf-8")).get("version", "?")
+    except Exception:
+        ver = "?"
+    add("version", "info", "ARIA version", f"{ver}; Python {sys.version.split()[0]}; {sys.platform}")
+
+    accounts = _get_accounts()
+    if not accounts:
+        add("accounts", "fail", "Active IQ accounts", "No account with a refresh token is configured.", "Open Settings > Connection and add a refresh token.")
+    else:
+        for a_ in accounts:
+            add("account", "ok", f"Account '{a_.get('label')}'", f"Refresh token present ({len(a_.get('refreshToken') or '')} characters)" + (f"; watchlist {a_.get('watchlistId')}" if a_.get("watchlistId") else "; whole account"))
+
+    # proxy handling
+    try:
+        px = urllib.request.getproxies()
+    except Exception:
+        px = {}
+    def _mask(u):
+        try:
+            p = urllib.parse.urlparse(u)
+            return f"{p.scheme}://{p.hostname}:{p.port}" if p.port else f"{p.scheme}://{p.hostname}"
+        except Exception:
+            return "?"
+    if os.environ.get("ARIA_NO_PROXY"):
+        add("proxy", "info", "Proxy", "ARIA_NO_PROXY is set: every connection is made directly.")
+    elif px:
+        add("proxy", "info" if not _proxy_bypass else "warn", "Proxy", "System proxy in use: " + ", ".join(f"{k} {_mask(v)}" for k, v in px.items() if k in ("http", "https")) + ("; ARIA found that the proxy answered 401/407 and now connects directly." if _proxy_bypass else ""),
+            "If Active IQ requests fail with 401 or 407 through this proxy, ARIA retries once without it. Set ARIA_NO_PROXY=1 to skip the proxy from the start." if not _proxy_bypass else "")
+    else:
+        add("proxy", "info", "Proxy", "No system proxy detected.")
+
+    # reachability, TLS and clock
+    skew = None
+    seen = set()
+    for label, url in (("Active IQ REST service", _rest_base()), ("Active IQ GraphQL service", _gql_url())):
+        host = urllib.parse.urlparse(url).hostname
+        if host in seen:
+            continue
+        seen.add(host)
+        try:
+            infos = socket.getaddrinfo(host, 443)
+            ips = sorted({i[4][0] for i in infos})[:2]
+        except Exception as e:
+            add("dns", "fail", f"{label}: name lookup", f"{host}: {e}", "The machine cannot resolve this name. Check the network, VPN and DNS settings.")
+            continue
+        try:
+            req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+            hdrs = None
+            try:
+                with _get_opener().open(req, timeout=12) as r:
+                    code, hdrs = r.status, r.headers
+            except urllib.error.HTTPError as e:
+                code, hdrs = e.code, e.headers      # any HTTP answer proves the connection and TLS work
+            add("net", "ok", f"{label}", f"{host} ({', '.join(ips)}) answered HTTP {code}; TLS verified.")
+            if hdrs is not None and hdrs.get("Date") and skew is None:
+                try:
+                    skew = (datetime.now(timezone.utc) - email.utils.parsedate_to_datetime(hdrs.get("Date"))).total_seconds()
+                except Exception:
+                    pass
+        except ssl.SSLError as e:
+            add("tls", "fail", f"{label}: TLS", f"{host}: {e}", "A security gateway on this network may be re-signing HTTPS traffic. Add its root certificate to the system trust store, or set ARIA_CA_BUNDLE to a file with it.")
+        except Exception as e:
+            add("net", "fail", f"{label}", f"{host}: {e}", "The service could not be reached. Check the network, VPN and proxy settings.")
+    if skew is not None:
+        st = "ok" if abs(skew) < 120 else ("warn" if abs(skew) < 300 else "fail")
+        add("clock", st, "Clock", f"This machine's clock differs from Active IQ's by {skew:+.0f} seconds.", "" if st == "ok" else "Token requests can fail when the clock is wrong. Set the system time automatically.")
+
+    # tokens, on request
+    if test_tokens:
+        for a_ in accounts:
+            try:
+                status, raw = _rest("access_token", refresh_token=a_.get("refreshToken"))
+            except Exception as e:
+                add("token", "fail", f"Token exchange, account '{a_.get('label')}'", str(e)[:160], "")
+                continue
+            if status == 200:
+                add("token", "ok", f"Token exchange, account '{a_.get('label')}'", "Active IQ accepted the refresh token.")
+            elif status in (401, 403):
+                add("token", "fail", f"Token exchange, account '{a_.get('label')}'", f"Active IQ answered HTTP {status}.",
+                    "The refresh token is rejected: it has expired, was revoked, or was copied with extra characters. Create a new one in Active IQ and paste it in Settings > Connection." + (" A proxy is in use; if every account fails the same way, try ARIA_NO_PROXY=1." if px and not os.environ.get("ARIA_NO_PROXY") else ""))
+            elif status == 429:
+                add("token", "warn", f"Token exchange, account '{a_.get('label')}'", "Active IQ is rate limiting requests (HTTP 429).", "Wait a few minutes and try again.")
+            else:
+                add("token", "fail", f"Token exchange, account '{a_.get('label')}'", f"Active IQ answered HTTP {status}.", "")
+    else:
+        add("token", "info", "Token exchange", "Not tested. Use \"Also test the tokens\" to ask Active IQ to accept each refresh token.")
+
+    # harvest state
+    try:
+        db = _init_db()
+        try:
+            metas = _load_all_accounts_meta(db)
+            warns = _recent_harvest_warnings(db)
+        finally:
+            db.close()
+        for acct_id, m in metas:
+            when = m.get("harvested_at")
+            add("harvest", "ok" if m.get("system_count") else "warn", f"Last harvest, '{m.get('accountLabel') or acct_id}'", f"{m.get('system_count', 0)} systems, {when or 'never'}")
+        if not metas:
+            add("harvest", "warn", "Harvest", "No harvest has completed yet.", "The first harvest of a large fleet takes a long time; the page shows its progress.")
+        for w in warns[:5]:
+            add("warning", "warn", "Harvest warning", str(w.get("message") if isinstance(w, dict) else w)[:240])
+    except Exception as e:
+        add("harvest", "warn", "Harvest state", f"Could not read it: {e}")
+    if _is_syncing:
+        add("sync", "info", "Harvest running now", ", ".join(f"{k}: {v}" for k, v in _harvest_progress.items() if k in ("account", "accountIndex", "accountTotal", "phase")))
+    if _last_sync_error:
+        add("sync", "warn", "Last harvest error", str(_last_sync_error)[:240])
+
+    # reference data
+    ref = SCRIPT_DIR / "data" / "reference_library.js"
+    add("reference", "info", "Reference data", "A local reference file is present." if ref.exists() else "No local reference file; the server supplies live reference data (release list, end-of-availability, interoperability, firmware) instead.")
+    return {"ok": True, "checks": out, "generatedAt": datetime.now(timezone.utc).isoformat(), "tokensTested": bool(test_tokens)}
+
+
 def _recent_harvest_warnings(db, days=14):
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -9953,6 +10077,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_bulletins_scan()
         elif self.path.startswith('/api/bulletins'):
             self.handle_bulletins_get()
+        elif self.path.startswith('/api/doctor'):
+            self.handle_doctor()
         elif self.path.startswith('/api/history/changes'):
             self.handle_changes()
         elif self.path.startswith('/api/history/trend'):
@@ -10575,6 +10701,16 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"  [HISTORY] Trend (scoped) error: {e}", flush=True)
             self._json_response(500, {"ok": False, "error": str(e), "trend": []})
+
+    def handle_doctor(self):
+        """GET /api/doctor[?exchange=1]: the connection check (see _doctor_run). Administrators only (it is not in the viewer allow-list)."""
+        try:
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            self._json_response(200, _doctor_run(test_tokens=(q.get("exchange") or ["0"])[0] == "1"))
+        except Exception as e:
+            print(f"  [DOCTOR] error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
 
     def handle_changes(self):
         """GET /api/history/changes?days=30[&customer=Name] and POST {days, serials:[...]}: the itemised comparison from _changes_between()."""

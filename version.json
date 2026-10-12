@@ -1,8 +1,8 @@
 {
-  "version": "5.6.313",
+  "version": "5.6.314",
   "major": 5,
   "minor": 6,
-  "patch": 313,
+  "patch": 314,
   "date": "2026-10-11",
-  "notes": "Automatic update settings (security files, firmware) added to the hardening scorecard."
+  "notes": "Settings connection check: token, proxy, TLS, clock, harvest state."
 }
