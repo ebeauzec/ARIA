@@ -1,8 +1,8 @@
 {
-  "version": "5.6.331",
+  "version": "5.6.332",
   "major": 5,
   "minor": 6,
-  "patch": 331,
+  "patch": 332,
   "date": "2026-10-11",
-  "notes": "Technical Audit, pickers, portfolio and documents report clusters, grids and arrays"
+  "notes": "Remaining deliverables report per cluster, grid or array and name nodes where relevant"
 }

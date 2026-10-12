@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.332 (2026-10-12)
+
+### Added
+- Every deliverable now reports per cluster, grid or array and names individual nodes only where that matters. The risk, upgrade and contract lists the documents are built from have one entry per unit (a risk on both nodes of a pair is one entry; a hardware or node-firmware risk on only some nodes reads 'cluster (node only)'); the CVE matrix, the configuration and best-practice findings, the non-CVE critical issues, the oldest findings, the risk, advisory and upgrade documents, the customer report's estate table, the sustainability scores and the Security Posture, Handover, Success Plan, Problem Statement and Risk Remediation documents all list each cluster, grid or array once. Where a unit's nodes run different releases, the fix lines name the node. When two nodes of one cluster carry the same name, the serial number tells them apart.
+- Figures that belong to the cluster are no longer repeated per node: platform capacity headroom and drive inventory (shown once when identical on every node, added up when the nodes differ), the NAS/SAN/snapshot split, platform files and upgrade history; power draw and heat (node figures) are added up per unit. DR, HA and feature-adoption coverage and the ransomware-protection count are per cluster. Genuinely node-level data stays per node: contracts and renewals, adapters, SP/BMC and BIOS firmware, LIFs and health scores.
+
 ## 5.6.331 (2026-10-12)
 
 ### Added

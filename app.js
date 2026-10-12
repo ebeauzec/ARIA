@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.331";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.332";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.332",
+    date: "12 Oct 2026",
+    title: "Deliverables per cluster, grid and array",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Every deliverable now reports per cluster, grid or array and names individual nodes only where that matters. The risk, upgrade and contract lists the documents are built from have one entry per unit (a risk on both nodes of a pair is one entry; a hardware or node-firmware risk on only some nodes reads 'cluster (node only)'); the CVE matrix, the configuration and best-practice findings, the non-CVE critical issues, the oldest findings, the risk, advisory and upgrade documents, the customer report's estate table, the sustainability scores and the Security Posture, Handover, Success Plan, Problem Statement and Risk Remediation documents all list each cluster, grid or array once. Where a unit's nodes run different releases, the fix lines name the node. When two nodes of one cluster carry the same name, the serial number tells them apart.",
+          "Figures that belong to the cluster are no longer repeated per node: platform capacity headroom and drive inventory (shown once when identical on every node, added up when the nodes differ), the NAS/SAN/snapshot split, platform files and upgrade history; power draw and heat (node figures) are added up per unit. DR, HA and feature-adoption coverage and the ransomware-protection count are per cluster. Genuinely node-level data stays per node: contracts and renewals, adapters, SP/BMC and BIOS firmware, LIFs and health scores.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.331",
     date: "12 Oct 2026",
@@ -12837,6 +12853,31 @@ function _clusterBuild(c) {
   c.customerName = c.customer;
   return c;
 }
+// the whole fleet's units by key, for questions about a unit that a narrower scope cannot answer (how many nodes it has)
+// one node per cluster, grid or array (the one in the worst state) for figures that belong to the unit, such as DR and feature coverage
+function _dfUnitReps(systems) {
+  const rank = { critical: 0, warning: 1, normal: 2 }, best = new Map();
+  (systems || []).forEach(x => { const k = _unitOf(x).key, b = best.get(k); if (!b || (rank[x.status] ?? 3) < (rank[b.status] ?? 3)) best.set(k, x); });
+  return [...best.values()];
+}
+let _fleetIdx = null, _fleetIdxSig = '';
+function _fleetUnit(key) {
+  const all = state.systems || [], sig = all.length + '|' + (typeof _advResVersion !== 'undefined' ? _advResVersion : 0);
+  if (!_fleetIdx || _fleetIdxSig !== sig) { _fleetIdx = new Map(_getClustersRaw(all).map(c => [c.key, c])); _fleetIdxSig = sig; }
+  return _fleetIdx.get(key);
+}
+// a node's name for a deliverable; when two nodes of one cluster carry the same name (renamed or replaced nodes) the serial number tells them apart
+function _dfNodeTag(s) {
+  const c = _fleetUnit(_unitOf(s).key), nm = s.systemName || s.serialNumber;
+  return c && c.nodes.filter(x => (x.systemName || x.serialNumber) === nm).length > 1 ? `${nm} [${s.serialNumber}]` : nm;
+}
+// how a deliverable names a finding's system: the cluster, grid or array, plus the node when the finding is hardware or node firmware on only some nodes
+function _dfLbl(s, r) {
+  const u = _unitOf(s), c = _fleetUnit(u.key);
+  if (!c || c.nodeCount < 2 || !r) return u.name;
+  const e = c.risks.find(x => x.key === _riskKeyOf(r));
+  return e && e.nodeSpecific ? `${u.name} (${_dfNodeTag(s)} only)` : u.name;
+}
 let _clMemo = null;
 function getClusters(systems) {
   let sig = (systems || []).length + '|' + (typeof _advResVersion !== 'undefined' ? _advResVersion : 0);
@@ -20589,7 +20630,7 @@ function _dfLapsedText(expiringContracts, indent) {
 // Only ONTAP has ARP. "Unprotected" means CONFIRMED disabled -- an unreported system
 // is unverified, not unprotected.
 function _dfArpFacts(systems) {
-  const ont = (systems || []).filter(s => _platformFamily(s) === 'ontap');
+  const ont = _dfUnitReps((systems || []).filter(s => _platformFamily(s) === 'ontap'));   // per cluster
   const enabled = ont.filter(s => s.isARPEnabled === true).length;
   const disabled = ont.filter(s => s.isARPEnabled === false).length;
   return { ontap: ont.length, enabled, disabled, unknown: ont.length - enabled - disabled };
@@ -20743,7 +20784,18 @@ function _dfGroupNow(list) {
 // lines ("Fixed In: ...", "Upgrade To: ...") for the Security Brief's CVE matrix
 function _dfMinFixLines(cveId, advisoryUrl, systemNames, allSystems) {
   const rel = _dfFixedReleases(cveId, advisoryUrl);
-  const byName = {}; allSystems.forEach(s => { byName[s.systemName || s.serialNumber] = s; });
+  const byName = {}, unitNodes = new Map();
+  allSystems.forEach(s => { const un = _unitOf(s).name; if (!unitNodes.has(un)) unitNodes.set(un, []); unitNodes.get(un).push(s); byName[s.systemName || s.serialNumber] = s; });
+  // the names are clusters, grids or arrays; where their nodes run different releases each distinct release gets its own line, named by node
+  const expanded = [];
+  (systemNames || []).forEach(un => {
+    const nodes = unitNodes.get(un);
+    if (!nodes) { expanded.push(un); return; }
+    const byRel = new Map(); nodes.forEach(s => { const r = (s.santricityVersion || s.ontapVersion || ''); if (!byRel.has(r)) byRel.set(r, s); });
+    if (byRel.size <= 1) { byName[un] = nodes[0]; expanded.push(un); }
+    else [...byRel.values()].forEach(s => { const lb = `${un} (${_dfNodeTag(s)})`; byName[lb] = s; expanded.push(lb); });
+  });
+  systemNames = expanded;
   const uniq = arr => { const seen = new Set(); return arr.filter(x => !seen.has(x.v.text) && seen.add(x.v.text)); };
   const sortV = arr => uniq(arr).sort((a, b) => _dfVerCmp(a.v, b.v));
   const label = { ontap: 'ONTAP', storagegrid: 'StorageGRID', eseries: 'SANtricity OS' };
@@ -20976,12 +21028,16 @@ function _dfCriticalHighNonCveIssues(sys) {
 // _dfCriticalHighFixFloorSummary()'s shape (rows + a total) but with no
 // version/CQV angle, since there's no single version to conflict-check here.
 function _dfCriticalHighNonCveIssuesSummary(systems) {
-  const rows = [];
+  // one row per cluster, grid or array: an issue on every node is listed once, one on only some nodes names them
+  const byUnit = new Map();
   (systems || []).forEach(s => {
     const issues = _dfCriticalHighNonCveIssues(s);
     if (!issues) return;
-    rows.push({ systemName: s.systemName || s.serialNumber, customerName: s.customerName, count: issues.count, items: issues.items });
+    const u = _unitOf(s); let e = byUnit.get(u.key); if (!e) { e = { systemName: u.name, customerName: s.customerName, sys: s, items: new Map(), nodes: 0 }; byUnit.set(u.key, e); }
+    e.nodes++;
+    issues.items.forEach(it => { const k = it.severity + '|' + it.category + '|' + it.description; const x = e.items.get(k); if (x) x.n++; else e.items.set(k, { it, n: 1, firstNode: s.systemName || s.serialNumber }); });
   });
+  const rows = [...byUnit.values()].map(e => { const items = [...e.items.values()].map(x => ({ ...x.it, description: e.nodes > 1 && x.n < e.nodes ? `${x.it.description} (${x.n} of ${e.nodes} nodes, including ${x.firstNode})` : x.it.description })); return { systemName: e.systemName, customerName: e.customerName, sys: e.sys, count: items.length, items }; });
   if (!rows.length) return null;
   rows.sort((a, b) => b.count - a.count || a.systemName.localeCompare(b.systemName));
   return { rows, totalCount: rows.reduce((s, r) => s + r.count, 0) };
@@ -21009,7 +21065,7 @@ function _dfNonCveParityVersion(systems) {
   const productLabel = { ontap: 'ONTAP', storagegrid: 'StorageGRID', eseries: 'SANtricity OS' };
   const byFamily = new Map();
   nc.rows.forEach(row => {
-    const sys = byName[row.systemName];
+    const sys = row.sys || byName[row.systemName];
     const up = sys && sys.upgrades;
     if (!up || up.source !== 'active-iq' || !up.targetVersion || up.targetVersion === 'Up to Date') return;
     const v = _dfVerParse(up.targetVersion);
@@ -21873,12 +21929,15 @@ function _dfStorageGridText(v, opts) {
 function _dfForecastSplit(systems) {
   const forecastRows = [], splitRows = [], TB = k => (k || 0) / (1024 ** 3);
   (systems || []).forEach(s => {
-    const name = s.systemName || s.serialNumber, cust = s.customerName || '';
+    const name = _unitOf(s).name, uk = _unitOf(s).key, cust = s.customerName || '';   // one row per cluster, grid or array
     const fc = Array.isArray(s.energyForecast) ? s.energyForecast : [];
-    if (fc.length) { const last = fc[fc.length - 1]; forecastRows.push({ system: name, customer: cust, powerW: Math.round(last.powerW || 0), carbonKg: Math.round(last.carbonKg || 0), heatBTU: Math.round(last.heatBTU || 0), date: String(last.forecastDate || '').slice(0, 10) }); }
+    if (fc.length) { const last = fc[fc.length - 1]; forecastRows.push({ uk, system: name, customer: cust, powerW: Math.round(last.powerW || 0), carbonKg: Math.round(last.carbonKg || 0), heatBTU: Math.round(last.heatBTU || 0), date: String(last.forecastDate || '').slice(0, 10) }); }
     const cs = s.capacitySplit, p = cs && cs.physical;
-    if (p && (p.usedNASKiB || p.usedSANKiB || p.usedSnapshotsKiB)) splitRows.push({ system: name, customer: cust, nas: TB(p.usedNASKiB), san: TB(p.usedSANKiB), snap: TB(p.usedSnapshotsKiB) });
+    if (p && (p.usedNASKiB || p.usedSANKiB || p.usedSnapshotsKiB)) splitRows.push({ uk, system: name, customer: cust, nas: TB(p.usedNASKiB), san: TB(p.usedSANKiB), snap: TB(p.usedSnapshotsKiB) });
   });
+  // node power forecasts add up per unit; the used-capacity split is the cluster's own (repeated on its nodes), so identical rows count once and different ones are added
+  { const m = new Map(); forecastRows.forEach(r => { const e = m.get(r.uk); if (!e) m.set(r.uk, { ...r }); else { e.powerW += r.powerW; e.carbonKg += r.carbonKg; e.heatBTU += r.heatBTU; } }); forecastRows.length = 0; m.forEach(r => forecastRows.push(r)); }
+  { const m = new Map(); splitRows.forEach(r => { const e = m.get(r.uk); if (!e) m.set(r.uk, { ...r, _sigs: [[r.nas, r.san, r.snap].join('|')] }); else if (e._sigs.includes([r.nas, r.san, r.snap].join('|'))) { /* the same split on another node of the cluster */ } else { e.nas += r.nas; e.san += r.san; e.snap += r.snap; e._sigs.push([r.nas, r.san, r.snap].join('|')); } }); splitRows.length = 0; m.forEach(r => splitRows.push(r)); }
   forecastRows.sort((a, b) => b.powerW - a.powerW); splitRows.sort((a, b) => (b.nas + b.san + b.snap) - (a.nas + a.san + a.snap));
   return { forecastRows, splitRows };
 }
@@ -21888,8 +21947,8 @@ function _dfPlatformInsights(systems) {
   const FAM = { ontap: 'ONTAP', eseries: 'E-Series', storagegrid: 'StorageGRID', element: 'Element' };
   (systems || []).forEach(s => {
     const x = s.platformExtras; if (!x) return; withExtras++;
-    const fam = FAM[_platformFamily(s)] || 'Other', name = s.systemName || s.serialNumber, cust = s.customerName || '';
-    const add = (severity, title, detail) => findings.push({ severity, system: name, customer: cust, family: fam, title, detail });
+    const fam = FAM[_platformFamily(s)] || 'Other', name = _dfNodeTag(s), cust = s.customerName || '', _uk = _unitOf(s).key, _un = _unitOf(s).name;
+    const add = (severity, title, detail) => findings.push({ uk: _uk, un: _un, severity, system: name, customer: cust, family: fam, title, detail });
     const capTB = Number(s.clusterRawCapacityTB || (s.efficiency && s.efficiency.rawCapacityTB) || 0);
     // Power & heat: prefer measured average, then projected, then NetApp's published typical figure
     const e = x.energy;
@@ -21898,7 +21957,7 @@ function _dfPlatformInsights(systems) {
       if (e.avgPowerW > 0) { w = e.avgPowerW; basis = 'measured'; } else if (e.projectedPowerW > 0) { w = e.projectedPowerW; basis = 'projected'; } else if (e.typicalPowerW > 0) { w = e.typicalPowerW; basis = 'published typical'; }
       if (w) {
         const heat = (e.latest && e.latest.heatBTU) || e.projectedHeatBTU || w * 3.412;
-        energyRows.push({ system: name, customer: cust, family: fam, powerW: Math.round(w), basis, heatBTU: Math.round(heat), worstW: e.worstPowerW ? Math.round(e.worstPowerW) : null,
+        energyRows.push({ uk: _uk, un: _un, capTB, system: name, customer: cust, family: fam, powerW: Math.round(w), basis, heatBTU: Math.round(heat), worstW: e.worstPowerW ? Math.round(e.worstPowerW) : null,
           wPerTB: capTB > 0 ? +(w / capTB).toFixed(1) : null, kwhYear: Math.round(w * 8.76), ambientC: e.latest && e.latest.ambientC != null ? e.latest.ambientC : null });
       }
     }
@@ -21906,7 +21965,7 @@ function _dfPlatformInsights(systems) {
     (x.drives || []).forEach(d => {
       const behind = d.fwCur && d.fwRec && d.fwCur !== d.fwRec;
       const eosDays = d.eos ? Math.round((new Date(d.eos) - now) / 86400000) : null;
-      driveRows.push({ system: name, customer: cust, family: fam, model: d.model, type: d.type, count: d.count, capGB: d.capGB, rpm: d.rpm, fwCur: d.fwCur, fwRec: d.fwRec, behind, eos: d.eos, eosDays });
+      driveRows.push({ uk: _uk, un: _un, system: name, customer: cust, family: fam, model: d.model, type: d.type, count: d.count, capGB: d.capGB, rpm: d.rpm, fwCur: d.fwCur, fwRec: d.fwRec, behind, eos: d.eos, eosDays });
       if (behind) add('medium', 'Drive firmware behind recommended', `${d.count} x ${d.model}: ${d.fwCur} -> ${d.fwRec} recommended.`);
       if (eosDays != null) { if (eosDays < 0) add('high', 'Drive model past end of support', `${d.count} x ${d.model}: end of support ${d.eos}.`); else if (eosDays < 365) add('medium', 'Drive model nearing end of support', `${d.count} x ${d.model}: end of support ${d.eos} (${eosDays} days).`); }
     });
@@ -21914,20 +21973,20 @@ function _dfPlatformInsights(systems) {
     if (x.upgradeHistory && x.upgradeHistory.length) {
       const h = x.upgradeHistory.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
       const last = h[0], months = last.date ? Math.round((now - new Date(last.date)) / (30.44 * 86400000)) : null;
-      histRows.push({ system: name, customer: cust, count: h.length, lastDate: last.date, lastFrom: last.from, lastTo: last.to, monthsSince: months });
+      histRows.push({ uk: _uk, un: _un, system: name, customer: cust, count: h.length, lastDate: last.date, lastFrom: last.from, lastTo: last.to, monthsSince: months });
       if (months != null && months > 24) add('medium', 'No recorded ONTAP upgrade in over 2 years', `Last upgrade ${last.from} -> ${last.to} on ${last.date} (${months} months ago).`);
     }
     // Hardware expansion headroom
     if (x.hwLimits && x.hwLimits.maxCapacityTB > 0 && capTB > 0) {
       const pct = +(capTB / x.hwLimits.maxCapacityTB * 100).toFixed(1);
-      hwRows.push({ system: name, customer: cust, family: fam, capTB: +capTB.toFixed(1), maxTB: x.hwLimits.maxCapacityTB, pct });
+      hwRows.push({ uk: _uk, un: _un, system: name, customer: cust, family: fam, capTB: +capTB.toFixed(1), maxTB: x.hwLimits.maxCapacityTB, pct });
       if (pct >= 95) add('high', 'At platform capacity limit', `${capTB.toFixed(1)} TB raw of a ${x.hwLimits.maxCapacityTB} TB platform maximum (${pct}%); further growth needs a controller upgrade or new cluster.`);
       else if (pct >= 85) add('medium', 'Approaching platform capacity limit', `${capTB.toFixed(1)} TB raw of a ${x.hwLimits.maxCapacityTB} TB platform maximum (${pct}%).`);
     }
     // E-Series NVSRAM
     if (x.nvsram && x.nvsram.cur && x.nvsram.rec && x.nvsram.cur !== x.nvsram.rec) add('medium', 'NVSRAM behind recommended', `${x.nvsram.cur} -> ${x.nvsram.rec} recommended.`);
     // ARP/AI + timezone files
-    [].concat(x.securityFiles || [], x.systemFiles || []).forEach(f => { if (f.cur && f.rec && f.cur !== f.rec) fileRows.push({ system: name, customer: cust, type: f.type, cur: f.cur, rec: f.rec, auto: f.auto }); });
+    [].concat(x.securityFiles || [], x.systemFiles || []).forEach(f => { if (f.cur && f.rec && f.cur !== f.rec) fileRows.push({ uk: _uk, un: _un, system: name, customer: cust, type: f.type, cur: f.cur, rec: f.rec, auto: f.auto }); });
   });
   // Adapters / FC ports, Cloud Insights, talking points (ONTAP)
   (systems || []).forEach(s => {
@@ -21936,6 +21995,34 @@ function _dfPlatformInsights(systems) {
     (x.ciHosts || []).forEach(h => ciRows.push({ system: name, customer: cust, host: h.name, os: h.os, hypervisor: h.hypervisor, active: h.active, vms: h.vms }));
     if ((x.talkingPoints && x.talkingPoints.length) || (x.nextBestActions && x.nextBestActions.length)) talkRows.push({ system: name, customer: cust, age: s.ageInYears, points: x.talkingPoints || [], actions: x.nextBestActions || [] });
   });
+  // ── One row per cluster, grid or array ──────────────────────────────────────────────────────────────────────────────
+  // Some of this data is the cluster's own (it repeats on every node record: drive inventory, platform limits, files), some belongs to the
+  // node (power draw). Repeats are shown once; node-level figures are added up per unit; anything that differs between nodes names the node.
+  const _nodesIn = new Map(); (systems || []).forEach(x => { const k = _unitOf(x).key; _nodesIn.set(k, (_nodesIn.get(k) || 0) + 1); });
+  const _byUk = rows => { const m = new Map(); rows.forEach(r => { if (!m.has(r.uk)) m.set(r.uk, []); m.get(r.uk).push(r); }); return m; };
+  const _onlyNodes = (un, nodes, total) => nodes.length < total ? `${un} (${nodes.join(', ')} only)` : un;
+  { // hardware headroom: raw capacity shared by the nodes counts once, different figures are added
+    const out = []; _byUk(hwRows).forEach(rs => { const caps = [...new Set(rs.map(r => r.capTB))], capTB = caps.length === 1 ? caps[0] : +caps.reduce((a, b) => a + b, 0).toFixed(1), maxTB = Math.max(...rs.map(r => r.maxTB)); out.push({ ...rs[0], system: rs[0].un, capTB, maxTB, pct: +(capTB / maxTB * 100).toFixed(1) }); });
+    hwRows.length = 0; out.forEach(r => hwRows.push(r)); }
+  { // power and heat: node figures are added; the watts per TB use the unit's capacity
+    const out = []; _byUk(energyRows).forEach(rs => { const caps = [...new Set(rs.map(r => r.capTB))], capTB = caps.length === 1 ? caps[0] : caps.reduce((a, b) => a + b, 0), sm = k => rs.reduce((a, r) => a + (r[k] || 0), 0);
+      const w = sm('powerW'); out.push({ ...rs[0], system: rs[0].un, nodes: rs.length, powerW: w, heatBTU: sm('heatBTU'), worstW: rs.some(r => r.worstW) ? sm('worstW') : null, kwhYear: sm('kwhYear'), wPerTB: capTB > 0 ? +(w / capTB).toFixed(1) : null, basis: [...new Set(rs.map(r => r.basis))].join('/') }); });
+    energyRows.length = 0; out.forEach(r => energyRows.push(r)); }
+  { // drive inventory: identical on every node = the cluster's own, shown once; otherwise the nodes' drives are added up by model and firmware
+    const out = []; _byUk(driveRows).forEach(rs => { const byNode = new Map(); rs.forEach(r => { if (!byNode.has(r.system)) byNode.set(r.system, []); byNode.get(r.system).push(r); });
+      const sig = a => JSON.stringify(a.map(r => [r.model, r.count, r.fwCur, r.fwRec]).sort());
+      const sigs = new Set([...byNode.values()].map(sig));
+      if (sigs.size <= 1) { [...byNode.values()][0].forEach(r => out.push({ ...r, system: r.un })); return; }
+      const m = new Map(); rs.forEach(r => { const k = [r.model, r.type, r.fwCur, r.fwRec].join('|'); const e = m.get(k); if (e) e.count += r.count || 0; else m.set(k, { ...r, system: r.un }); }); m.forEach(r => out.push(r)); });
+    driveRows.length = 0; out.forEach(r => driveRows.push(r)); }
+  { // upgrade history and files: the same record on every node is one; a different one keeps its node
+    const dedupe = (rows, sigFn) => { const out = []; _byUk(rows).forEach(rs => { const bySig = new Map(); rs.forEach(r => { const k = sigFn(r); if (!bySig.has(k)) bySig.set(k, []); bySig.get(k).push(r); }); bySig.forEach(g => out.push({ ...g[0], system: g.length === (_nodesIn.get(g[0].uk) || 1) || (_nodesIn.get(g[0].uk) || 1) === 1 ? g[0].un : `${g[0].un} (${g.map(x => x.system).join(', ')})` })); }); return out; };
+    const h = dedupe(histRows, r => [r.count, r.lastDate, r.lastFrom, r.lastTo].join('|')); histRows.length = 0; h.forEach(r => histRows.push(r));
+    const f = dedupe(fileRows, r => [r.type, r.cur, r.rec].join('|')); fileRows.length = 0; f.forEach(r => fileRows.push(r)); }
+  { // findings: the same finding on every node is one line for the unit; on some nodes only, it names them
+    const m = new Map(); findings.forEach(f => { const k = [f.uk, f.severity, f.title, f.detail].join('|'); let e = m.get(k); if (!e) { e = { ...f, _nodes: [] }; m.set(k, e); } e._nodes.push(f.system); });
+    const out = [...m.values()].map(e => ({ ...e, system: _onlyNodes(e.un, [...new Set(e._nodes)], _nodesIn.get(e.uk) || 1) })); findings.length = 0; out.forEach(r => findings.push(r)); }
+  const _rank = { high: 0, medium: 1, info: 2 }; findings.sort((a, b) => _rank[a.severity] - _rank[b.severity]);
   const sum = (a, k) => a.reduce((t, r) => t + (r[k] || 0), 0);
   const order = { high: 0, medium: 1, info: 2 }; findings.sort((a, b) => order[a.severity] - order[b.severity]);
   const byFam = {}; energyRows.forEach(r => { const f = byFam[r.family] = byFam[r.family] || { n: 0, w: 0, heat: 0 }; f.n++; f.w += r.powerW; f.heat += r.heatBTU; });
@@ -22295,7 +22382,7 @@ function _dfCveIndex(systems) {
     id = String(id || '').trim().toUpperCase();
     if (!/^CVE-\d{4}-\d{4,}$/.test(id)) return;
     const c = map[id] = map[id] || { id, sev: '', cvss: 0, title: '', systems: new Set(), customers: new Set(), kev: false };
-    c.systems.add(sys.systemName || sys.serialNumber);
+    c.systems.add(_unitOf(sys).name);   // one per cluster, grid or array
     if (sys.customerName) c.customers.add(sys.customerName);
     c.sev = c.sev || String(sev || '').toLowerCase();
     c.cvss = Math.max(c.cvss, parseFloat(cvss) || 0);
@@ -25423,7 +25510,7 @@ function _dfNonCveFindings(systems) {
     if (_spIsCve(r)) return;
     const sev = String(r.severity || 'info').toLowerCase(), key = sev + '|' + (r.category || '') + '|' + (r.description || '');
     let g = groups.get(key); if (!g) { g = { sev, cat: r.category || 'General', desc: String(r.description || '').replace(/\s+/g, ' ').trim(), fix: r.recommendation || '', systems: new Set(), pairs: [] }; groups.set(key, g); }
-    g.systems.add(s.systemName || s.serialNumber); g.pairs.push({ sys: s, r });
+    { const lb = _dfLbl(s, r); if (!g.systems.has(lb)) g.pairs.push({ sys: s, r }); g.systems.add(lb); }   // once per cluster, grid or array
     if (!g.fix && r.recommendation) g.fix = r.recommendation;
   }));
   const list = [...groups.values()].sort((x, y) => ((rank[x.sev] ?? 6) - (rank[y.sev] ?? 6)) || (y.systems.size - x.systems.size) || x.desc.localeCompare(y.desc));
@@ -25542,7 +25629,7 @@ function _dfRiskAgeText(systems) {
     open++; const t = Date.parse(r.firstSeen || ''); if (isNaN(t)) return; dated++;
     const days = Math.max(0, Math.floor((now - t) / 86400000)), bi = B.findIndex(b => days >= b[1] && days < b[2]); if (bi >= 0) cnt[bi][sev]++;
     const k = sev + '|' + r.description, o = oldest.get(k) || { sev, desc: String(r.description || '').replace(/\s+/g, ' ').trim(), days: 0, systems: new Set() };
-    o.days = Math.max(o.days, days); o.systems.add(s.systemName || s.serialNumber); oldest.set(k, o);
+    o.days = Math.max(o.days, days); o.systems.add(_dfLbl(s, r)); oldest.set(k, o);
   }));
   if (!dated) return '';
   const over90 = cnt[2].critical + cnt[2].high + cnt[3].critical + cnt[3].high;
@@ -29232,6 +29319,7 @@ function compileSustainabilityReport(targetSystems, allRisks, expiringContracts,
   let spaceSaved = 0;
   
   let perSystemLines = '';
+  const _psu = new Map();   // per cluster, grid or array: the nodes' scores are averaged, their savings added
   let optimizationRecs = [];
   let fabricPoolCount = 0;
   const _fpOntN = targetSystems.filter(s => _platformFamily(s) === 'ontap').length;
@@ -29268,14 +29356,19 @@ function compileSustainabilityReport(targetSystems, allRisks, expiringContracts,
     }
     if (isFP) fabricPoolCount++;
 
-    perSystemLines += `    ${(s.systemName || 'Unknown').padEnd(27)} ${hasScoreData ? score.toString().padEnd(6) : 'N/A'.padEnd(6)} ${((trend > 0 ? '+'+trend : trend) + '%').padEnd(6)} ${drRatio.toString().padEnd(8)} ${saved.toString().padEnd(8)}\n`;
+    { const u = _unitOf(s); let e = _psu.get(u.key); if (!e) { e = { name: u.name, scored: 0, score: 0, trend: 0, saved: 0, drRatio, nodes: 0 }; _psu.set(u.key, e); }
+      e.nodes++; if (hasScoreData) { e.scored++; e.score += score; e.trend += trend; } e.saved += saved; }
 
     // Real 0 scores (hasScoreData true, score genuinely 0) now correctly still
     // get a recommendation — previously indistinguishable from "no data" and
     // silently skipped, even though a true 0 is the case needing it most.
     if (hasScoreData && score < 50) {
-      if (drRatio < 2) optimizationRecs.push(`    • ${s.systemName}: Data reduction ${drRatio}:1 below fleet avg → review compaction`);
+      if (drRatio < 2) optimizationRecs.push(`    • ${_unitOf(s).name}: Data reduction ${drRatio}:1 below fleet avg → review compaction`);
     }
+  });
+  _psu.forEach(e => {
+    const sc = e.scored ? Math.round(e.score / e.scored) : null, tr = e.scored ? Math.round(e.trend / e.scored * 10) / 10 : 0;
+    perSystemLines += `    ${(e.name + (e.nodes > 1 ? ` (${e.nodes} nodes)` : '')).padEnd(27)} ${sc != null ? sc.toString().padEnd(6) : 'N/A'.padEnd(6)} ${((tr > 0 ? '+' + tr : tr) + '%').padEnd(6)} ${e.drRatio.toString().padEnd(8)} ${(Math.round(e.saved * 10) / 10).toString().padEnd(8)}\n`;
   });
 
   // When NO system in scope has a per-system score, this used to default to
@@ -29408,7 +29501,7 @@ function computeFleetDRSummary(allSystems) {
   // like "Establish DR protection for 24 unprotected systems" for arrays that
   // cannot have any. Everything below is over the ONTAP systems in scope;
   // ontapCount lets callers show correct denominators (and N/A when zero).
-  const targetSystems = allSystems.filter(s => _platformFamily(s) === 'ontap');
+  const targetSystems = _dfUnitReps(allSystems.filter(s => _platformFamily(s) === 'ontap'));   // one per cluster: a pair's SnapMirror, HA and MetroCluster state belongs to the cluster
   const ontapCount = targetSystems.length;
   let smSystems = 0, smRelCount = 0, smAsync = 0, smSync = 0;
   let mcSystems = 0, syncMirrorSystems = 0, haSystems = 0;
@@ -29431,8 +29524,8 @@ function computeFleetDRSummary(allSystems) {
     if (!s.isMetroCluster) return;
     (s.risks || []).forEach(r => {
       const desc = (r.description || r.shortName || '').toLowerCase();
-      if (desc.includes('mediator unreachable')) mcMediatorIssues.push(s.systemName || s.serialNumber);
-      if (desc.includes('mauso disabled')) mcAusoDisabled.push(s.systemName || s.serialNumber);
+      if (desc.includes('mediator unreachable')) mcMediatorIssues.push(_unitOf(s).name);
+      if (desc.includes('mauso disabled')) mcAusoDisabled.push(_unitOf(s).name);
     });
   });
   targetSystems.forEach(s => {
@@ -29450,8 +29543,8 @@ function computeFleetDRSummary(allSystems) {
     // Unprotected = CONFIRMED no replication. In-cluster HA is not disaster recovery, and a
     // system Active IQ never reported SnapMirror for is unknown, not unprotected.
     const _smReported = s.snapMirrorReported !== false;
-    if (!_smReported && !isMC && !isSM) smUnknownNames.push(s.systemName || s.serialNumber || 'Unknown');
-    else if (smCount === 0 && !isMC && !isSM) unprotected.push(s.systemName || s.serialNumber || 'Unknown');
+    if (!_smReported && !isMC && !isSM) smUnknownNames.push(_unitOf(s).name || 'Unknown');
+    else if (smCount === 0 && !isMC && !isSM) unprotected.push(_unitOf(s).name || 'Unknown');
     // Lag warnings from relationships (count-only entries carry no lag: nothing to warn about)
     (sm.relationships || []).forEach(r => {
       if (r.countOnly) return;
@@ -29610,14 +29703,14 @@ function computeFleetFeatureMatrix(allSystems) {
   // feature set. Scoring E-Series/StorageGRID against it made every such
   // system look ~20% adopted. Score ONTAP systems only; ontapCount is exposed
   // so callers can render N/A when the scope has none.
-  const targetSystems = allSystems.filter(s => _platformFamily(s) === 'ontap');
+  const targetSystems = _dfUnitReps(allSystems.filter(s => _platformFamily(s) === 'ontap'));   // adoption per cluster
   const features = { arp: 0, fabricPool: 0, snapMirror: 0, ha: 0 };
   const perSystem = [];
   const total = targetSystems.length;
   targetSystems.forEach(s => {
     const score = computeFeatureAdoptionScore(s);
     const f = {
-      name: s.systemName || s.serialNumber,
+      name: _unitOf(s).name,
       platform: s.platform || '',
       os: s.ontapVersion || s.osVersion || '',
       arp: s.isARPEnabled === true,
@@ -29658,7 +29751,7 @@ function computeFleetCapacitySummary(targetSystems) {
     }
     const rag = computeCapacityRAG(s);
     if (rag === 'red') { redCount++; { const _e = s.efficiency || {}; const _u = _e.usableCapacityTB || _e.rawCapacityTB || 0;
-      atRisk.push({ name: s.systemName, runway: (s.projections && s.projections.daysToLimit) || 0, platform: s.platform || '', utilPct: (() => { const _p = _capacityUsedPct(s); return _p != null ? Math.round(_p) : null; })() }); } }
+      atRisk.push({ name: _unitOf(s).name, runway: (s.projections && s.projections.daysToLimit) || 0, platform: s.platform || '', utilPct: (() => { const _p = _capacityUsedPct(s); return _p != null ? Math.round(_p) : null; })() }); } }
     else if (rag === 'amber') amberCount++;
     else greenCount++;
     if (s.projections && s.projections.growthRateGBPerDay > 0) {
@@ -30518,12 +30611,12 @@ function compileCustomerReport(targetSystems, allRisks, expiringContracts, openC
   o += `Prepared ${today.toISOString().split('T')[0]} from NetApp Active IQ telemetry (AutoSupport data as last received from each system).\n\n`;
   const _plan = _dfActionPlan(targetSystems, allRisks, openCases);
   { const hs = computeAccountHealthScore(targetSystems);
-    o += `## At a glance\n\n| Systems | Support | Critical / high risks | Unique CVEs | ARP enabled | Open cases |\n|---|---|---|---|---|---|\n| ${targetSystems.length} | ${contracts.active.length} active${lapsed.length ? ', ' + lapsed.length + ' lapsed' : ''} | ${riskSev('critical')} / ${riskSev('high')} | ${cveList.length} | ${arp.ontap ? arp.enabled + ' of ' + arp.ontap : 'n/a'} | ${openCases.length} |\n\nHealth index: ${hs}/100 (${getHealthGrade(hs)}) -- a composite of AutoSupport, ARP, OS currency, firmware, contracts, risks and capacity.\n\n`; }
+    o += `## At a glance\n\n| Systems | Support | Critical / high risks | Unique CVEs | ARP enabled | Open cases |\n|---|---|---|---|---|---|\n| ${_dfScopeCountText(targetSystems)} | ${contracts.active.length} active${lapsed.length ? ', ' + lapsed.length + ' lapsed' : ''} | ${riskSev('critical')} / ${riskSev('high')} | ${cveList.length} | ${arp.ontap ? arp.enabled + ' of ' + arp.ontap : 'n/a'} | ${openCases.length} |\n\nHealth index: ${hs}/100 (${getHealthGrade(hs)}) -- a composite of AutoSupport, ARP, OS currency, firmware, contracts, risks and capacity.\n\n`; }
   o += `## Decisions needed\n\n` + (_plan.length ? _plan.map((p, i) => `${i + 1}. **${p.action}** ${p.scope ? '(' + p.scope + ') ' : ''}${p.why} _(${p.when}; ${p.owner})_${p.systems && p.systems.length ? ' Systems: ' + p.systems.join(', ') + '.' : ''}`).join('\n') : 'No corrective action is required at this time.') + '\n\n';
 
   // 1 Summary
   o += `## 1. Summary\n\n`;
-  o += `- **Estate:** ${plural(targetSystems.length, 'system')} (${famText})${sites.length ? ' across ' + sites.join(', ') : ''}.\n`;
+  o += `- **Estate:** ${_dfScopeCountText(targetSystems)} (${famText})${sites.length ? ' across ' + sites.join(', ') : ''}.\n`;
   o += `- **Support entitlement:** ${contracts.active.length} of ${targetSystems.length} systems under active support${lapsed.length ? `; **${lapsed.length} lapsed**` : ''}${exp90.length ? `; ${exp90.length} expiring within 90 days` : ''}${contracts.unknown.length ? `; ${contracts.unknown.length} not reported` : ''}.\n`;
   o += `- **Security:** ${riskSev('critical')} critical and ${riskSev('high')} high risks detected on your systems by Active IQ; separately, ${cveList.length ? `${plural(cveList.length, 'published vulnerability (CVE)', 'published vulnerabilities (CVEs)')} affect the software versions you run (${cveCrit} rated critical, ${cveHigh} high)` : 'no published vulnerabilities (CVEs) were matched to your software versions'}.\n`;
   if (arp.ontap > 0) o += `- **Ransomware protection (ARP):** ${_dfArpSentence(arp)}.\n`;
@@ -30532,10 +30625,14 @@ function compileCustomerReport(targetSystems, allRisks, expiringContracts, openC
 
   // 2 Estate
   o += `## 2. Estate\n\n| System | Model | Software | Site | Last AutoSupport | Support ends | Hardware support ends |\n|---|---|---|---|---|---|---|\n`;
-  const rows = targetSystems.slice().sort((a, b) => String(nameOf(a)).localeCompare(String(nameOf(b))));
-  rows.forEach(s => {
-    const a = s.autosupport || {};
-    o += `| ${nameOf(s)} | ${s.model || s.platform || 'not reported'} | ${verOf(s)} | ${_site(s) || 'not reported'} | ${a.lastReceivedDays != null ? a.lastReceivedDays + ' day(s) ago' : 'not reported'} | ${fmtD(s.contractEndDate || s.contractExpiry || (s.contracts && s.contracts.endDate))} | ${fmtD(s.hwEndOfSupport || (s.lifecycle && s.lifecycle.eosDate))} |\n`;
+  // one row per cluster, grid or array; where its nodes differ the cell says so (the stalest AutoSupport, the earliest support end)
+  const _estateUnits = getClusters(targetSystems).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  _estateUnits.forEach(c => {
+    const ns = c.nodes, first = ns[0], uniq = f => [...new Set(ns.map(f).filter(v => v && v !== 'not reported'))];
+    const asupDays = ns.map(x => (x.autosupport || {}).lastReceivedDays).filter(v => v != null), asup = asupDays.length ? Math.max(...asupDays) + ' day(s) ago' : 'not reported';
+    const ends = f => { const v = ns.map(f).filter(Boolean).sort(); return v.length ? fmtD(v[0]) + (v.length > 1 && v[0] !== v[v.length - 1] ? ' (earliest of ' + ns.length + ' nodes)' : '') : fmtD(''); };
+    const ver = uniq(verOf).join(' / ') || 'not reported';
+    o += `| ${c.name}${c.nodeCount > 1 ? ` (${c.nodeCount} nodes)` : ''}${_UNIT_BADGE[c.kind] ? ` [${_UNIT_BADGE[c.kind]}]` : ''} | ${uniq(x => x.model || x.platform).join(' / ') || 'not reported'} | ${ver} | ${uniq(_site).join(' / ') || 'not reported'} | ${asup} | ${ends(x => x.contractEndDate || x.contractExpiry || (x.contracts && x.contracts.endDate))} | ${ends(x => x.hwEndOfSupport || (x.lifecycle && x.lifecycle.eosDate))} |\n`;
   });
 
   o += '\n';
@@ -35550,6 +35647,26 @@ function _renderAsBuiltSection(systems) {
 
 
 
+// The risk, upgrade and contract lists every deliverable is built from, one entry per cluster, grid or array.
+// A risk on every node is one entry named for the unit; a hardware or node-firmware risk on only some nodes names them.
+function _dfUnitInputs(targetSystems, allRisks, allUpgrades, expiringContracts) {
+  getClusters(targetSystems).forEach(c => {
+    const nameOf = new Map(c.nodes.map(x => [x.serialNumber, _dfNodeTag(x)]));
+    c.risks.forEach(x => {
+      const nodeNames = x.serials.map(sr => nameOf.get(sr));
+      allRisks.push({ ...x.risk, systemName: x.nodeSpecific ? `${c.name} (${nodeNames.join(', ')} only)` : c.name, unitName: c.name, unitKey: c.key, nodeNames, nodeSerials: x.serials, serialNumber: x.serials[0] });
+    });
+    const rels = new Set(c.nodes.map(x => (x.santricityVersion ? x.santricityVersion : x.ontapVersion) || '')), seen = new Set();
+    c.nodes.forEach(sys => {
+      if (!(sys.upgrades && sys.upgrades.targetVersion !== 'Up to Date')) return;
+      const cur = sys.santricityVersion ? sys.santricityVersion : sys.ontapVersion, k = cur + '|' + sys.upgrades.targetVersion;
+      if (seen.has(k)) return; seen.add(k);   // nodes of one cluster on the same release share one upgrade
+      allUpgrades.push({ systemName: rels.size > 1 ? `${c.name} (${_dfNodeTag(sys)})` : c.name, unitName: c.name, serialNumber: sys.serialNumber, platform: sys.platform, currentVersion: cur, ...sys.upgrades });
+    });
+    const w = c.nodes.filter(x => x.contracts && x.contracts.daysRemaining != null && x.contracts.daysRemaining <= 90).sort((a, b) => a.contracts.daysRemaining - b.contracts.daysRemaining)[0];
+    if (w) expiringContracts.push({ systemName: c.name, unitName: c.name, serialNumber: w.serialNumber, ...w.contracts });
+  });
+}
 function generateActionPlan() {
   const planBody = document.getElementById("generatedPlanBody");
   if (!planBody) { console.error('[ActionPlan] #generatedPlanBody not found'); return; }
@@ -35607,16 +35724,8 @@ function generateActionPlan() {
   const allSecurityAdvisories = [];
   const allSupportCases = [];
 
+  _dfUnitInputs(targetSystems, allRisks, allUpgrades, expiringContracts);
   targetSystems.forEach(sys => {
-    if (sys.risks) {
-      sys.risks.forEach(r => allRisks.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, ...r }));
-    }
-    if (sys.upgrades && sys.upgrades.targetVersion !== "Up to Date") {
-      allUpgrades.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, platform: sys.platform, currentVersion: sys.santricityVersion ? sys.santricityVersion : sys.ontapVersion, ...sys.upgrades });
-    }
-    if (sys.contracts && sys.contracts.daysRemaining != null && sys.contracts.daysRemaining <= 90) {
-      expiringContracts.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, ...sys.contracts });
-    }
     if (sys.fieldActions) {
       sys.fieldActions.forEach(fa => activeFAs.push({ systemName: sys.systemName, ...fa }));
     }
@@ -37585,16 +37694,8 @@ function downloadPlanSection(index) {
   const allSupportCases = [];
   const switchAlerts = [];
   
+  _dfUnitInputs(targetSystems, allRisks, allUpgrades, expiringContracts);
   targetSystems.forEach(sys => {
-    if (sys.risks) {
-      sys.risks.forEach(r => allRisks.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, ...r }));
-    }
-    if (sys.upgrades && sys.upgrades.targetVersion !== "Up to Date") {
-      allUpgrades.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, platform: sys.platform, currentVersion: sys.santricityVersion ? sys.santricityVersion : sys.ontapVersion, ...sys.upgrades });
-    }
-    if (sys.contracts && sys.contracts.daysRemaining != null && sys.contracts.daysRemaining <= 90) {
-      expiringContracts.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, ...sys.contracts });
-    }
     if (sys.fieldActions) {
       sys.fieldActions.forEach(fa => activeFAs.push({ systemName: sys.systemName, ...fa }));
     }
@@ -38135,16 +38236,8 @@ function downloadDeliverable(type) {
   const expiringContracts = [];
   const allSupportCases = [];
 
+  _dfUnitInputs(targetSystems, allRisks, allUpgrades, expiringContracts);
   targetSystems.forEach(sys => {
-    if (sys.risks) {
-      sys.risks.forEach(r => allRisks.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, ...r }));
-    }
-    if (sys.upgrades && sys.upgrades.targetVersion !== "Up to Date") {
-      allUpgrades.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, platform: sys.platform, currentVersion: sys.santricityVersion ? sys.santricityVersion : sys.ontapVersion, ...sys.upgrades });
-    }
-    if (sys.contracts && sys.contracts.daysRemaining != null && sys.contracts.daysRemaining <= 90) {
-      expiringContracts.push({ systemName: sys.systemName, serialNumber: sys.serialNumber, ...sys.contracts });
-    }
     if (sys.supportCases) {
       sys.supportCases.forEach(sc => allSupportCases.push({ systemName: sys.systemName, customerName: sys.customerName, serialNumber: sys.serialNumber, clusterName: sys.clusterName, ...sc }));
     }
