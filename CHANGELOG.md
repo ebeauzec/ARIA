@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.324 (2026-10-12)
+
+### Added
+- The known exploited vulnerabilities check now covers every KEV CVE that NetApp has an advisory for, not only the 13 ARIA happened to have loaded: NetApp's advisory index names 84 of the 1,739 CISA KEV CVEs, and ARIA now requests all of them. Result on the current fleet: 9 known exploited CVEs on 392 systems (it was 4 on 365). New confirmed exposures: CVE-2023-46604 (Apache ActiveMQ) on 27 SANtricity systems, fixed in SANtricity OS 11.81, and five Linux kernel CVEs on the BMC firmware (CVE-2023-0266, CVE-2021-22600, CVE-2022-0185, CVE-2022-0847, CVE-2024-1086) on 6 to 20 systems each.
+- BMC firmware advisories are now decided per system: the fixed firmware is read from the advisory's download file names (such as BMC_FW_308-04160_13.10P1.zip) for the system's own model, and the system is listed when its BMC firmware is older.
+- The card and the Security Posture Brief list the other KEV CVEs NetApp has advisories for (75) and why each is not counted: cannot be confirmed because the advisory publishes no fixed release for the product, no usable advisory data, already fixed or fixed only on older release lines, or no system in scope runs an affected product.
+- Product matching: "Data ONTAP Edge" (the old virtual edition) and components such as the Antivirus Connector, SMI-S Provider, Manageability SDK, VASA Provider and 7-Mode are no longer treated as ONTAP the array. That removed 1,296 false matches for CVE-2017-1000253 and most of the Heartbleed matches.
+
 ## 5.6.323 (2026-10-12)
 
 ### Added

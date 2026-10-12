@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.323";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.324";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.324",
+    date: "12 October 2026",
+    title: "KEV Check On Every NetApp-Advised CVE",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "The known exploited vulnerabilities check now covers every KEV CVE that NetApp has an advisory for, not only the 13 ARIA happened to have loaded: NetApp's advisory index names 84 of the 1,739 CISA KEV CVEs, and ARIA now requests all of them. Result on the current fleet: 9 known exploited CVEs on 392 systems (it was 4 on 365). New confirmed exposures: CVE-2023-46604 (Apache ActiveMQ) on 27 SANtricity systems, fixed in SANtricity OS 11.81, and five Linux kernel CVEs on the BMC firmware (CVE-2023-0266, CVE-2021-22600, CVE-2022-0185, CVE-2022-0847, CVE-2024-1086) on 6 to 20 systems each.",
+          "BMC firmware advisories are now decided per system: the fixed firmware is read from the advisory's download file names (such as BMC_FW_308-04160_13.10P1.zip) for the system's own model, and the system is listed when its BMC firmware is older.",
+          "The card and the Security Posture Brief list the other KEV CVEs NetApp has advisories for (75) and why each is not counted: cannot be confirmed because the advisory publishes no fixed release for the product, no usable advisory data, already fixed or fixed only on older release lines, or no system in scope runs an affected product.",
+          "Product matching: \"Data ONTAP Edge\" (the old virtual edition) and components such as the Antivirus Connector, SMI-S Provider, Manageability SDK, VASA Provider and 7-Mode are no longer treated as ONTAP the array. That removed 1,296 false matches for CVE-2017-1000253 and most of the Heartbleed matches.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.323",
     date: "12 October 2026",
@@ -21344,6 +21362,8 @@ async function loadAdvisoryResolutions(systems) {
     (systems || []).forEach(s => (s.risks || []).concat(s.risksNotApplicable || [], s.risksStale || [], s.risksUnverified || []).forEach(r => { const a = _advIdOf(r); if (a) ids.add(a); const c = _rrCveOf(r); if (c) cves.add(c); }));
     (systems || []).forEach(s => (s.securityBulletins || []).concat(s._bulletinsDropped || []).forEach(b => _advCves(b).forEach(c => cves.add(c.toUpperCase()))));
     (systems || []).forEach(s => (s.securityBulletins || []).forEach(b => { const m = (String(b.ntapId || '') + ' ' + String(b.link || '') + ' ' + String(b.id || '')).match(/ntap-\d{8}-\d{4}/i); if (m) ids.add(m[0].toLowerCase()); }));
+    if (!_kevCves) { try { await loadKevCatalog(); } catch (_e) { /* offline */ } }
+    if (_kevCves) _kevCves.forEach((v, k) => cves.add(k));   // every known exploited CVE: the server finds the ones NetApp has an advisory for
     if (!ids.size && !cves.size) return;
     for (let i = 0; i < 60; i++) {
       const resp = await fetch('/api/advisory-resolutions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [...ids], cves: [...cves] }), cache: 'no-store' });
@@ -21775,11 +21795,34 @@ function _bulletinIsKev(b) {
 // advisories that give no fixed release for the system's product are NOT exposure: the last kind is counted apart as "unverified".
 const _kevMemo = new Map();
 function _kevIdsOf(text) { return (String(text || '').match(/CVE-\d{4}-\d{4,}/gi) || []).map(x => x.toUpperCase()); }
+function _sysBmcVersion(s) {
+  const fw = Array.isArray(s.systemFirmware) ? s.systemFirmware : (s.systemFirmware ? [s.systemFirmware] : []);
+  const f = fw.find(x => x && x.currentVersion && /bmc|sp/i.test(String(x.type || 'sp'))) || fw.find(x => x && x.currentVersion);
+  return f ? String(f.currentVersion) : '';
+}
+// A BMC advisory names the fixed firmware as download links (BMC_FW_308-04160_13.10P1.zip), not as a version list. The fix that applies to this system is the one for its own
+// model; the system is exposed when its BMC firmware is older than that.
+function _kevBmcVerdict(s, rec) {
+  const fam = _platformFamily(s);
+  const fixes = (rec.fixes || []).filter(f => _advClass(f.product) === 'bmc' && !/\bHCI\b/i.test(f.product) && _advModelTokens(f.product).length && _advProductApplies(s, fam, f.product));
+  if (!fixes.length) return null;
+  let best = null, wontfix = false;
+  fixes.forEach(f => {
+    const vs = (f.versions || []).concat((f.links || []).map(l => (String(l).match(/_(\d+(?:\.\d+)+(?:P\d+)?)\.zip/i) || [])[1]).filter(Boolean)).map(_dfVerParse).filter(Boolean);
+    if (!vs.length) { if (f.wontfix) wontfix = true; return; }
+    const m = vs.reduce((a, b) => _dfVerCmp(a, b) >= 0 ? a : b);
+    if (!best || _dfVerCmp(m, best) > 0) best = m;
+  });
+  if (!best) return { kind: wontfix ? 'nofix' : 'unknown' };
+  const cur = _dfVerParse(_sysBmcVersion(s)); if (!cur) return { kind: 'unknown' };
+  return _dfVerCmp(cur, best) >= 0 ? { kind: 'cleared' } : { kind: 'exposed', fix: 'BMC firmware ' + best.text };
+}
+// Per system: the KEV CVEs it is exposed to (with the evidence), and for every other KEV CVE NetApp has an advisory for, why it is not counted.
 function _kevCvesOfSystem(s) {
-  if (!s || !_kevCves || !_kevCves.size) return { hits: [], unverified: 0 };
-  const key = [typeof _advResVersion !== 'undefined' ? _advResVersion : 0, (s.risks || []).length, s.ontapVersion || s.osVersion || '', _kevCves.size].join('|');
+  if (!s || !_kevCves || !_kevCves.size) return { hits: [], unverified: 0, outcomes: {} };
+  const key = [typeof _advResVersion !== 'undefined' ? _advResVersion : 0, (s.risks || []).length, s.ontapVersion || s.osVersion || '', _sysBmcVersion(s), _kevCves.size].join('|');
   const hit = _kevMemo.get(s.serialNumber); if (hit && hit.k === key) return hit.v;
-  const found = new Map(); let unverified = 0;
+  const found = new Map(), outcomes = {}; let unverified = 0;
   (s.risks || []).forEach(r => {
     const ids = new Set(((r.cveDetails || []).map(d => d && d.id).filter(Boolean).map(x => String(x).toUpperCase())).concat(_kevIdsOf(r.description)));
     ids.forEach(id => {
@@ -21791,19 +21834,28 @@ function _kevCvesOfSystem(s) {
   if (typeof ADVISORY_RES !== 'undefined') {
     for (const [cve] of _kevCves) {
       const adv = _advIdFromCve(cve); if (!adv || !ADVISORY_RES[adv]) continue;
-      if (_advApplicability(s, adv).applies !== true) continue;
-      let x = null; try { x = riskResolution(s, { advisoryId: adv, advisoryUrl: '', description: '', cveDetails: [{ id: cve }], fixAction: '', fixedVersions: [] }); } catch (e) { x = null; }
-      if (!x || x.kind === 'na' || x.cleared) continue;
-      if (x.kind === 'upgrade' && x.minVersion) { const f = found.get(cve); if (f) { f.tier = 'both'; f.fix = f.fix || x.minVersion; } else found.set(cve, { id: cve, tier: 'advisory', fix: x.minVersion, ack: null, advisory: adv }); }
-      else if (!found.has(cve)) unverified++;
+      if (_advApplicability(s, adv).applies !== true) { outcomes[cve] = 'notapplicable'; continue; }
+      const rec = ADVISORY_RES[adv];
+      let verdict = _kevBmcVerdict(s, rec);
+      if (!verdict) {
+        let x = null; try { x = riskResolution(s, { advisoryId: adv, advisoryUrl: '', description: '', cveDetails: [{ id: cve }], fixAction: '', fixedVersions: [] }); } catch (e) { x = null; }
+        verdict = !x || x.kind === 'na' ? { kind: 'na' } : x.cleared ? { kind: 'cleared' } : (x.kind === 'upgrade' && x.minVersion) ? { kind: 'exposed', fix: x.minVersion } : { kind: 'nofix' };
+        if (verdict.kind === 'nofix') {   // every fixed release the advisory names for this product is on an older major release than the system runs
+          const fam = _platformFamily(s), mine = _dfVerParse(s.ontapVersion || s.osVersion || ''), cls = fam === 'ontap' ? 'ontap' : fam === 'eseries' ? 'santricity' : fam === 'storagegrid' ? 'storagegrid' : '';
+          const vs = (rec.fixes || []).filter(f => cls && _advClass(f.product) === cls && !f.wontfix).flatMap(f => (f.versions || []).map(_dfVerParse).filter(Boolean));
+          if (mine && vs.length && vs.every(v => v.major < mine.major)) verdict = { kind: 'older' };
+        }
+      }
+      if (verdict.kind === 'exposed') { const f = found.get(cve); if (f) { f.tier = 'both'; f.fix = f.fix || verdict.fix; } else found.set(cve, { id: cve, tier: 'advisory', fix: verdict.fix, ack: null, advisory: adv }); outcomes[cve] = 'exposed'; }
+      else { outcomes[cve] = verdict.kind; if ((verdict.kind === 'nofix' || verdict.kind === 'unknown') && !found.has(cve)) unverified++; }
     }
   }
-  const v = { hits: [...found.values()], unverified };
+  const v = { hits: [...found.values()], unverified, outcomes };
   _kevMemo.set(s.serialNumber, { k: key, v });
   return v;
 }
 function _kevExposure(systems) {
-  const rows = new Map(); let unverified = 0, exposedSystems = new Set();
+  const rows = new Map(), others = new Map(); let unverified = 0; const exposedSystems = new Set();
   (systems || []).forEach(s => {
     const r = _kevCvesOfSystem(s); unverified += r.unverified;
     r.hits.forEach(h => {
@@ -21814,9 +21866,27 @@ function _kevExposure(systems) {
       if (h.tier === 'advisory') row.advisoryOnly++; else row.aiq++;
       exposedSystems.add(s.serialNumber);
     });
+    Object.entries(r.outcomes).forEach(([cve, o]) => { let c = others.get(cve); if (!c) { c = { id: cve, cleared: 0, nofix: 0, unknown: 0, na: 0, notapplicable: 0, exposed: 0, older: 0 }; others.set(cve, c); } c[o] = (c[o] || 0) + 1; });
   });
   const list = [...rows.values()].sort((a, b) => b.systems.length - a.systems.length || a.id.localeCompare(b.id));
-  return { rows: list, systems: exposedSystems.size, unverified, catalog: _kevCves ? _kevCves.size : 0 };
+  // every other KEV CVE that NetApp has an advisory for: the reason it is not counted
+  const notCounted = [];
+  if (typeof ADVISORY_RES !== 'undefined' && _kevCves) for (const [cve, e] of _kevCves) {
+    if (rows.has(cve)) continue;
+    const adv = _advIdFromCve(cve); if (!adv) continue;
+    const rec = ADVISORY_RES[adv], c = others.get(cve) || { cleared: 0, nofix: 0, unknown: 0, na: 0, notapplicable: 0, older: 0 };
+    const prods = rec ? [...new Set(_advProducts(rec).map(p => String(p).replace(/^NetApp\s+/i, '').replace(/ - .*$/, '').trim()))] : [];
+    let why;
+    if (!rec) why = "NetApp's advisory data for it has not been fetched yet";
+    else if (!prods.length) why = 'the advisory lists no affected product yet (still being investigated)';
+ else if (c.older && !c.nofix && !c.unknown && !c.cleared) why = `the advisory's fixed releases are all on older release lines than the ${c.older} system${c.older !== 1 ? 's' : ''} running an affected product, so it cannot concern them`;
+    else if (c.nofix || c.unknown) why = `${c.nofix + c.unknown} system${c.nofix + c.unknown !== 1 ? 's' : ''} run a product the advisory lists, but it publishes no fixed release for it, so exposure cannot be confirmed`;
+    else if (c.cleared) why = `already fixed: the ${c.cleared} system${c.cleared !== 1 ? 's' : ''} running an affected product are on or past the fixed release`;
+    else why = 'no system in scope runs a product the advisory lists';
+    notCounted.push({ id: cve, name: [e.vendorProject, e.product].filter(Boolean).join(' '), ntap: adv, products: prods, why, kind: !rec || !prods.length ? 'nodata' : (c.nofix || c.unknown) ? 'unverified' : (c.cleared || c.older) ? 'fixed' : 'other' });
+  }
+  notCounted.sort((a, b) => ({ unverified: 0, nodata: 1, fixed: 2, other: 3 }[a.kind] - { unverified: 0, nodata: 1, fixed: 2, other: 3 }[b.kind]) || a.id.localeCompare(b.id));
+  return { rows: list, systems: exposedSystems.size, unverified, catalog: _kevCves ? _kevCves.size : 0, notCounted };
 }
 function _kevDueText(due) {
   if (!due) return '';
@@ -21859,7 +21929,11 @@ function renderKevCard() {
     });
     h += `</tbody></table>`;
   }
-  if (ex.unverified) h += `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:8px;">${ex.unverified} further advisory match${ex.unverified !== 1 ? 'es' : ''} are not counted: NetApp's advisory names the CVE but publishes no fixed release for that system's product, so exposure cannot be confirmed (for example advisories about other NetApp products).</div>`;
+  if (ex.notCounted.length) {
+    const open = !!(state.kevOpen && state.kevOpen.__others), groups = [['unverified', 'Cannot be confirmed'], ['nodata', 'No usable advisory data'], ['fixed', 'Already fixed, or only ever fixed on older release lines'], ['other', 'No system in scope runs an affected product']];
+    h += `<div style="margin-top:10px;font-size:0.76rem;"><a href="#" onclick="_kevOpenToggle('__others');return false;">${open ? 'Hide' : 'Show'} the ${ex.notCounted.length} other known exploited CVE${ex.notCounted.length !== 1 ? 's' : ''} NetApp has advisories for, and why they are not counted</a></div>`;
+    if (open) h += `<div style="max-height:340px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:6px 10px;margin-top:6px;">` + groups.map(([k, label]) => { const g = ex.notCounted.filter(x => x.kind === k); return g.length ? `<div style="font-size:0.72rem;font-weight:700;margin:8px 0 3px;">${label} (${g.length})</div>` + g.map(x => `<div style="font-size:0.72rem;margin-bottom:3px;"><b>${esc2(x.id)}</b> <span style="color:var(--text-muted);">${esc2(x.name)} · ${esc2(String(x.ntap).toUpperCase())}${x.products.length ? ' · ' + esc2(x.products.slice(0, 3).join(', ')) + (x.products.length > 3 ? ' and ' + (x.products.length - 3) + ' more' : '') : ''}</span><br><span style="color:var(--text-secondary);">${esc2(x.why)}.</span></div>`).join('') : ''; }).join('') + `</div>`;
+  }
   card.innerHTML = h;
 }
 function _dfKevExposureText(systems, heading) {
@@ -21870,7 +21944,7 @@ function _dfKevExposureText(systems, heading) {
   o += `**Finding:** ${ex.rows.length} known exploited CVE${ex.rows.length !== 1 ? 's' : ''} on ${ex.systems} system${ex.systems !== 1 ? 's' : ''}. A system is listed only when Active IQ has reported the CVE on it, or NetApp's advisory lists a fixed release for its product and the installed release is below the fix on its line.\n\n`;
   o += '| CVE | Product | Added to KEV | Federal due date | Systems | Customers | Evidence | Fix on the system\'s own line |\n|---|---|---|---|---|---|---|---|\n' + ex.rows.map(r => `| ${cell(r.id)} | ${cell(r.name)} | ${cell(r.added)} | ${cell(_kevDueText(r.due))} | ${r.systems.length} | ${r.customers.size} | ${r.aiq ? r.aiq + ' reported by Active IQ' : ''}${r.aiq && r.advisoryOnly ? '; ' : ''}${r.advisoryOnly ? r.advisoryOnly + " confirmed by NetApp's advisory" : ''} | ${cell([...new Set(r.systems.map(x => x.fix).filter(Boolean))].join(', '))} |`).join('\n') + '\n\n';
   ex.rows.forEach(r => { o += `**${r.id}**${r.action ? ' (CISA required action: ' + r.action + ')' : ''}\n\n| System | Customer | Installed release | Fix | Evidence |\n|---|---|---|---|---|\n` + r.systems.map(x => `| ${cell(x.name)} | ${cell(x.customer)} | ${cell(x.release)} | ${cell(x.fix)} | ${x.tier === 'advisory' ? "NetApp advisory" : 'Active IQ'}${x.ack ? ', acknowledged' : ''} |`).join('\n') + '\n\n'; });
-  if (ex.unverified) o += `${ex.unverified} further advisory matches are not counted: the advisory names the CVE but publishes no fixed release for that system's product, so exposure cannot be confirmed.\n\n`;
+  if (ex.notCounted.length) o += `**Other known exploited CVEs that NetApp has advisories for, and why they are not counted (${ex.notCounted.length}):**\n\n| CVE | Advisory | Products | Why it is not counted |\n|---|---|---|---|\n` + ex.notCounted.map(x => `| ${cell(x.id)} | ${cell(String(x.ntap).toUpperCase())} | ${cell(x.products.slice(0, 3).join(', '))} | ${cell(x.why)} |`).join('\n') + '\n\n';
   return o;
 }
 

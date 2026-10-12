@@ -23,7 +23,7 @@
     },
     {
       "class": "other",
-      "pattern": "ontap (tools|select|mediator|metrocluster|deploy)|snap|trident|cloud|bluexp|hci|element|brocade|cisco|broadcom|vsc|virtual storage|oncommand|workflow|data classification|keystone|astra"
+      "pattern": "ontap (tools|select|mediator|metrocluster|deploy|edge)|antivirus connector|smi-s|manageability sdk|vasa provider|operating in 7-mode|snap|trident|cloud|bluexp|hci|element|brocade|cisco|broadcom|vsc|virtual storage|oncommand|workflow|data classification|keystone|astra"
     },
     {
       "class": "ontap",
