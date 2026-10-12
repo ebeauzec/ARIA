@@ -45,7 +45,7 @@ _VIEWER_GET_PREFIXES = (
     "/api/auth/me", "/api/library/status", "/api/library/search", "/api/library/doc",   # read-only: freshness, search and viewing of the reference library
 )
 _VIEWER_GET_BLOCKED = ("/api/bulletins/scan", "/api/enrich/scan")
-_VIEWER_POSTS = ("/api/history/trend",)
+_VIEWER_POSTS = ("/api/history/trend", "/api/history/changes")
 
 
 SETTINGS_NAME = "aria_settings.json"

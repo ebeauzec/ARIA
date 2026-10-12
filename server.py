@@ -1204,6 +1204,11 @@ def _capture_snapshots(db, result):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         now_iso = datetime.now(timezone.utc).isoformat()
         systems = result.get("systems") or []
+        wl_of = {}
+        for w in (result.get("watchlists") or []):
+            wid = str(w.get("watchListId") or w.get("watchlistId") or w.get("id") or "")
+            for sn in (w.get("systemSerials") or w.get("system_serials") or []):
+                wl_of.setdefault(str(sn), set()).add(wid)
         rows = []
         for s in systems:
             serial = s.get("serialNumber")
@@ -1221,7 +1226,12 @@ def _capture_snapshots(db, result):
                 if str(c.get("status") or "").upper() not in ("CLOSED", "CANCELLED")
                 and str(c.get("highestPriority") or c.get("priority") or "").upper().startswith(("S1", "P1", "S2", "P2", "CRITICAL", "HIGH"))
             )
+            _fw = s.get("systemFirmware")
+            _fw = _fw[0] if isinstance(_fw, list) and _fw else _fw
             snap = {
+                "riskIds": sorted({str(r.get("riskId")) for r in risks if r.get("riskId") is not None}),
+                "watchlists": sorted(wl_of.get(str(serial), set())),
+                "spVersion": (_fw or {}).get("currentVersion") if isinstance(_fw, dict) else None,
                 "systemName": s.get("systemName", ""),
                 "customerName": s.get("customerName", ""),
                 "platform": s.get("platform", ""),
@@ -1403,6 +1413,139 @@ def _get_fleet_trend(db, days=90, customer_name=None, serials=None):
         d["openCriticalCases"] += int(rec.get("openCriticalCases") or 0)
         d["systemCount"] += 1
     return sorted(by_date.values(), key=lambda x: x["date"])
+
+
+def _changes_between(db, days=30, customer_name=None, serials=None):
+    """Itemised comparison of the latest daily snapshot with the one nearest to `days` days earlier: which systems appeared or went away, and for every system
+    that stayed, what moved (OS and SP/BMC version, risk counts, the risks that appeared or went away, cases, contract, ARP / HA / SnapMirror flags).
+    The risk lists need risk ids in both snapshots; snapshots from before they were recorded only give counts, and the result says so."""
+    wanted = set(str(x) for x in serials) if serials is not None else None
+    if wanted is not None and not wanted:
+        return {"ok": True, "available": False, "reason": "No systems in scope."}
+    dates = [r[0] for r in db.execute("SELECT DISTINCT snapshot_date FROM system_snapshots ORDER BY snapshot_date").fetchall()]
+    if len(dates) < 2:
+        return {"ok": True, "available": False, "reason": "Fewer than two daily snapshots exist yet.", "snapshotDates": len(dates)}
+    to_date = dates[-1]
+    target = (datetime.strptime(to_date, "%Y-%m-%d") - timedelta(days=int(days))).strftime("%Y-%m-%d")
+    older = [d for d in dates if d <= target]
+    if len(dates) < 2:
+        return {"ok": True, "available": False, "reason": "Only one snapshot date exists.", "snapshotDates": len(dates)}
+
+    def load(date):
+        out = {}
+        for serial, cust, snap in db.execute("SELECT serial_number, customer_name, snapshot_json FROM system_snapshots WHERE snapshot_date = ?", (date,)):
+            if wanted is not None and serial not in wanted:
+                continue
+            if customer_name and cust != customer_name:
+                continue
+            try:
+                out[serial] = json.loads(snap)
+            except Exception:
+                pass
+        return out
+    new = load(to_date)
+
+    def _tot0(rec):
+        rc = rec.get("riskCounts") or {}
+        return sum(int(rc.get(k) or 0) for k in ("critical", "high", "medium", "low"))
+
+    def _comparable(o_):
+        cmp_ = [s for s in new if s in o_]
+        if not new or not o_ or len(cmp_) / len(new) < 0.85 or abs(len(new) - len(o_)) / len(new) > 0.10:
+            return False
+        return (sum(1 for s in cmp_ if (_tot0(o_[s]) == 0) != (_tot0(new[s]) == 0)) / len(cmp_)) <= 0.25
+    t_ord = datetime.strptime(target, "%Y-%m-%d")
+    cands = sorted((d for d in dates if d != to_date), key=lambda d: abs((datetime.strptime(d, "%Y-%m-%d") - t_ord).days))
+    from_date, old = None, None
+    for d in cands[:40]:
+        o_ = load(d)
+        if _comparable(o_) and abs((datetime.strptime(d, "%Y-%m-%d") - t_ord).days) <= max(5, int(days) // 2):
+            from_date, old = d, o_
+            break
+    if from_date is None:     # nothing comparable near the window: use the nearest earlier snapshot and let the notes say how far it can be trusted
+        from_date = older[-1] if older else dates[0]
+        if from_date == to_date:
+            from_date = dates[0]
+        old = load(from_date)
+
+    def pair(x, y):
+        return {"from": x, "to": y} if x != y else None
+    changed, added, removed = [], [], []
+    totals = {"osChanged": 0, "spChanged": 0, "newRisks": 0, "resolvedRisks": 0, "contractChanged": 0, "arpChanged": 0, "riskNet": {"critical": 0, "high": 0, "medium": 0, "low": 0}}
+    for serial, n in new.items():
+        o = old.get(serial)
+        if o is None:
+            added.append({"serial": serial, "name": n.get("systemName"), "customer": n.get("customerName")})
+            continue
+        row = {"serial": serial, "name": n.get("systemName"), "customer": n.get("customerName")}
+        for key, a_, b_ in (("os", "osVersion", "osVersion"), ("sp", "spVersion", "spVersion"), ("cases", "caseCount", "caseCount"), ("openCriticalCases", "openCriticalCases", "openCriticalCases"),
+                           ("contractEnd", "contractEndDate", "contractEndDate"), ("contractActive", "contractActive", "contractActive"), ("arp", "isARPEnabled", "isARPEnabled"),
+                           ("ha", "isHAConfigured", "isHAConfigured"), ("snapMirror", "snapMirrorCount", "snapMirrorCount")):
+            if key == "sp" and (o.get(a_) is None or n.get(b_) is None):
+                continue   # older snapshots did not record the SP/BMC version: absence is not a change
+            d = pair(o.get(a_), n.get(b_))
+            if d:
+                row[key] = d
+        orc, nrc = o.get("riskCounts") or {}, n.get("riskCounts") or {}
+        rc = {}
+        for sev in ("critical", "high", "medium", "low"):
+            x, y = int(orc.get(sev) or 0), int(nrc.get(sev) or 0)
+            if x != y:
+                rc[sev] = {"from": x, "to": y}
+                totals["riskNet"][sev] += y - x
+        if rc:
+            row["riskCounts"] = rc
+        if "riskIds" in o and "riskIds" in n:
+            oi, ni = set(o["riskIds"]), set(n["riskIds"])
+            if ni - oi:
+                row["newRiskIds"] = sorted(ni - oi)
+            if oi - ni:
+                row["resolvedRiskIds"] = sorted(oi - ni)
+            totals["newRisks"] += len(ni - oi)
+            totals["resolvedRisks"] += len(oi - ni)
+        if "watchlists" in o and "watchlists" in n and set(o["watchlists"]) != set(n["watchlists"]):
+            row["watchlists"] = {"from": o["watchlists"], "to": n["watchlists"]}
+            totals["scopeChanged"] = totals.get("scopeChanged", 0) + 1
+        if len(row) > 3:
+            changed.append(row)
+            totals["osChanged"] += 1 if "os" in row else 0
+            totals["spChanged"] += 1 if "sp" in row else 0
+            totals["contractChanged"] += 1 if ("contractEnd" in row or "contractActive" in row) else 0
+            totals["arpChanged"] += 1 if "arp" in row else 0
+    for serial, o in old.items():
+        if serial not in new:
+            removed.append({"serial": serial, "name": o.get("systemName"), "customer": o.get("customerName")})
+    both_ids = any("riskIds" in v for v in old.values()) and any("riskIds" in v for v in new.values())
+    # How far the two snapshots can be compared. Earlier harvests covered different sets of systems, and some stored no risks at all (a harvest that lost its
+    # risk list reads as "every risk resolved", the next full one as "every risk new"), so a difference is only reported as a change when the data supports it.
+    compared = [s for s in new if s in old]
+    overlap = (len(compared) / len(new)) if new else 0.0
+    size_gap = abs(len(new) - len(old)) / max(len(new), 1)
+    def _tot(rec):
+        rc = rec.get("riskCounts") or {}
+        return sum(int(rc.get(k) or 0) for k in ("critical", "high", "medium", "low"))
+    gap_flips = sum(1 for s in compared if (_tot(old[s]) == 0) != (_tot(new[s]) == 0))
+    risk_gap = (gap_flips / len(compared)) > 0.25 if compared else False
+    notes = []
+    if overlap < 0.85 or size_gap > 0.10:
+        notes.append(f"The earlier snapshot ({from_date}) held {len(old)} systems and the latest ({to_date}) holds {len(new)}; {round(overlap * 100)}% of the latest systems are in both. Systems listed as added or removed mostly reflect which accounts and watchlists each harvest covered, not real changes.")
+    if risk_gap:
+        notes.append("In many systems one of the two snapshots has no risks at all while the other has some, which is what an incomplete harvest looks like. Risk count changes are not reported for this window.")
+    if not risk_gap and compared:
+        _o = sum(_tot(old[s]) for s in compared); _n = sum(_tot(new[s]) for s in compared)
+        if _o and abs(_n - _o) / _o > 0.25:
+            notes.append(f"The total number of risks on the systems present in both snapshots moved from {_o} to {_n}. A shift this large usually means new advisories were published, or the watchlists the harvest used changed between the two dates; compare it with the list of newly raised risks before reading it as a change in the systems.")
+    if not both_ids:
+        notes.append("Risk lists (which risks appeared or went away) are recorded from 12 October 2026 onward; older snapshots hold counts only.")
+    if risk_gap:
+        for r_ in changed:
+            r_.pop("riskCounts", None)
+        changed[:] = [r_ for r_ in changed if len(r_) > 3]
+        totals["riskNet"] = None
+    return {"ok": True, "available": True, "coverage": round(overlap, 3), "addedRemovedReliable": not (overlap < 0.85 or size_gap > 0.10), "riskCountsReliable": not risk_gap, "notes": notes, "fromDate": from_date, "toDate": to_date, "requestedDays": int(days),
+            "actualDays": (datetime.strptime(to_date, "%Y-%m-%d") - datetime.strptime(from_date, "%Y-%m-%d")).days,
+            "partialWindow": not bool(older), "snapshotDates": len(dates), "riskListsAvailable": both_ids,
+            "systemsCompared": sum(1 for s in new if s in old), "added": added, "removed": removed, "changed": changed, "totals": totals}
 
 
 def _populate_reporting_tables(db, account_id, account_label, result):
@@ -9804,6 +9947,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_bulletins_scan()
         elif self.path.startswith('/api/bulletins'):
             self.handle_bulletins_get()
+        elif self.path.startswith('/api/history/changes'):
+            self.handle_changes()
         elif self.path.startswith('/api/history/trend'):
             self.handle_fleet_trend()
         elif self.path.startswith('/api/history/'):
@@ -10204,6 +10349,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_asup_associate()
         elif self.path == '/api/history/trend':
             self.handle_fleet_trend_post()
+        elif self.path == '/api/history/changes':
+            self.handle_changes()
         elif self.path == '/api/history/annotate':
             self.handle_history_annotate()
         elif self.path == '/api/webhook/test':
@@ -10422,6 +10569,27 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"  [HISTORY] Trend (scoped) error: {e}", flush=True)
             self._json_response(500, {"ok": False, "error": str(e), "trend": []})
+
+    def handle_changes(self):
+        """GET /api/history/changes?days=30[&customer=Name] and POST {days, serials:[...]}: the itemised comparison from _changes_between()."""
+        try:
+            if self.command == 'POST':
+                length = int(self.headers.get('Content-Length') or 0)
+                body = json.loads(self.rfile.read(length).decode('utf-8') or '{}')
+                days, customer, serials = int(body.get('days') or 30), None, body.get('serials') or []
+            else:
+                from urllib.parse import urlparse, parse_qs
+                params = parse_qs(urlparse(self.path).query)
+                days, customer, serials = int((params.get('days') or ['30'])[0]), (params.get('customer') or [None])[0], None
+            db = _init_db()
+            try:
+                res = _changes_between(db, days=days, customer_name=customer, serials=serials)
+            finally:
+                db.close()
+            self._json_response(200, res)
+        except Exception as e:
+            print(f"  [HISTORY] Changes error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
 
     def handle_fleet_trend(self):
         """GET /api/history/trend?days=90[&customer=Name] — fleet-wide or

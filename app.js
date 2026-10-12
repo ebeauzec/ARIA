@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.309";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.310";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.310",
+    date: "12 October 2026",
+    title: "What Changed Since An Earlier Date",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New \"What changed\" card on the Overview tab, with a 7, 14, 30, 60 or 90 day window, for whatever scope is selected. Newly raised risks come from the live data (Active IQ dates every risk on every system), listed by risk with the number of systems. Under it, a comparison of the latest daily snapshot with an earlier one: OS and SP/BMC version changes, contract and ransomware-protection flag changes, risks that went away, and watchlist moves.",
+          "The comparison is honest about its data. Earlier harvests covered different systems and watchlists, and some stored no risks, so it picks a snapshot with comparable coverage when one exists and says how many systems are in both. Added or removed systems and risk count changes are reported only when the coverage supports it; otherwise a note says why.",
+          "Daily snapshots now also record each system's risk ids, SP/BMC version and watchlists, so \"risks resolved\" and \"moved between watchlists\" fill in from 12 October 2026 onward.",
+          "The Value report carries the same section, \"Progress, What Changed\", with the complete list of newly raised risks.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.309",
     date: "12 October 2026",
@@ -12664,6 +12682,100 @@ function downloadPortfolioCSV() {
 // manually sort/filter the table to find the systems actually worth looking
 // at first. This surfaces the worst few systems directly, each one click
 // away from Technical Audit via focusOnSystem().
+// ── What changed ─────────────────────────────────────────────────────────────
+// Two sources, kept apart on purpose. "Newly raised risks" comes from the live data: every risk carries the date Active IQ first raised it on the system, so
+// it is itemised and does not depend on how complete earlier harvests were. The rest compares today's daily snapshot with an earlier one (/api/history/changes)
+// and says how far that comparison can be trusted (different harvests covered different systems and watchlists).
+const _chgCache = new Map(), _chgInFlight = new Set();
+function _chgKey(days, serials) { const s = serials.slice().sort(); return days + '|' + s.length + '|' + (s[0] || '') + '|' + (s[s.length - 1] || ''); }
+function _chgData(days, serials) {
+  const key = _chgKey(days, serials);
+  if (_chgCache.has(key)) return _chgCache.get(key);
+  if (!_chgInFlight.has(key)) {
+    _chgInFlight.add(key);
+    fetch('/api/history/changes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days, serials }) })
+      .then(r => r.ok ? r.json() : null).then(j => { _chgCache.set(key, j && j.ok ? j : null); })
+      .catch(() => { _chgCache.set(key, null); })
+      .finally(() => { _chgInFlight.delete(key); if (document.getElementById('overviewChangesCard')) renderChangesCard(); });
+  }
+  return undefined;
+}
+// Risks first raised inside the window, grouped by risk, for the given systems.
+function _chgNewRisks(systems, days) {
+  const cutoff = Date.now() - days * 86400000, groups = new Map(), bySev = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }, sysSet = new Set();
+  (systems || []).forEach(s => (s.risks || []).forEach(r => {
+    const t = Date.parse(r.firstSeen || ''); if (isNaN(t) || t < cutoff) return;   // the date Active IQ first raised the risk on this system
+    const sev = String(r.severity || '').toUpperCase(); if (sev in bySev) bySev[sev]++;
+    sysSet.add(s.serialNumber);
+    let g = groups.get(r.id); if (!g) { g = { id: r.id, title: String(r.description || ('Risk ' + r.id)).slice(0, 140), sev, systems: new Set() }; groups.set(r.id, g); }
+    g.systems.add(s.systemName || s.serialNumber);
+  }));
+  const rank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+  return { bySev, systems: sysSet.size, total: Object.values(bySev).reduce((a, b) => a + b, 0), groups: [...groups.values()].sort((x, y) => (rank[x.sev] ?? 9) - (rank[y.sev] ?? 9) || y.systems.size - x.systems.size) };
+}
+function _chgRiskTitles(systems) { const m = {}; (systems || []).forEach(s => (s.risks || []).forEach(r => { if (r.id != null && !m[r.id]) m[r.id] = { title: String(r.description || ('Risk ' + r.id)).slice(0, 140), sev: String(r.severity || '').toUpperCase() }; })); return m; }
+// The same two views as the Overview card, as document text: newly raised risks (live, complete list) and the snapshot comparison with its data-quality notes.
+// The comparison arrives from the server asynchronously, so a first generation for a scope may not have it yet (the Overview card requests it for its own scope).
+function _dfChangesText(systems, heading, days) {
+  days = days || 30;
+  const md = /^#/.test(heading || ''), cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  const nr = _chgNewRisks(systems, days), data = _chgData(days, (systems || []).map(s => s.serialNumber).filter(Boolean));
+  let o = `\n${heading || 'WHAT CHANGED'}\n\n`;
+  if (nr.total) {
+    o += `**Finding:** ${nr.total} risk${nr.total !== 1 ? 's were' : ' was'} first raised by Active IQ in the last ${days} days, on ${nr.systems} system${nr.systems !== 1 ? 's' : ''} (` + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].filter(k => nr.bySev[k]).map(k => `${nr.bySev[k]} ${k.toLowerCase()}`).join(', ') + `).\n\n`;
+    o += '| Severity | Risk | Systems |\n|---|---|---|\n' + nr.groups.map(g => `| ${cell(g.sev.toLowerCase())} | ${cell(g.title)} | ${g.systems.size} |`).join('\n') + '\n\n';
+  } else o += `**Finding:** no risk was first raised on these systems in the last ${days} days.\n\n`;
+  if (data && data.available) {
+    const t = data.totals || {};
+    o += `Compared with the daily snapshot of ${data.fromDate} (${data.systemsCompared} systems in both): ${t.osChanged || 0} changed OS version, ${t.spChanged || 0} changed SP/BMC version, ${t.contractChanged || 0} changed contract, ${t.arpChanged || 0} changed ransomware-protection flag` + (data.riskListsAvailable ? `, ${t.resolvedRisks || 0} risks resolved` : '') + `.\n\n`;
+    const rows = (data.changed || []).filter(c => c.os || c.sp);
+    if (rows.length) o += '| System | OS version | SP/BMC version |\n|---|---|---|\n' + rows.map(c => `| ${cell(c.name || c.serial)} | ${c.os ? cell(c.os.from) + ' -> ' + cell(c.os.to) : '-'} | ${c.sp ? cell(c.sp.from) + ' -> ' + cell(c.sp.to) : '-'} |`).join('\n') + '\n\n';
+    (data.notes || []).forEach(n => { o += `Note: ${n}\n\n`; });
+  }
+  return o;
+}
+function renderChangesCard() {
+  const card = document.getElementById('overviewChangesCard'); if (!card) return;
+  const systems = getFilteredSystems(true) || [];
+  if (!systems.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const days = state.changesDays || 30, esc2 = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const sevCol = { CRITICAL: 'var(--status-critical)', HIGH: 'var(--status-warning)', MEDIUM: '#eab308', LOW: 'var(--text-muted)' };
+  const nr = _chgNewRisks(systems, days), data = _chgData(days, systems.map(s => s.serialNumber));
+  const btn = d => `<button onclick="state.changesDays=${d};renderChangesCard()" style="padding:3px 10px;border-radius:12px;border:1px solid var(--border-color);background:${d === days ? 'var(--accent-cyan)' : 'transparent'};color:${d === days ? '#000' : 'var(--text-secondary)'};font-size:0.72rem;cursor:pointer;">${d}d</button>`;
+  let h = `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;"><div class="section-title" style="margin:0;">What changed</div><div style="display:flex;gap:6px;align-items:center;"><span style="font-size:0.72rem;color:var(--text-muted);">Last</span>${[7, 14, 30, 60, 90].map(btn).join('')}</div></div>`;
+  // 1. newly raised risks (live)
+  h += `<div style="font-size:0.78rem;font-weight:600;margin:4px 0;">Newly raised risks <span style="font-weight:400;color:var(--text-muted);">(first raised by Active IQ in the last ${days} days)</span></div>`;
+  if (!nr.total) h += `<div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">No risk was first raised on these systems in the last ${days} days.</div>`;
+  else {
+    h += `<div style="font-size:0.78rem;margin-bottom:6px;">${nr.total} risk${nr.total !== 1 ? 's' : ''} on ${nr.systems} system${nr.systems !== 1 ? 's' : ''}: ` + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].filter(k => nr.bySev[k]).map(k => `<span style="color:${sevCol[k]};font-weight:600;">${nr.bySev[k]} ${k.toLowerCase()}</span>`).join(' · ') + `</div>`;
+    const top = state.changesShowAll ? nr.groups : nr.groups.slice(0, 8);
+    h += `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;margin-bottom:6px;">` + top.map(g => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:4px 6px;color:${sevCol[g.sev] || 'inherit'};font-weight:600;width:70px;">${esc2(g.sev.toLowerCase())}</td><td style="padding:4px 6px;">${esc2(g.title)}</td><td style="padding:4px 6px;text-align:right;color:var(--text-muted);white-space:nowrap;">${g.systems.size} system${g.systems.size !== 1 ? 's' : ''}</td></tr>`).join('') + `</table>`;
+    if (nr.groups.length > 8) h += `<a href="#" onclick="state.changesShowAll=!state.changesShowAll;renderChangesCard();return false;" style="font-size:0.72rem;">${state.changesShowAll ? 'Show fewer' : 'Show all ' + nr.groups.length + ' risks'}</a>`;
+  }
+  // 2. snapshot comparison
+  h += `<div style="font-size:0.78rem;font-weight:600;margin:14px 0 4px;border-top:1px solid var(--border-color);padding-top:10px;">Compared with an earlier daily snapshot</div>`;
+  if (data === undefined) h += `<div style="font-size:0.76rem;color:var(--text-muted);">Loading the comparison…</div>`;
+  else if (!data || !data.available) h += `<div style="font-size:0.76rem;color:var(--text-muted);">${esc2((data && data.reason) || 'No snapshot history is available yet.')} ARIA stores one snapshot per system per harvest day, so this fills in as the days pass.</div>`;
+  else {
+    const t = data.totals || {}, titles = _chgRiskTitles(systems);
+    const tile = (n, label) => `<div style="padding:8px 12px;border:1px solid var(--border-color);border-radius:6px;min-width:110px;"><div style="font-size:1.1rem;font-weight:700;">${n}</div><div style="font-size:0.68rem;color:var(--text-muted);">${label}</div></div>`;
+    h += `<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:8px;">${esc2(data.fromDate)} to ${esc2(data.toDate)} (${data.actualDays} days${data.partialWindow ? ', the longest history available' : ''}); ${data.systemsCompared} systems present in both.</div>`;
+    h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">${tile(t.osChanged || 0, 'OS version changed')}${tile(t.spChanged || 0, 'SP/BMC version changed')}${tile(t.contractChanged || 0, 'Contract changed')}${tile(t.arpChanged || 0, 'Ransomware protection flag changed')}${data.riskListsAvailable ? tile(t.resolvedRisks || 0, 'Risks resolved') + tile(t.newRisks || 0, 'Risks appeared (snapshots)') : ''}${t.scopeChanged ? tile(t.scopeChanged, 'Moved between watchlists') : ''}</div>`;
+    if (t.riskNet && data.riskCountsReliable) h += `<div style="font-size:0.76rem;margin-bottom:8px;">Net change in risk counts on those systems: ` + ['critical', 'high', 'medium', 'low'].map(k => `<span style="color:${sevCol[k.toUpperCase()]};">${t.riskNet[k] > 0 ? '+' : ''}${t.riskNet[k]} ${k}</span>`).join(' · ') + `</div>`;
+    const rows = (data.changed || []).filter(c => c.os || c.sp || c.contractEnd || c.contractActive || c.arp || c.resolvedRiskIds || c.watchlists);
+    if (rows.length) {
+      const shown = state.changesShowAllSys ? rows : rows.slice(0, 15);
+      const pr = (x, f) => x ? `${esc2(x.from == null ? '—' : x.from)} → ${esc2(x.to == null ? '—' : x.to)}` : '';
+      h += `<table style="width:100%;border-collapse:collapse;font-size:0.74rem;"><thead><tr style="text-align:left;color:var(--text-muted);"><th style="padding:4px 6px;">System</th><th>OS</th><th>SP/BMC</th><th>Contract end</th><th>Resolved risks</th><th>Other</th></tr></thead><tbody>` + shown.map(c => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:4px 6px;">${esc2(c.name || c.serial)}</td><td>${pr(c.os)}</td><td>${pr(c.sp)}</td><td>${c.contractEnd ? esc2(String(c.contractEnd.from || '—').slice(0, 10)) + ' → ' + esc2(String(c.contractEnd.to || '—').slice(0, 10)) : ''}</td><td>${(c.resolvedRiskIds || []).map(i => esc2((titles[i] || {}).title || ('Risk ' + i))).slice(0, 3).join('; ')}${(c.resolvedRiskIds || []).length > 3 ? ' +' + ((c.resolvedRiskIds.length) - 3) + ' more' : ''}</td><td>${[c.arp ? 'ransomware protection ' + (c.arp.to ? 'on' : 'off') : '', c.contractActive ? 'contract ' + (c.contractActive.to ? 'active' : 'inactive') : '', c.watchlists ? 'watchlists changed' : ''].filter(Boolean).join('; ')}</td></tr>`).join('') + `</tbody></table>`;
+      if (rows.length > 15) h += `<a href="#" onclick="state.changesShowAllSys=!state.changesShowAllSys;renderChangesCard();return false;" style="font-size:0.72rem;">${state.changesShowAllSys ? 'Show fewer' : 'Show all ' + rows.length + ' systems'}</a>`;
+    }
+    if (data.addedRemovedReliable && (data.added.length || data.removed.length)) h += `<div style="font-size:0.74rem;margin-top:6px;">${data.added.length} system${data.added.length !== 1 ? 's' : ''} appeared and ${data.removed.length} no longer appear${data.removed.length !== 1 ? '' : 's'} in the data.</div>`;
+    (data.notes || []).forEach(n => { h += `<div style="font-size:0.7rem;color:#f59e0b;margin-top:6px;">${esc2(n)}</div>`; });
+  }
+  card.innerHTML = h;
+}
+
 function renderNeedsAttention() {
   const card = document.getElementById("overviewNeedsAttentionCard");
   if (!card) return;
@@ -31044,7 +31156,7 @@ Reference: mysupport.netapp.com/matrix (NetApp Interoperability Matrix Tool)
     // a TAM actually last spoke with or met this customer. ARIA has no calendar,
     // CRM, or meeting-log integration of any kind; don't imply one.
     customerReport: _dfInsertNcf(compileCustomerReport(targetSystems, allRisks, expiringContracts, allSupportCases, scopeTitle), /## 5\. Monitoring & Reliability/, _dfNonCveFindingsText(targetSystems, { prefix: '4a. ', md: true })) + (_riskTrendText ? _dfTrendText(_trendCustomer, '## Fleet Health, Risk Trend (30/60/90 Days)') : ''),
-    valueReport: compileValueReport(targetSystems, allRisks, allSupportCases, scopeTitle) + (_riskTrendText ? _dfTrendText(_trendCustomer, '## Progress, Risk Trend (30/60/90 Days)') : ''),
+    valueReport: compileValueReport(targetSystems, allRisks, allSupportCases, scopeTitle) + (_riskTrendText ? _dfTrendText(_trendCustomer, '## Progress, Risk Trend (30/60/90 Days)') : '') + _dfChangesText(targetSystems, '## Progress, What Changed (Last 30 Days)', 30),
     _enrichmentCounts: enrichSections._counts || {},
     _fleetProfile: enrichSections._fleetProfile || '',
     _totalEnrichmentArticles: Object.values(enrichSections._counts || {}).reduce((a, b) => a + b, 0),
@@ -42380,6 +42492,7 @@ function switchTab(tabId) {
   if (tabId === "overview") {
     updateOverviewKpis();
     renderNeedsAttention();
+    renderChangesCard();
     renderOverviewTable();
     renderCharts();
     renderRiskTrendChart();

@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.310 (2026-10-12)
+
+### Added
+- New "What changed" card on the Overview tab, with a 7, 14, 30, 60 or 90 day window, for whatever scope is selected. Newly raised risks come from the live data (Active IQ dates every risk on every system), listed by risk with the number of systems. Under it, a comparison of the latest daily snapshot with an earlier one: OS and SP/BMC version changes, contract and ransomware-protection flag changes, risks that went away, and watchlist moves.
+- The comparison is honest about its data. Earlier harvests covered different systems and watchlists, and some stored no risks, so it picks a snapshot with comparable coverage when one exists and says how many systems are in both. Added or removed systems and risk count changes are reported only when the coverage supports it; otherwise a note says why.
+- Daily snapshots now also record each system's risk ids, SP/BMC version and watchlists, so "risks resolved" and "moved between watchlists" fill in from 12 October 2026 onward.
+- The Value report carries the same section, "Progress, What Changed", with the complete list of newly raised risks.
+
 ## 5.6.309 (2026-10-12)
 
 ### Fixed
