@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.312";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.313";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.313",
+    date: "12 October 2026",
+    title: "Automatic Update Settings",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Automatic update settings are now shown. Active IQ reports, for each system, whether security files, storage firmware, SP/BMC firmware and system files (such as the disk qualification package) are installed automatically or only notified. ARIA collected these but never displayed them. The hardening scorecard has three new controls for them: a system set to notify-only counts as a gap (an administrator has to act), a system set to automatic does not, and a system that reports nothing is counted apart as not reported, never as a pass.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.312",
     date: "12 October 2026",
@@ -44895,6 +44910,11 @@ const HARDENING_CONTROLS = [
   { id: 'cfgbackup', area: 'Recovery', control: 'Cluster configuration backups are copied to a remote location', gap: /config backups are not being pushed remotely/i, ref: 'ONTAP system administration documentation' },
   { id: 'ntp', area: 'Time and name services', control: 'Redundant NTP servers that respond', gap: /ntp servers are not redundant|ntp servers are not responding/i, ref: 'TR-4569' },
   { id: 'dns', area: 'Time and name services', control: 'More than one DNS server per SVM', gap: /single dns server configured/i, ref: 'ONTAP network documentation' },
+  // Automatic update settings: Active IQ reports, per system, whether security files, storage firmware and SP/BMC firmware are installed automatically or only notified.
+  // "notify" is a gap (an administrator has to act); "automatic" is not; a system that reports nothing is counted apart, never as a pass.
+  { id: 'autosec', area: 'Updates', control: 'Security files are installed automatically (not notify-only)', test: s => { const v = (s.autoUpdateSettings || {}).securityFile; return v == null ? undefined : v !== 'automatic'; }, ref: 'ONTAP AutoSupport automatic update documentation' },
+  { id: 'autofw', area: 'Updates', control: 'Storage firmware and SP/BMC firmware are installed automatically (not notify-only)', test: s => { const u = s.autoUpdateSettings || {}; if (u.storageFirmware == null && u.spbmc == null) return undefined; return u.storageFirmware === 'notify' || u.spbmc === 'notify'; }, ref: 'ONTAP AutoSupport automatic update documentation' },
+  { id: 'autosys', area: 'Updates', control: 'System files (for example the disk qualification package) are installed automatically (not notify-only)', test: s => { const v = (s.autoUpdateSettings || {}).systemFile; return v == null ? undefined : v !== 'automatic'; }, ref: 'ONTAP AutoSupport automatic update documentation' },
 ];
 const HARDENING_UNOBSERVED = [
   { control: 'Multi-admin verification for destructive operations', cmd: 'security multi-admin-verify show', ref: 'ONTAP multi-admin verification documentation' },
@@ -44907,11 +44927,13 @@ function _dfHardeningRows(systems) {
   const ontap = (systems || []).filter(s => _platformFamily(s) === 'ontap');
   const rows = HARDENING_CONTROLS.map(c => {
     const gapSys = [], enabledSys = [];
+    let unreported = 0;
     ontap.forEach(s => {
+      if (c.test) { const t = c.test(s); if (t === undefined) unreported++; else if (t) gapSys.push(s.systemName || s.serialNumber); else enabledSys.push(s.systemName || s.serialNumber); return; }
       const hit = (s.risks || []).some(r => c.gap.test(String(r.description || '')));
       if (hit) gapSys.push(s.systemName || s.serialNumber); else if (c.enabled && c.enabled(s)) enabledSys.push(s.systemName || s.serialNumber);
     });
-    return { id: c.id, area: c.area, control: c.control, ref: c.ref, evaluated: ontap.length, gap: gapSys, enabled: enabledSys, hasConfirm: !!c.enabled };
+    return { id: c.id, area: c.area, control: c.control, ref: c.ref, evaluated: ontap.length - unreported, unreported, gap: gapSys, enabled: enabledSys, hasConfirm: !!(c.enabled || c.test) };
   });
   // vulnerability management: critical or high severity advisories still open (published CVEs, with the CISA KEV flag where the bulletin data has it)
   const vuln = [], kev = [];
@@ -44927,7 +44949,7 @@ function _dfHardeningText(systems, heading) {
   const cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
   const withGap = h.rows.filter(r => r.gap.length).length;
   let o = `\n${heading || '## Hardening Scorecard'}\n\n**Finding:** of ${h.rows.length} controls that Active IQ can evidence, ${withGap} have a gap raised on at least one of the ${h.evaluated} ONTAP systems in scope and ${h.rows.length - withGap} have no gap raised. "No gap raised" means Active IQ ran its check and raised nothing; it does not confirm the setting.\n\n`;
-  o += '| Area | Control | Result | Systems with a gap | Reference |\n|---|---|---|---|---|\n' + h.rows.map(r => `| ${cell(r.area)} | ${cell(r.control)} | ${r.gap.length ? `Gap on ${r.gap.length} of ${r.evaluated}` : `No gap raised on ${r.evaluated}` + (r.hasConfirm ? ` (enabled on ${r.enabled.length})` : '')} | ${cell(r.gap.join(', '))} | ${cell(r.ref)} |`).join('\n') + '\n\n';
+  o += '| Area | Control | Result | Systems with a gap | Reference |\n|---|---|---|---|---|\n' + h.rows.map(r => `| ${cell(r.area)} | ${cell(r.control)} | ${r.gap.length ? `Gap on ${r.gap.length} of ${r.evaluated}` : `No gap raised on ${r.evaluated}` + (r.hasConfirm ? ` (enabled on ${r.enabled.length})` : '')}${r.unreported ? `; ${r.unreported} not reported` : ''} | ${cell(r.gap.join(', '))} | ${cell(r.ref)} |`).join('\n') + '\n\n';
   o += '**Not reported by Active IQ.** These controls matter for hardening but Active IQ does not report their state, so ARIA cannot score them. Check them on the array:\n\n| Control | Command | Reference |\n|---|---|---|\n' + HARDENING_UNOBSERVED.map(u => `| ${cell(u.control)} | ${cell(u.cmd)} | ${cell(u.ref)} |`).join('\n') + '\n\n';
   o += '**General guidance:** NetApp recommends reviewing the ONTAP security hardening guide (TR-4569) against each cluster and confirming command names for the installed ONTAP release.\n\n';
   return o;
@@ -44944,7 +44966,7 @@ function renderHardeningScorecard() {
     + `<div style="font-size:0.78rem;margin-bottom:10px;">${withGap} of ${h.rows.length} controls have a gap raised by Active IQ on at least one system; ${h.rows.length - withGap} have none. <span style="color:var(--text-muted);">"No gap raised" means Active IQ ran its check and found nothing; it does not confirm the setting.</span></div>`
     + `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-muted);font-size:0.7rem;text-transform:uppercase;"><th style="padding:4px 8px;">Area</th><th>Control</th><th>Result</th><th>Systems with a gap</th></tr></thead><tbody>`
     + h.rows.map(r => { const bad = r.gap.length > 0, col = bad ? 'var(--status-warning)' : 'var(--status-normal)'; const names = r.gap.slice(0, 6).map(esc2).join(', ') + (r.gap.length > 6 ? ` +${r.gap.length - 6} more` : '');
-      return `<tr><td style="${td}">${esc2(r.area)}</td><td style="${td}">${esc2(r.control)}<div style="font-size:0.66rem;color:var(--text-muted);">${esc2(r.ref)}</div></td><td style="${td}color:${col};font-weight:600;white-space:nowrap;">${bad ? `Gap on ${r.gap.length} of ${r.evaluated}` : `No gap raised`}${r.hasConfirm ? `<div style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">enabled on ${r.enabled.length}</div>` : ''}</td><td style="${td}">${names}</td></tr>`; }).join('')
+      return `<tr><td style="${td}">${esc2(r.area)}</td><td style="${td}">${esc2(r.control)}<div style="font-size:0.66rem;color:var(--text-muted);">${esc2(r.ref)}</div></td><td style="${td}color:${col};font-weight:600;white-space:nowrap;">${bad ? `Gap on ${r.gap.length} of ${r.evaluated}` : `No gap raised`}${r.hasConfirm ? `<div style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">enabled on ${r.enabled.length}</div>` : ''}${r.unreported ? `<div style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">${r.unreported} not reported</div>` : ''}</td><td style="${td}">${names}</td></tr>`; }).join('')
     + `</tbody></table>`
     + `<div style="font-size:0.78rem;font-weight:600;margin:14px 0 4px;">Not reported by Active IQ</div><div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:6px;">ARIA cannot score these. Check them on the array.</div>`
     + `<table style="width:100%;border-collapse:collapse;"><tbody>` + HARDENING_UNOBSERVED.map(u => `<tr><td style="${td}">${esc2(u.control)}</td><td style="${td}font-family:monospace;">${esc2(u.cmd)}</td></tr>`).join('') + `</tbody></table>`;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.313 (2026-10-12)
+
+### Added
+- Automatic update settings are now shown. Active IQ reports, for each system, whether security files, storage firmware, SP/BMC firmware and system files (such as the disk qualification package) are installed automatically or only notified. ARIA collected these but never displayed them. The hardening scorecard has three new controls for them: a system set to notify-only counts as a gap (an administrator has to act), a system set to automatic does not, and a system that reports nothing is counted apart as not reported, never as a pass.
+
 ## 5.6.312 (2026-10-12)
 
 ### Added
