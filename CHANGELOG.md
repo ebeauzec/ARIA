@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.320 (2026-10-12)
+
+### Fixed
+- A JavaScript error ("Invalid or unexpected token") appeared on the Technical Risks tab. The Acknowledge and Mark Mitigated buttons wrote the risk title inside the text of an onclick handler, and 22 risk titles contain a double quote (for example AutoSupport "-to" parameter includes ...), which cut the handler short. The buttons now carry the title in data- attributes, which hold any character, in the Technical Risks tab and in the Technical Audit risk detail. Checked by compiling every inline event handler (about 65,000) on every tab, with none failing, and by clicking a button whose title holds a double quote, an apostrophe, angle brackets, an ampersand and a line break.
+
 ## 5.6.319 (2026-10-12)
 
 ### Added

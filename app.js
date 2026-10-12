@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.319";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.320";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.320",
+    date: "12 October 2026",
+    title: "Risk Button Error",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "A JavaScript error (\"Invalid or unexpected token\") appeared on the Technical Risks tab. The Acknowledge and Mark Mitigated buttons wrote the risk title inside the text of an onclick handler, and 22 risk titles contain a double quote (for example AutoSupport \"-to\" parameter includes ...), which cut the handler short. The buttons now carry the title in data- attributes, which hold any character, in the Technical Risks tab and in the Technical Audit risk detail. Checked by compiling every inline event handler (about 65,000) on every tab, with none failing, and by clicking a button whose title holds a double quote, an apostrophe, angle brackets, an ampersand and a line break.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.319",
     date: "12 October 2026",
@@ -12011,6 +12026,7 @@ async function _callAIQMutation(mutationQuery, variables) {
 // Marks a risk as mitigated in Active IQ — writes back to the real customer
 // account, visible in the actual Active IQ portal, not just inside ARIA.
 async function mitigateRiskInAIQ(riskId, serialNumber, riskTitle) {
+  if (riskId && riskId.dataset) { const x = _ackArgs(riskId); riskId = x[0]; serialNumber = x[1]; riskTitle = x[2]; }
   if (!confirm(
     `⚠ This will WRITE BACK to the customer's live Active IQ account.\n\n` +
     `Mark risk "${riskTitle}" on system ${serialNumber} as MITIGATED?\n\n` +
@@ -15623,8 +15639,11 @@ function _ackBadgeHtml(a) {
   const tip = `${_esc(a.by || 'unknown')}${when ? ' on ' + when : ''}: ${_esc(_ackLabel(a.justification))}${a.comments ? ' - ' + _esc(a.comments) : ''}${exp}`;
   return `<span title="${tip}" style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.68rem;font-weight:700;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.35);color:var(--accent-cyan);">Acknowledged${when ? ' ' + when : ''}</span>`;
 }
-function acknowledgeRiskInAIQ(riskId, serialNumber, riskTitle) { openRiskAckDialog(riskId, serialNumber, riskTitle, false); }
-function withdrawRiskAckInAIQ(riskId, serialNumber, riskTitle) { openRiskAckDialog(riskId, serialNumber, riskTitle, true); }
+// Risk titles can hold any character (a double quote, a newline), so they travel in data- attributes, never inside the text of an onclick handler.
+function _ae(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function _ackArgs(a, b, c) { return (a && a.dataset) ? [a.dataset.rid, a.dataset.sn, a.dataset.title] : [a, b, c]; }
+function acknowledgeRiskInAIQ(a, b, c) { const x = _ackArgs(a, b, c); openRiskAckDialog(x[0], x[1], x[2], false); }
+function withdrawRiskAckInAIQ(a, b, c) { const x = _ackArgs(a, b, c); openRiskAckDialog(x[0], x[1], x[2], true); }
 function _ackRowsFor(riskId) {
   const rows = [];
   (getFilteredSystems(true) || []).forEach(s => { const r = (s.risks || []).find(x => String(x.id) === String(riskId)); if (r) rows.push({ serial: s.serialNumber, name: s.systemName || s.serialNumber, customer: s.customerName || '', ack: r.ack || null }); });
@@ -15728,8 +15747,8 @@ async function _ackUndo(i) {
 // the Technical Audit slide-out: the risk's acknowledgement state and the buttons
 function _ackFillModalRow(risk, sys) {
   const el = document.getElementById('modalAckRow'); if (!el) return;
-  const sn = String(sys.serialNumber || '').replace(/'/g, ''), id = String(risk.id).replace(/'/g, ''), t = String(risk.description || risk.category || 'Risk').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-  el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:12px;border-top:1px dashed var(--border-color);"><span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;">Active IQ acknowledgement</span>${risk.ack ? _ackBadgeHtml(risk.ack) + `<button class="action-btn secondary" style="font-size:0.72rem;padding:4px 10px;" onclick="withdrawRiskAckInAIQ('${id}','${sn}','${t}')">Withdraw…</button>` : `<button class="action-btn secondary" style="font-size:0.72rem;padding:4px 10px;" onclick="acknowledgeRiskInAIQ('${id}','${sn}','${t}')">Acknowledge…</button>`}<a href="#" onclick="showAckLog();return false;" style="font-size:0.72rem;">log</a></div>`;
+  const _d = `data-rid="${_ae(risk.id)}" data-sn="${_ae(sys.serialNumber)}" data-title="${_ae(risk.description || risk.category || 'Risk')}"`;
+  el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:12px;border-top:1px dashed var(--border-color);"><span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;">Active IQ acknowledgement</span>${risk.ack ? _ackBadgeHtml(risk.ack) + `<button class="action-btn secondary" style="font-size:0.72rem;padding:4px 10px;" ${_d} onclick="withdrawRiskAckInAIQ(this)">Withdraw…</button>` : `<button class="action-btn secondary" style="font-size:0.72rem;padding:4px 10px;" ${_d} onclick="acknowledgeRiskInAIQ(this)">Acknowledge…</button>`}<a href="#" onclick="showAckLog();return false;" style="font-size:0.72rem;">log</a></div>`;
 }
 
 function openRemediationModal(riskId) {
@@ -35454,14 +35473,12 @@ function generateActionPlan() {
             </ul>
           </div>
           ${typeof r.id === 'string' && r.serialNumber ? (() => {
-            const _rid = r.id.replace(/'/g, "\\'");
-            const _sn  = r.serialNumber.replace(/'/g, "\\'");
-            const _title = (r.description || r.category || 'Risk').replace(/'/g, "\\'");
+            const _d = `data-rid="${_ae(r.id)}" data-sn="${_ae(r.serialNumber)}" data-title="${_ae(r.description || r.category || 'Risk')}"`;
             return `
           <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border-color); display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
             <span style="font-size: 0.68rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;">⚠ Writes to Active IQ:</span>
-            ${r.ack ? _ackBadgeHtml(r.ack) + `<button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="withdrawRiskAckInAIQ('${_rid}','${_sn}','${_title}')" data-tooltip="Withdraws the acknowledgement in the customer's live Active IQ account.">Withdraw acknowledgement…</button>` : `<button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="acknowledgeRiskInAIQ('${_rid}','${_sn}','${_title}')" data-tooltip="Acknowledges this risk in the customer's live Active IQ account, on this system or on several at once. Choose a justification; it can be withdrawn.">Acknowledge…</button>`}<a href="#" onclick="showAckLog();return false;" style="font-size:0.72rem;">log</a><span style="display:none"></span>
-            <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="mitigateRiskInAIQ('${_rid}','${_sn}','${_title}')" data-tooltip="Marks this risk as mitigated directly in the customer's live Active IQ account — only use after the fix has actually been applied.">Mark Mitigated in AIQ</button>
+            ${r.ack ? _ackBadgeHtml(r.ack) + `<button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" ${_d} onclick="withdrawRiskAckInAIQ(this)" data-tooltip="Withdraws the acknowledgement in the customer's live Active IQ account.">Withdraw acknowledgement…</button>` : `<button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" ${_d} onclick="acknowledgeRiskInAIQ(this)" data-tooltip="Acknowledges this risk in the customer's live Active IQ account, on this system or on several at once. Choose a justification; it can be withdrawn.">Acknowledge…</button>`}<a href="#" onclick="showAckLog();return false;" style="font-size:0.72rem;">log</a><span style="display:none"></span>
+            <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" ${_d} onclick="mitigateRiskInAIQ(this)" data-tooltip="Marks this risk as mitigated directly in the customer's live Active IQ account — only use after the fix has actually been applied.">Mark Mitigated in AIQ</button>
           </div>`;
           })() : ''}
         </div>
