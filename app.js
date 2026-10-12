@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.330";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.331";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.331",
+    date: "12 Oct 2026",
+    title: "Cluster level across tabs and documents",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Cluster-level reporting carried through the rest of the interface and the documents. Technical Audit: the risk list is grouped per cluster, grid or array, each risk appears once, and a risk on only some nodes says '⚑ node-specific: only on <node>'; the system picker lists one entry per cluster, grid or array (its nodes only when there is more than one) and the Support & Ops and Customer Success pickers list single-node units once, as 'Array: ...' or 'Grid: ...'. The Selected line, the contracts tile and the customer portfolio count clusters, grids and arrays and give the node count.",
+          "Documents: scope counts read '556 clusters, 16 grids, 321 arrays (1,808 nodes in all)'; the ranking of systems by issue severity, the Technical Risks, Security Advisories and OS Upgrade Roadmaps documents list each cluster, grid or array once instead of once per node.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.330",
     date: "12 Oct 2026",
@@ -12786,6 +12802,7 @@ function _uN(kinds, n) {
   return `${n} ${word}${n !== 1 ? 's' : ''}`;
 }
 const _UNIT_BADGE = { grid: 'StorageGRID', array: 'E-Series', node: 'StorageGRID node' };
+const _UNIT_WORD = { cluster: 'Cluster', grid: 'Grid', array: 'Array', node: 'StorageGRID node' };
 const _riskKeyOf = r => [String(r.description || r.title || '').trim().toLowerCase(), r.advisoryId || '', (r.cveDetails || []).map(c => c && c.id).filter(Boolean).sort().join(',')].join('|');
 const _SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, best_practice: 4 };
 function _clusterBuild(c) {
@@ -13014,9 +13031,10 @@ function renderCustomerPortfolio() {
 
   const rows = customers.map(cust => {
     const sys = state.systems.filter(s => s.customerName === cust);
-    const critRisks = sys.reduce((sum, s) => sum + (s.risks || []).filter(r => r.severity === 'critical').length, 0);
-    const highRisks = sys.reduce((sum, s) => sum + (s.risks || []).filter(r => r.severity === 'high').length, 0);
-    const expiring90 = sys.filter(s => s.contracts && s.contracts.daysRemaining != null && s.contracts.daysRemaining >= 0 && s.contracts.daysRemaining <= 90).length;
+    const units = getClusters(sys);   // one per cluster, grid or array: a risk on both nodes of a pair counts once
+    const critRisks = units.reduce((sum, c) => sum + c.counts.critical, 0);
+    const highRisks = units.reduce((sum, c) => sum + c.counts.high, 0);
+    const expiring90 = units.filter(c => c.contracts.daysRemaining != null && c.contracts.daysRemaining >= 0 && c.contracts.daysRemaining <= 90).length;
     const eosCount = (_realRecommendationCount('EOS_AND_PLAT_AND_HW', sys) || 0) + (_realRecommendationCount('EOS_6M', sys) || 0);
     const healthScore = computeAccountHealthScore(sys);
     const trackerItems = state.trackerItems.filter(i => i.customerName === cust && TRACKER_ACTIVE_STATUSES.includes(i.status));
@@ -13025,7 +13043,7 @@ function renderCustomerPortfolio() {
     // Risk score for sorting -- weights critical highest, roughly matches
     // how a TAM would eyeball "which account is worst" at a glance.
     const riskScore = critRisks * 10 + highRisks * 3 + expiring90 * 2 + eosCount * 2 + (100 - healthScore);
-    return { cust, systemCount: sys.length, critRisks, highRisks, expiring90, eosCount, healthScore, slaCompliance, riskScore };
+    return { cust, systemCount: units.length, nodeCount: sys.length, critRisks, highRisks, expiring90, eosCount, healthScore, slaCompliance, riskScore };
   }).sort((a, b) => b.riskScore - a.riskScore);
 
   body.innerHTML = rows.map(r => {
@@ -13034,7 +13052,7 @@ function renderCustomerPortfolio() {
     return `
     <tr style="cursor:pointer;border-bottom:1px solid var(--border-color);" onclick="focusOnCustomer('${r.cust.replace(/'/g, "\\'")}')">
       <td style="padding:10px;font-weight:600;">${r.cust}</td>
-      <td style="padding:10px;text-align:center;">${r.systemCount}</td>
+      <td style="padding:10px;text-align:center;" title="${r.nodeCount} nodes">${r.systemCount}</td>
       <td style="padding:10px;text-align:center;color:${r.critRisks > 0 ? '#ef4444' : 'var(--text-muted)'};font-weight:${r.critRisks > 0 ? '700' : '400'};">${r.critRisks}</td>
       <td style="padding:10px;text-align:center;color:${r.highRisks > 0 ? '#f59e0b' : 'var(--text-muted)'};">${r.highRisks}</td>
       <td style="padding:10px;text-align:center;color:${r.expiring90 > 0 ? '#f59e0b' : 'var(--text-muted)'};">${r.expiring90}</td>
@@ -13250,11 +13268,10 @@ function renderNeedsAttention() {
   // so this merges the ranking back over every filtered system rather than
   // only the ones _dfSystemIssueRanking() itself returns.
   // Ranked per cluster: the nodes of a cluster share their findings, so a cluster scores as its worst node and its risks are counted once.
-  const scoreByKey = {}; _dfSystemIssueRanking(filtered).forEach(r => { scoreByKey[r.systemName] = r; });
+  const scoreByKey = {}; _dfSystemIssueRanking(filtered).forEach(r => { scoreByKey[r.key] = r; });
   const ranked = getClusters(filtered).map(c => {
-    const rs = c.nodes.map(sys => scoreByKey[sys.systemName || sys.serialNumber]).filter(Boolean);
-    const hs = c.nodes.map(x => x.aiqHealthScore).filter(v => v != null && v !== '').map(Number);
-    const r = { critRisks: c.counts.critical, highRisks: c.counts.high, critCves: Math.max(0, ...rs.map(x => x.critCves || 0)), openCases: _openCaseCount(c.supportCases), aiqHealthScore: hs.length ? Math.min(...hs) : null, score: Math.max(0, ...rs.map(x => x.score || 0)) };
+    const r0 = scoreByKey[c.key] || { critRisks: c.counts.critical, highRisks: c.counts.high, critCves: 0, openCases: 0, aiqHealthScore: null, score: 0 };
+    const r = { critRisks: r0.critRisks, highRisks: r0.highRisks, critCves: r0.critCves, openCases: r0.openCases, aiqHealthScore: r0.aiqHealthScore, score: r0.score };
     const daysRemaining = c.contracts.daysRemaining;
     return { c, ...r, contractExpiringSoon: daysRemaining != null && daysRemaining <= 30, daysRemaining };
   }).filter(r => r.score > 0 || r.contractExpiringSoon)
@@ -14173,8 +14190,11 @@ function _dfTamAutoSelect(systems, cap) {
   }
   return out;
 }
+function _unitKinds(list) { return [...new Set((list || []).map(x => _unitOf(x).key))].map(_kindOfKey); }
+function _unitCount(list) { return new Set((list || []).map(x => _unitOf(x).key)).size; }
 function populateSystemSelectors() {
   const currentFiltered = getFilteredSystems();
+  const _unitSizes = new Map(); currentFiltered.forEach(x => { const k = _unitOf(x).key; _unitSizes.set(k, (_unitSizes.get(k) || 0) + 1); });
   
   // ── State fixups (always run — correct selectedSystem / TAM serials) ─────
   const hasSelectedSystem = state.selectedSystem && typeof state.selectedSystem === 'object';
@@ -14219,15 +14239,15 @@ function populateSystemSelectors() {
       grpPortfolio.label = "Portfolio View";
       const optAll = document.createElement("option");
       optAll.value = "ALL";
-      optAll.innerText = `All Systems (Account View - ${currentFiltered.length} nodes)`;
+      optAll.innerText = `All systems (Account View - ${_uN(_unitKinds(currentFiltered), _unitCount(currentFiltered))}, ${currentFiltered.length} nodes)`;
       if (state.selectedSAMSystemSerial === "ALL") optAll.selected = true;
       grpPortfolio.appendChild(optAll);
       samSelect.appendChild(grpPortfolio);
       
-      const uniqueClusters = [...new Set(currentFiltered.map(s => s.clusterName))];
+      const uniqueClusters = [...new Set(currentFiltered.filter(s => _unitOf(s).kind === 'cluster' && s.clusterName && s.clusterName !== s.serialNumber).map(s => s.clusterName))];
       if (uniqueClusters.length > 0) {
         const grpClusters = document.createElement("optgroup");
-        grpClusters.label = "Clusters (Aggregated)";
+        grpClusters.label = "Clusters (all their nodes)";
         uniqueClusters.forEach(clusterName => {
           const clusterNodes = currentFiltered.filter(s => s.clusterName === clusterName);
           const opt = document.createElement("option");
@@ -14240,11 +14260,11 @@ function populateSystemSelectors() {
       }
       
       const grpNodes = document.createElement("optgroup");
-      grpNodes.label = "Nodes (Individual)";
+      grpNodes.label = "Nodes and standalone systems";
       currentFiltered.forEach(sys => {
         const opt = document.createElement("option");
         opt.value = `NODE:${sys.serialNumber}`;
-        opt.innerText = `Node: ${sys.systemName} (${sys.platform})`;
+        { const _u = _unitOf(sys); opt.innerText = (_unitSizes.get(_u.key) || 1) > 1 || _u.kind === 'cluster' ? `Node: ${sys.systemName} (${sys.platform})` : `${_UNIT_WORD[_u.kind]}: ${sys.systemName} (${sys.platform})`; }
         if (state.selectedSAMSystemSerial === `NODE:${sys.serialNumber}` || state.selectedSAMSystemSerial === sys.serialNumber) opt.selected = true;
         grpNodes.appendChild(opt);
       });
@@ -14271,15 +14291,15 @@ function populateSystemSelectors() {
       grpPortfolio.label = "Portfolio View";
       const optAll = document.createElement("option");
       optAll.value = "ALL";
-      optAll.innerText = `All Systems (Account View - ${currentFiltered.length} nodes)`;
+      optAll.innerText = `All systems (Account View - ${_uN(_unitKinds(currentFiltered), _unitCount(currentFiltered))}, ${currentFiltered.length} nodes)`;
       if (state.selectedCSMSystemSerial === "ALL") optAll.selected = true;
       grpPortfolio.appendChild(optAll);
       csmSelect.appendChild(grpPortfolio);
       
-      const uniqueClusters = [...new Set(currentFiltered.map(s => s.clusterName))];
+      const uniqueClusters = [...new Set(currentFiltered.filter(s => _unitOf(s).kind === 'cluster' && s.clusterName && s.clusterName !== s.serialNumber).map(s => s.clusterName))];
       if (uniqueClusters.length > 0) {
         const grpClusters = document.createElement("optgroup");
-        grpClusters.label = "Clusters (Aggregated)";
+        grpClusters.label = "Clusters (all their nodes)";
         uniqueClusters.forEach(clusterName => {
           const clusterNodes = currentFiltered.filter(s => s.clusterName === clusterName);
           const opt = document.createElement("option");
@@ -14292,11 +14312,11 @@ function populateSystemSelectors() {
       }
       
       const grpNodes = document.createElement("optgroup");
-      grpNodes.label = "Nodes (Individual)";
+      grpNodes.label = "Nodes and standalone systems";
       currentFiltered.forEach(sys => {
         const opt = document.createElement("option");
         opt.value = `NODE:${sys.serialNumber}`;
-        opt.innerText = `Node: ${sys.systemName} (${sys.platform})`;
+        { const _u = _unitOf(sys); opt.innerText = (_unitSizes.get(_u.key) || 1) > 1 || _u.kind === 'cluster' ? `Node: ${sys.systemName} (${sys.platform})` : `${_UNIT_WORD[_u.kind]}: ${sys.systemName} (${sys.platform})`; }
         if (state.selectedCSMSystemSerial === `NODE:${sys.serialNumber}` || state.selectedCSMSystemSerial === sys.serialNumber) opt.selected = true;
         grpNodes.appendChild(opt);
       });
@@ -14366,16 +14386,17 @@ function populateSystemSelectors() {
       };
       customDropdown.appendChild(selectAllDiv);
       
-      // Group systems by cluster
-      const clustersMap = new Map();
+      // One entry per cluster, grid or array; the nodes are listed under it only when there is more than one
+      const clustersMap = new Map(), _uInfo = new Map();
       currentFiltered.forEach(sys => {
-        if (!clustersMap.has(sys.clusterName)) {
-          clustersMap.set(sys.clusterName, []);
-        }
-        clustersMap.get(sys.clusterName).push(sys);
+        const u = _unitOf(sys);
+        if (!clustersMap.has(u.key)) { clustersMap.set(u.key, []); _uInfo.set(u.key, u); }
+        clustersMap.get(u.key).push(sys);
       });
-      
-      clustersMap.forEach((nodes, clusterName) => {
+      let _unitIdx = 0;
+
+      clustersMap.forEach((nodes, ukey) => {
+        const _ui = _uInfo.get(ukey), clusterName = _ui.name, _cid = 'chk_cluster_' + (_unitIdx++);
         const clusterDiv = document.createElement("div");
         clusterDiv.style.padding = "6px 12px";
         clusterDiv.style.background = "rgba(0, 229, 255, 0.02)";
@@ -14390,9 +14411,9 @@ function populateSystemSelectors() {
         const clusterHasMC = nodes.some(n => n.isMetroCluster);
 
         clusterDiv.innerHTML = `
-          <input type="checkbox" id="chk_cluster_${clusterName}" ${allClusterNodesChecked ? 'checked' : ''} style="cursor: pointer;">
-          <label for="chk_cluster_${clusterName}" style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: var(--accent-cyan); flex: 1;">
-            Cluster: ${clusterName}${clusterHasMC ? ' <span style="color:var(--hx-ff9800);font-size:0.68rem;font-weight:700;">⬡ MC</span>' : ''}
+          <input type="checkbox" id="${_cid}" ${allClusterNodesChecked ? 'checked' : ''} style="cursor: pointer;">
+          <label for="${_cid}" style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: var(--accent-cyan); flex: 1;">
+            ${_UNIT_WORD[_ui.kind]}: ${String(clusterName).replace(/&/g, '&amp;').replace(/</g, '&lt;')}${nodes.length === 1 && nodes[0].platform ? ' <span style="color:var(--text-muted);font-weight:400;">(' + String(nodes[0].platform).replace(/&/g, '&amp;').replace(/</g, '&lt;') + ')</span>' : ''}${clusterHasMC ? ' <span style="color:var(--hx-ff9800);font-size:0.68rem;font-weight:700;">⬡ MC</span>' : ''}
           </label>
         `;
         clusterDiv.onclick = (e) => e.stopPropagation();
@@ -14413,7 +14434,7 @@ function populateSystemSelectors() {
         };
         customDropdown.appendChild(clusterDiv);
         
-        nodes.forEach(sys => {
+        (nodes.length > 1 ? nodes : []).forEach(sys => {
           const itemDiv = document.createElement("div");
           itemDiv.style.padding = "6px 12px 6px 28px";
           itemDiv.style.display = "flex";
@@ -14468,7 +14489,7 @@ function updateTAMSelectLabel() {
   if (activeInScope.length === 0) {
     label.innerText = "No Systems Selected";
   } else if (activeInScope.length === allSerialsInScope.length) {
-    label.innerText = `All Systems (${activeInScope.length})`;
+    label.innerText = `All systems (${_uN(_unitKinds(currentFiltered), _unitCount(currentFiltered))}, ${activeInScope.length} nodes)`;
   } else if (activeInScope.length === 1) {
     const sys = currentFiltered.find(s => s.serialNumber === activeInScope[0]);
     label.innerText = sys ? sys.systemName : "1 System Selected";
@@ -14484,7 +14505,7 @@ function updateTAMSelectLabel() {
       if (planSelect) planSelect.value = `SYS:${sys.serialNumber}`;
     }
   } else {
-    label.innerText = `${activeInScope.length} Systems Selected`;
+    { const sel = currentFiltered.filter(x => activeInScope.includes(x.serialNumber)); label.innerText = `${_uN(_unitKinds(sel), _unitCount(sel))} selected${sel.length !== _unitCount(sel) ? ` (${sel.length} nodes)` : ''}`; }
   }
 }
 
@@ -15782,6 +15803,7 @@ function _lazyBuildRiskGroup(groupId, drilldownEl) {
                  </a>`
               : (r.description || '')}
           </div>
+          ${r.nodeNote ? `<div style="font-size:0.72rem;color:var(--hx-fbbf24);margin-bottom:3px;">⚑ node-specific: ${String(r.nodeNote).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>` : ''}
           ${_rrIsStockAdvice(r) ? '' : `<div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.45;">${r.recommendation || ''}</div>`}
           ${_rrHtml(null, r)}
         </td>
@@ -16405,7 +16427,7 @@ function renderTAMTab() {
     const _open = !!state._tamSelListOpen;
     const _nAll = (getFilteredSystems() || []).length;
     document.getElementById("tamActiveSystem").innerHTML = `
-      <strong>Selected Systems (${selectedSystems.length})</strong>${selectedSystems.length === _nAll ? ' <span style="font-size:0.72rem;color:var(--text-muted);">all systems in scope</span>' : ` <span style="font-size:0.72rem;color:var(--text-muted);">of ${_nAll} in scope</span>`}${_mcCountInSel > 0 ? ` <span style="font-size:0.68rem;color:var(--hx-ff9800);">(${_mcCountInSel} MetroCluster)</span>` : ''}
+      <strong>Selected (${_uN(_unitKinds(selectedSystems), _unitCount(selectedSystems))}${_unitCount(selectedSystems) !== selectedSystems.length ? ', ' + selectedSystems.length + ' nodes' : ''})</strong>${selectedSystems.length === _nAll ? ' <span style="font-size:0.72rem;color:var(--text-muted);">all systems in scope</span>' : ` <span style="font-size:0.72rem;color:var(--text-muted);">of ${_nAll} in scope</span>`}${_mcCountInSel > 0 ? ` <span style="font-size:0.68rem;color:var(--hx-ff9800);">(${_mcCountInSel} MetroCluster)</span>` : ''}
       <a href="javascript:void(0)" style="font-size:0.72rem;margin-left:8px;color:var(--accent-cyan);" onclick="state._tamSelListOpen=!state._tamSelListOpen;document.getElementById('tamSelList').style.display=state._tamSelListOpen?'block':'none';this.textContent=state._tamSelListOpen?'Hide list \u25B4':'Show list \u25BE';">${_open ? 'Hide list \u25B4' : 'Show list \u25BE'}</a>
       <div id="tamSelList" style="display:${_open ? 'block' : 'none'};max-height:110px;overflow:auto;margin-top:6px;font-size:0.78rem;color:var(--text-primary);">${names}</div>
     `;
@@ -16455,19 +16477,19 @@ function renderTAMTab() {
   // ── Compile Combined Risks — grouped by system with collapsible drilldown ──
   // Groups risks per system to keep initial DOM at N rows (systems) not N×M (all risks).
   // Each system row shows severity pill counts; click expands per-risk detail rows.
+  // Grouped per cluster, grid or array: a risk Active IQ reports on every node of a pair is one line, and a risk on only some nodes names them.
   const risksBySystem = {};
-  selectedSystems.forEach(sys => {
-    const risks = sys.risks || [];
-    if (risks.length > 0) {
-      const _isSGRiskSys = _isPlatformStorageGRID(sys);
-      risksBySystem[sys.systemName] = {
-        systemName: sys.systemName,
-        platform:   sys.platform   || '',
-        osLabel:    sys.santricityVersion ? 'SANtricity OS' : _isSGRiskSys ? 'StorageGRID' : 'ONTAP',
-        version:    sys.ontapVersion || sys.santricityVersion || '',
-        risks: risks.map(r => ({ ...r, systemName: sys.systemName }))
-      };
-    }
+  getClusters(selectedSystems).forEach(c => {
+    if (!c.risks.length) return;
+    const nameOf = new Map(c.nodes.map(x => [x.serialNumber, x.systemName || x.serialNumber]));
+    const first = c.nodes[0], _isSGRiskSys = c.kind === 'grid' || c.kind === 'node';
+    risksBySystem[c.key] = {
+      systemName: c.name, unitKind: c.kind, nodeCount: c.nodeCount,
+      platform:   c.platform || '',
+      osLabel:    first.santricityVersion ? 'SANtricity OS' : _isSGRiskSys ? 'StorageGRID' : 'ONTAP',
+      version:    c.releases.join(' / ') || first.ontapVersion || first.santricityVersion || '',
+      risks: c.risks.map(x => ({ ...x.risk, systemName: c.name, nodeNote: c.nodeCount > 1 && !x.allNodes ? `only on ${x.serials.map(sr => nameOf.get(sr)).join(', ')}` : '' }))
+    };
   });
 
   const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
@@ -16517,9 +16539,9 @@ function renderTAMTab() {
         <td colspan="4" style="padding:8px 12px;background:var(--wa-15);border-bottom:1px solid var(--border-color);">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
             <span style="font-size:0.78rem;color:var(--text-muted);">
-              <strong style="color:var(--text-primary);">${sortedSystemNames.length}</strong> systems
-              · <strong style="color:var(--text-primary);">${totalRisks}</strong> total risks
-              · grouped by system — click a row to expand
+              <strong style="color:var(--text-primary);">${_uN(sortedSystemNames.map(k => risksBySystem[k].unitKind), sortedSystemNames.length)}</strong>
+              · <strong style="color:var(--text-primary);">${totalRisks}</strong> distinct risks
+              · each risk is listed once per cluster, grid or array, and names the nodes when it is not on all of them — click a row to expand
             </span>
             <button onclick="toggleAllRiskGroups(this)"
               style="font-size:0.72rem;padding:3px 10px;border:1px solid var(--border-color);
@@ -16564,7 +16586,7 @@ function renderTAMTab() {
           data-group="${groupId}" data-expanded="false">
           <td colspan="3" style="padding:12px 14px;">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-              <span style="font-weight:700;font-size:0.92rem;color:var(--text-primary);">${sysName}</span>
+              <span style="font-weight:700;font-size:0.92rem;color:var(--text-primary);">${grp.systemName}</span>${_UNIT_BADGE[grp.unitKind] ? ` <span style="font-size:0.64rem;font-weight:600;color:var(--text-muted);border:1px solid var(--border-color);border-radius:8px;padding:1px 6px;">${_UNIT_BADGE[grp.unitKind]}</span>` : ''}${grp.nodeCount > 1 ? ` <span style="font-size:0.72rem;color:var(--text-muted);">${grp.nodeCount} nodes</span>` : ''}
               ${grp.platform ? `<span style="font-size:0.72rem;color:var(--text-muted);font-family:monospace;">${grp.platform}</span>` : ''}
               ${grp.version  ? `<span style="font-size:0.72rem;color:var(--text-muted);">${grp.osLabel || 'ONTAP'} ${grp.version}</span>` : ''}
               <div style="display:flex;gap:5px;flex-wrap:wrap;">${pills.join('')}</div>
@@ -17330,7 +17352,7 @@ function renderSAMTab() {
 
   if (isMulti) {
     document.getElementById("samActiveSystem").innerHTML = `
-      <strong>Selected Systems (${targetSAMSystems.length})</strong>: <span style="font-size: 0.8rem; color: var(--text-primary);" title="${_nameListTitle(targetSAMSystems.map(s => s.systemName))}">${_nameListShort(targetSAMSystems.map(s => s.systemName), 6)}</span>
+      <strong>Selected (${_uN(_unitKinds(targetSAMSystems), _unitCount(targetSAMSystems))}${_unitCount(targetSAMSystems) !== targetSAMSystems.length ? ', ' + targetSAMSystems.length + ' nodes' : ''})</strong>: <span style="font-size: 0.8rem; color: var(--text-primary);" title="${_nameListTitle([...new Set(targetSAMSystems.map(s => _unitOf(s).name))])}">${_nameListShort([...new Set(targetSAMSystems.map(s => _unitOf(s).name))], 6)}</span>
     `;
 
     // 1. Contract aggregate
@@ -17355,7 +17377,7 @@ function renderSAMTab() {
         ${cBadge}
       </div>
       <div style="font-size: 1.3rem; font-weight: 700; margin-bottom: 6px; color: ${cColor};">
-        ${targetSAMSystems.length} Monitored Support Contracts
+        ${_unitCount(targetSAMSystems)} Monitored Support Contracts
       </div>
       <div style="font-size: 0.8rem; color: var(--text-muted); display: flex; gap: 8px;">
         <span style="color: var(--status-normal);">Active: ${activeCount}</span> | 
@@ -18486,7 +18508,7 @@ function renderCSMTab() {
 
   if (isMulti) {
     document.getElementById("csmActiveSystem").innerHTML = `
-      <strong>Selected Systems (${targetCSMSystems.length})</strong>: <span style="font-size: 0.8rem; color: var(--text-primary);" title="${_nameListTitle(targetCSMSystems.map(s => s.systemName))}">${_nameListShort(targetCSMSystems.map(s => s.systemName), 6)}</span>
+      <strong>Selected (${_uN(_unitKinds(targetCSMSystems), _unitCount(targetCSMSystems))}${_unitCount(targetCSMSystems) !== targetCSMSystems.length ? ', ' + targetCSMSystems.length + ' nodes' : ''})</strong>: <span style="font-size: 0.8rem; color: var(--text-primary);" title="${_nameListTitle([...new Set(targetCSMSystems.map(s => _unitOf(s).name))])}">${_nameListShort([...new Set(targetCSMSystems.map(s => _unitOf(s).name))], 6)}</span>
     `;
 
     // ── Efficiency aggregates — all computed from dataReductionRatioSys (dedup+compression only,
@@ -21044,19 +21066,17 @@ function _dfSystemHealthScoreWorstTable(hs) {
 // (score > 0); a clean system doesn't appear at all, not as a 0 at the
 // bottom of a long list.
 function _dfSystemIssueRanking(systems) {
-  const rows = (systems || []).map(s => {
-    const risks = s.risks || [];
-    const critRisks = risks.filter(r => (r.severity || '').toLowerCase() === 'critical').length;
-    const highRisks = risks.filter(r => (r.severity || '').toLowerCase() === 'high').length;
-    const medRisks = risks.filter(r => (r.severity || '').toLowerCase() === 'medium').length;
-    const bulletins = s.securityBulletins || [];
-    const critCves = bulletins.filter(b => (b.severity || '').toLowerCase() === 'critical').length;
-    const highCves = bulletins.filter(b => (b.severity || '').toLowerCase() === 'high').length;
-    const openCases = (s.supportCases || []).filter(c => c._isActive).length;
-    const hs = s.aiqHealthScore != null ? s.aiqHealthScore : null;
+  // ranked per cluster, grid or array: a risk on both nodes of a pair counts once, an advisory the nodes share counts once
+  const rows = getClusters(systems).map(c => {
+    const critRisks = c.counts.critical, highRisks = c.counts.high, medRisks = c.counts.medium;
+    let critCves = 0, highCves = 0;
+    c.nodes.forEach(x => { const b = x.securityBulletins || []; critCves = Math.max(critCves, b.filter(q => (q.severity || '').toLowerCase() === 'critical').length); highCves = Math.max(highCves, b.filter(q => (q.severity || '').toLowerCase() === 'high').length); });
+    const openCases = c.supportCases.filter(k => k._isActive).length;
+    const hsl = c.nodes.map(x => x.aiqHealthScore).filter(v => v != null && v !== '').map(Number), hs = hsl.length ? Math.min(...hsl) : null;
     const score = critRisks * 10 + highRisks * 4 + medRisks * 1 + critCves * 6 + highCves * 2 + openCases * 2 + (hs != null ? Math.max(0, 70 - hs) * 0.3 : 0);
     return {
-      systemName: s.systemName || s.serialNumber, customerName: s.customerName || '',
+      key: c.key, kind: c.kind, nodeCount: c.nodeCount,
+      systemName: c.name, customerName: c.customer || '',
       critRisks, highRisks, medRisks, critCves, highCves, openCases, aiqHealthScore: hs, score
     };
   }).filter(r => r.critRisks || r.highRisks || r.critCves || r.highCves || r.openCases);   // a system with nothing open is not ranked
@@ -21080,10 +21100,10 @@ function _dfSystemIssueRankingText(systems, limit) {
   const lim = limit || 15;
   const shown = rows.slice(0, lim);
   const table = _dfTable(
-    ['System', 'Customer', 'Crit Risks', 'High Risks', 'Crit CVEs', 'High CVEs', 'Open Cases', 'AIQ Score'],
-    shown.map(r => [r.systemName, r.customerName || '—', r.critRisks, r.highRisks, r.critCves, r.highCves, r.openCases, r.aiqHealthScore != null ? r.aiqHealthScore : '—'])
+    ['System', 'Nodes', 'Customer', 'Crit Risks', 'High Risks', 'Crit CVEs', 'High CVEs', 'Open Cases', 'AIQ Score'],
+    shown.map(r => [r.systemName + (_UNIT_BADGE[r.kind] ? ` (${_UNIT_BADGE[r.kind]})` : ''), r.nodeCount, r.customerName || '—', r.critRisks, r.highRisks, r.critCves, r.highCves, r.openCases, r.aiqHealthScore != null ? r.aiqHealthScore : '—'])
   );
-  return table + (rows.length > lim ? `\n  +${rows.length - lim} more system${rows.length - lim !== 1 ? 's' : ''} with at least one issue` : '');
+  return table + (rows.length > lim ? `\n  +${rows.length - lim} more ${rows.length - lim !== 1 ? 'systems (clusters, grids or arrays)' : 'system'} with at least one issue` : '');
 }
 
 // ── StorageGRID awareness ───────────────────────────────────────────────────
@@ -21793,7 +21813,15 @@ function _dfStorageGridView(systems) {
 // nodes that send AutoSupport, so totals reflect the real estate. Non-StorageGRID systems count one each.
 function _dfSgExtraNodes(systems) { return _dfStorageGridView(systems).extraNodes; }
 // "Systems" means the systems Active IQ monitors, in every document. StorageGRID nodes that only a grid's own node list names are stated beside the count, never added to it.
-function _dfEffectiveSystemCount(systems) { return (systems || []).length; }
+function _dfEffectiveSystemCount(systems) { return getClusters(systems).length; }   // one per cluster, grid or array
+// "977 systems: 556 clusters, 16 grids, 321 arrays and 84 StorageGRID nodes (1,808 nodes in all)"
+function _dfScopeCountText(systems) {
+  const units = getClusters(systems), kc = {}; units.forEach(c => { kc[c.kind] = (kc[c.kind] || 0) + 1; });
+  const parts = [['cluster', 'cluster'], ['grid', 'grid'], ['array', 'array'], ['node', 'StorageGRID node']].filter(([k]) => kc[k]).map(([k, w]) => `${kc[k]} ${w}${kc[k] !== 1 ? 's' : ''}`);
+  const nodes = (systems || []).length;
+  if (parts.length === 1 && nodes === units.length) return parts[0];
+  return `${units.length} system${units.length !== 1 ? 's' : ''}` + (parts.length ? ` (${parts.join(', ')})` : '') + (nodes !== units.length ? `, ${nodes} nodes in all` : '');
+}
 // Platform mix lines: { label, count }. StorageGRID is broken out by node role / appliance model from the grid roster.
 function _dfPlatformMix(systems) {
   const mix = {}; const add = (k, n) => { mix[k] = (mix[k] || 0) + n; };
@@ -27211,7 +27239,7 @@ DATE GENERATED       : ${new Date().toISOString().split('T')[0]}
 ACCOUNT TEAM         : TAM: ${activeTAMOwner} | Account Manager: ${activeAMOwner}
 SUPPORT CASE HEALTH  : ${avgCsat} / 10.0 (Support & Account Hygiene)
 ENVIRONMENT HEALTH   : ${allRisks.length > 0 ? 'WARNING - Action Required' : 'OPTIMAL / COMPLIANT'}
-SYSTEMS IN SCOPE     : ${_effCount}${_dfSgExtraNodes(targetSystems) ? ` (plus ${_dfSgExtraNodes(targetSystems)} further StorageGRID node${_dfSgExtraNodes(targetSystems) !== 1 ? 's' : ''} listed by their grid, not counted as systems)` : ''}
+SYSTEMS IN SCOPE     : ${_dfScopeCountText(targetSystems)}
 
 --------------------------------------------------------------------------------
 1. EXECUTIVE SUMMARY & VALUE ALIGNMENT [METRICS]
@@ -28780,7 +28808,7 @@ Classification: INTERNAL — ACCOUNT TRANSITION DOCUMENT
 --------------------------------------------------------------------------------
   Customer Name:      ${cleanScope}
   Domestic Parent:    ${domesticParent}
-  Total Systems:      ${total}${_dfSgExtraNodes(targetSystems) ? ` (plus ${_dfSgExtraNodes(targetSystems)} further StorageGRID node${_dfSgExtraNodes(targetSystems) !== 1 ? 's' : ''} listed by their grid, not counted as systems)` : ''}
+  Total Systems:      ${_dfScopeCountText(targetSystems)}
   Total Sites:        ${uniqueSiteNames.length}
   Site Locations:
 ${siteLines}
@@ -37271,8 +37299,10 @@ function compileUpgradesWordMd(systems, scopeTitle) {
   const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0];
   const one = t => String(t == null ? '' : t).replace(/\s*[\r\n]+\s*/g, ' ').replace(/^(.{12,}?)\s+\1$/, '$1').trim();
   const ups = [];
+  const _seenUp = new Set();
   (systems || []).forEach(sys => {
-    if (sys.upgrades && sys.upgrades.targetVersion !== 'Up to Date') ups.push({ sys, u: { systemName: sys.systemName, serialNumber: sys.serialNumber, platform: sys.platform, currentVersion: sys.santricityVersion ? sys.santricityVersion : sys.ontapVersion, ...sys.upgrades } });
+    const _uk = _unitOf(sys).key + '|' + (sys.ontapVersion || sys.santricityVersion || '') + '|' + ((sys.upgrades || {}).targetVersion || ''); if (_seenUp.has(_uk)) return; _seenUp.add(_uk);   // nodes of one cluster on the same release share one roadmap
+    if (sys.upgrades && sys.upgrades.targetVersion !== 'Up to Date') ups.push({ sys, u: { systemName: _unitOf(sys).name, serialNumber: sys.serialNumber, platform: sys.platform, currentVersion: sys.santricityVersion ? sys.santricityVersion : sys.ontapVersion, ...sys.upgrades } });
   });
   let o = `# ${cust} -- OS Upgrade Roadmaps\n\nPrepared ${today} from NetApp Active IQ recommended software versions and NetApp upgrade-path rules.\n\n`;
   const parity = (() => { try { return _dfNonCveParityVersion(systems); } catch (e) { return null; } })();
@@ -37334,13 +37364,13 @@ function compileUpgradesWordMd(systems, scopeTitle) {
 }
 function compileRisksWordMd(systems, scopeTitle) {
   const rank = { critical: 0, high: 1, medium: 2, low: 3 }, sev = r => String(r.severity || 'low').toLowerCase();
-  const all = []; (systems || []).forEach(s => (s.risks || []).forEach(r => all.push({ sys: s.systemName || s.serialNumber, r, sysObj: s })));
+  const all = []; getClusters(systems).forEach(c => c.risks.forEach(x => all.push({ sys: c.name, r: x.risk, sysObj: c.nodes.find(nd => nd.serialNumber === x.serials[0]) || c.nodes[0] })));   // once per cluster, grid or array
   const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0], cap = x => { const t = String(x).replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
   let o = `# ${cust} -- Technical Risks\n\nPrepared ${today} from NetApp Active IQ risk signatures.\n\n`;
   if (!all.length) return o + `No technical risk signatures were identified across the monitored scope.\n`;
   const nSys = new Set(all.map(x => x.sys)).size;
   const bySev = {}; all.forEach(x => { const k = sev(x.r); (bySev[k] = bySev[k] || { n: 0, s: new Set() }); bySev[k].n++; bySev[k].s.add(x.sys); });
-  o += `## 1. Summary\n\n- **${all.length}** open risk findings across **${nSys}** system${nSys !== 1 ? 's' : ''}.\n${_rrNaText(systems) ? '- ' + _rrNaText(systems) + '\n' : ''}\n`;
+  o += `## 1. Summary\n\n- **${all.length}** open risk findings across **${nSys}** system${nSys !== 1 ? 's' : ''} (clusters, grids and arrays; a finding on several nodes of one cluster is counted once).\n${_rrNaText(systems) ? '- ' + _rrNaText(systems) + '\n' : ''}\n`;
   o += _wdTable(['Severity', 'Findings', 'Systems affected'], Object.keys(bySev).sort((x, y) => (rank[x] ?? 4) - (rank[y] ?? 4)).map(k => [cap(k), bySev[k].n, bySev[k].s.size]));
   // distinct issues (same severity, category and description) with the systems they affect
   const issues = new Map();
@@ -37378,7 +37408,7 @@ function compileRisksWordMd(systems, scopeTitle) {
 }
 function compileAdvisoriesWordMd(systems, scopeTitle) {
   const rank = { critical: 0, high: 1, medium: 2, low: 3 }, sev = a => String(a.severity || 'low').toLowerCase();
-  const all = []; (systems || []).forEach(s => (s.securityBulletins || []).forEach(b => all.push({ sys: s.systemName || s.serialNumber, b })));
+  const all = [], _seenAdv = new Set(); (systems || []).forEach(s => { const u = _unitOf(s); (s.securityBulletins || []).forEach(b => { const dk = u.key + '|' + _advDisplay(b) + '|' + String(b.severity || ''); if (_seenAdv.has(dk)) return; _seenAdv.add(dk); all.push({ sys: u.name, b }); }); });   // once per cluster, grid or array
   const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0], cap = x => { const t = String(x).replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
   let o = `# ${cust} -- Security Advisories\n\nPrepared ${today} from NetApp security advisories matched to each system's software version.\n\n`;
   if (!all.length) return o + `No security vulnerabilities were mapped against release baselines for this scope.\n`;
@@ -37593,7 +37623,7 @@ function downloadPlanSection(index) {
     text = `NETAPP EXECUTIVE SUMMARY REPORT
 Scope: ${scopeTitle}
 Date Generated: ${new Date().toISOString().split('T')[0]}
-Total Systems Audited: ${_dfEffectiveSystemCount(targetSystems)}
+Total Systems Audited: ${_dfScopeCountText(targetSystems)}
 
 METRICS SUMMARY:
 - Technical Risks: ${allRisks.length}
@@ -37844,7 +37874,7 @@ ${recs.length === 0 ? "✓ No recommendations available. Run a data refresh to l
     let body = `NETAPP AS-BUILT CONFIGURATION DOCUMENT
 Scope: ${scopeTitle}
 Date Generated: ${new Date().toISOString().split('T')[0]}
-Total Systems: ${_dfEffectiveSystemCount(targetSystems)}
+Total Systems: ${_dfScopeCountText(targetSystems)}
 ${sep}\n\n`;
 
     targetSystems.forEach((sys, idx) => {

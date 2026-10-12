@@ -1,8 +1,8 @@
 {
-  "version": "5.6.330",
+  "version": "5.6.331",
   "major": 5,
   "minor": 6,
-  "patch": 330,
+  "patch": 331,
   "date": "2026-10-11",
-  "notes": "Overview reports clusters, grids and arrays instead of nodes; secondary cards fold"
+  "notes": "Technical Audit, pickers, portfolio and documents report clusters, grids and arrays"
 }

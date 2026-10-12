@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.331 (2026-10-12)
+
+### Added
+- Cluster-level reporting carried through the rest of the interface and the documents. Technical Audit: the risk list is grouped per cluster, grid or array, each risk appears once, and a risk on only some nodes says '⚑ node-specific: only on <node>'; the system picker lists one entry per cluster, grid or array (its nodes only when there is more than one) and the Support & Ops and Customer Success pickers list single-node units once, as 'Array: ...' or 'Grid: ...'. The Selected line, the contracts tile and the customer portfolio count clusters, grids and arrays and give the node count.
+- Documents: scope counts read '556 clusters, 16 grids, 321 arrays (1,808 nodes in all)'; the ranking of systems by issue severity, the Technical Risks, Security Advisories and OS Upgrade Roadmaps documents list each cluster, grid or array once instead of once per node.
+
 ## 5.6.330 (2026-10-12)
 
 ### Added
