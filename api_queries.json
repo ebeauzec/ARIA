@@ -265,9 +265,9 @@
       "schema_check": "validated against the public schema reference"
     },
     "AckRisk": {
-      "description": "Write-back. Acknowledges a risk on a system in Active IQ. Sent only after the user confirms in the dialog and enters a justification.",
+      "description": "Write-back. Acknowledges a risk on one or more systems in Active IQ, or withdraws the acknowledgement ($flag false). Sent only by the server endpoint /api/risk/ack after the user confirms the list of systems; justification is one of RESOLUTION_PLANNED, SYSTEM_DECOMMISSIONED, RISK_ALLOWED, WORKAROUND_APPLIED, OTHER; the expiry is optional and must be in the future.",
       "type": "mutation",
-      "query": "mutation AckRisk($riskId: String!, $systemKeys: [SystemKey!]!, $ackBy: String!, $justification: JustificationType!, $comments: String) {\n    riskAcknowledge(riskId: $riskId, systemKeys: $systemKeys, acknowledgedBy: $ackBy, riskAcknowledgementFlag: true, justification: $justification, comments: $comments) {\n      status message updatedCount\n    }\n  }",
+      "query": "mutation AckRisk($riskId: String!, $systemKeys: [SystemKey!]!, $ackBy: String!, $flag: Boolean!, $justification: JustificationType!, $comments: String, $expiry: DateTime) {\n    riskAcknowledge(riskId: $riskId, systemKeys: $systemKeys, acknowledgedBy: $ackBy, riskAcknowledgementFlag: $flag, justification: $justification, comments: $comments, acknowledgementExpiryDate: $expiry) {\n      status message updatedCount\n    }\n  }",
       "schema_check": "validated against the public schema reference"
     },
     "MitigateRisk": {

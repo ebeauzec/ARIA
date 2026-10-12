@@ -1,8 +1,8 @@
 {
-  "version": "5.6.318",
+  "version": "5.6.319",
   "major": 5,
   "minor": 6,
-  "patch": 318,
+  "patch": 319,
   "date": "2026-10-11",
-  "notes": "Light theme readability pass (contrast audit), case badge legibility."
+  "notes": "Risk acknowledgement: server-side, justifications, bulk, withdraw, log with undo."
 }

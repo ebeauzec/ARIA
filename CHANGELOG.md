@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.319 (2026-10-12)
+
+### Added
+- Risk acknowledgement, rebuilt. The write is now made by the server, with the token of the Active IQ account that owns each system, instead of from the browser (which only held one token and could write with the wrong account). Acknowledging a risk now offers Active IQ's own five justifications (resolution planned, system to be decommissioned, risk allowed for this system, workaround applied, other), a comment, and an optional expiry date. One risk can be acknowledged on several systems in one go, with a checklist of the systems in scope, a "this customer" shortcut, a count of customers in the confirmation, and a limit of 500 systems at a time.
+- An acknowledgement can be withdrawn from ARIA (the same mutation with the flag off), from the Technical Risks tab and from the risk detail in Technical Audit. Acknowledged risks show a badge with who, when, why and the expiry. Every change is recorded in a log (Acknowledgements made from ARIA) with an Undo button. POST /api/risk/ack has a dry-run mode that checks the owning account's token without changing anything, and is administrator-only.
+
 ## 5.6.318 (2026-10-12)
 
 ### Fixed

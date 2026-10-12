@@ -1212,6 +1212,120 @@ def _doctor_run(test_tokens=False):
     return {"ok": True, "checks": out, "generatedAt": datetime.now(timezone.utc).isoformat(), "tokensTested": bool(test_tokens)}
 
 
+# ── Risk acknowledgement (write-back) ──────────────────────────────────────────────────────────────────────────────────────────────
+# Done here, not in the browser: the refresh tokens live on the server, each system belongs to one Active IQ account, and a write must use that account's token.
+_ACK_JUSTIFICATIONS = ("RESOLUTION_PLANNED", "SYSTEM_DECOMMISSIONED", "RISK_ALLOWED", "WORKAROUND_APPLIED", "OTHER")
+
+
+def _access_token_for(acct):
+    status, raw = _rest("access_token", refresh_token=acct.get("refreshToken"))
+    if status in (401, 403):
+        raise Exception(f"Active IQ rejected the refresh token of account '{acct.get('label')}' (HTTP {status}); renew it in Settings > Connection")
+    if status != 200:
+        raise Exception(f"token exchange answered HTTP {status}")
+    try:
+        d = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        d = {}
+    tok = (d.get("access_token") or d.get("accessToken")) if isinstance(d, dict) else None
+    if not tok:
+        s = raw.decode("utf-8", errors="replace").strip().strip('"')
+        tok = s if len(s) > 30 else None
+    if not tok:
+        raise Exception("no access token in the response")
+    return tok
+
+
+def _ack_log_table(db):
+    db.execute("""CREATE TABLE IF NOT EXISTS risk_ack_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, who TEXT DEFAULT '', account_id TEXT DEFAULT '', account_label TEXT DEFAULT '',
+        risk_id TEXT NOT NULL, risk_title TEXT DEFAULT '', serials_json TEXT DEFAULT '[]', acknowledged INTEGER NOT NULL, justification TEXT DEFAULT '', comments TEXT DEFAULT '',
+        expiry TEXT DEFAULT '', status TEXT DEFAULT '', message TEXT DEFAULT '', updated_count INTEGER DEFAULT 0, error TEXT DEFAULT '', dry_run INTEGER DEFAULT 0)""")
+
+
+def _ack_run(body):
+    """Acknowledge (or withdraw the acknowledgement of) one risk on a list of systems. Returns {ok, results:[{account, systems, status, message, updated, error}]}.
+    body: {riskId, riskTitle?, serials[], acknowledge (default true), justification, comments, expiry ('YYYY-MM-DD')?, dryRun?}. With dryRun nothing is sent to the risk
+    mutation: it only finds the owning account of each system and checks that Active IQ accepts that account's token."""
+    risk_id = str(body.get("riskId") or "").strip()
+    serials = list(dict.fromkeys(str(s).strip() for s in (body.get("serials") or []) if str(s).strip()))
+    flag = body.get("acknowledge", True) is not False
+    just = str(body.get("justification") or "OTHER").upper() if flag else "OTHER"
+    comments = str(body.get("comments") or "").strip()[:500]
+    if not flag and not comments:
+        comments = "Acknowledgement withdrawn from ARIA"
+    dry = bool(body.get("dryRun"))
+    if not risk_id or not risk_id.replace("-", "").replace("_", "").isalnum():
+        return {"ok": False, "error": "riskId is required"}
+    if not serials:
+        return {"ok": False, "error": "no systems given"}
+    if len(serials) > 500:
+        return {"ok": False, "error": "at most 500 systems per request"}
+    if just not in _ACK_JUSTIFICATIONS:
+        return {"ok": False, "error": "justification must be one of " + ", ".join(_ACK_JUSTIFICATIONS)}
+    if flag and just == "OTHER" and not comments:
+        return {"ok": False, "error": "a comment is required when the justification is Other"}
+    expiry = None
+    if flag and body.get("expiry"):
+        try:
+            d = datetime.strptime(str(body["expiry"])[:10], "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        except Exception:
+            return {"ok": False, "error": "expiry must be a date (YYYY-MM-DD)"}
+        if d <= datetime.now(timezone.utc):
+            return {"ok": False, "error": "the expiry date must be in the future"}
+        expiry = d.strftime("%Y-%m-%dT%H:%M:%SZ")
+    accounts = {a["id"]: a for a in _get_accounts()}
+    cfg = _load_config()
+    who = (cfg.get("tamEmail") or cfg.get("tamName") or "ARIA").strip() or "ARIA"
+    db = _init_db()
+    try:
+        _ack_log_table(db)
+        owners, unknown = {}, []
+        for i in range(0, len(serials), 400):
+            part = serials[i:i + 400]
+            rows = db.execute("SELECT serial_number, account_id FROM reporting_systems WHERE serial_number IN (%s)" % ",".join("?" * len(part)), part).fetchall()
+            found = {r[0]: r[1] for r in rows}
+            for s in part:
+                a = found.get(s)
+                if a in accounts:
+                    owners.setdefault(a, []).append(s)
+                else:
+                    unknown.append(s)
+        results = []
+        if unknown:
+            results.append({"account": "", "systems": len(unknown), "status": "NOT_SENT", "error": "no configured Active IQ account owns " + str(len(unknown)) + " of these systems", "serials": unknown[:20]})
+        for acc_id, ss in owners.items():
+            acct = accounts[acc_id]
+            res = {"account": acct.get("label") or acc_id, "systems": len(ss), "serials": ss, "status": "", "message": "", "updated": 0, "error": ""}
+            try:
+                tok = _access_token_for(acct)
+                if dry:
+                    res["status"] = "DRY_RUN"; res["message"] = "Active IQ accepted the token; nothing was changed"
+                else:
+                    for i in range(0, len(ss), 100):
+                        chunk = ss[i:i + 100]
+                        variables = {"riskId": risk_id, "systemKeys": [{"serialNumber": s} for s in chunk], "ackBy": who, "flag": flag, "justification": just, "comments": comments, "expiry": expiry}
+                        st, resp = _gql(tok, _Q("AckRisk"), variables)
+                        errs = resp.get("errors") if isinstance(resp, dict) else None
+                        if errs:
+                            raise Exception("; ".join(str(e.get("message")) for e in errs)[:300])
+                        out = ((resp.get("data") or {}).get("riskAcknowledge") or {}) if isinstance(resp, dict) else {}
+                        res["status"] = str(out.get("status") or st)
+                        res["message"] = str(out.get("message") or "")
+                        res["updated"] += int(out.get("updatedCount") or 0)
+            except Exception as e:
+                res["error"] = str(e)[:300]
+            results.append(res)
+            db.execute("INSERT INTO risk_ack_log (created_at, who, account_id, account_label, risk_id, risk_title, serials_json, acknowledged, justification, comments, expiry, status, message, updated_count, error, dry_run) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (datetime.now(timezone.utc).isoformat(), who, acc_id, res["account"], risk_id, str(body.get("riskTitle") or "")[:200], json.dumps(ss), 1 if flag else 0, just, comments,
+                        expiry or "", res["status"], res["message"], res["updated"], res["error"], 1 if dry else 0))
+        db.commit()
+    finally:
+        db.close()
+    return {"ok": all(not r.get("error") for r in results), "dryRun": dry, "acknowledge": flag, "results": results}
+
+
 def _recent_harvest_warnings(db, days=14):
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -10077,6 +10191,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_bulletins_scan()
         elif self.path.startswith('/api/bulletins'):
             self.handle_bulletins_get()
+        elif self.path.startswith('/api/risk/ack-log'):
+            self.handle_risk_ack_log()
         elif self.path.startswith('/api/doctor'):
             self.handle_doctor()
         elif self.path.startswith('/api/history/changes'):
@@ -10483,6 +10599,8 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_fleet_trend_post()
         elif self.path == '/api/history/changes':
             self.handle_changes()
+        elif self.path == '/api/risk/ack':
+            self.handle_risk_ack()
         elif self.path == '/api/history/annotate':
             self.handle_history_annotate()
         elif self.path == '/api/webhook/test':
@@ -10701,6 +10819,35 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"  [HISTORY] Trend (scoped) error: {e}", flush=True)
             self._json_response(500, {"ok": False, "error": str(e), "trend": []})
+
+    def handle_risk_ack(self):
+        """POST /api/risk/ack: acknowledge or withdraw a risk on a list of systems (see _ack_run). Administrators only (not in the viewer allow-list)."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+            res = _ack_run(body)
+            self._json_response(200 if res.get("ok") or res.get("results") else 400, res)
+        except Exception as e:
+            print(f"  [ACK] error: {e}", flush=True)
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def handle_risk_ack_log(self):
+        """GET /api/risk/ack-log: what has been acknowledged or withdrawn from ARIA, newest first."""
+        try:
+            db = _init_db()
+            try:
+                _ack_log_table(db)
+                rows = db.execute("SELECT id, created_at, who, account_label, risk_id, risk_title, serials_json, acknowledged, justification, comments, expiry, status, message, updated_count, error, dry_run "
+                                  "FROM risk_ack_log WHERE dry_run = 0 ORDER BY id DESC LIMIT 100").fetchall()
+            finally:
+                db.close()
+            cols = ["id", "createdAt", "who", "account", "riskId", "riskTitle", "serials", "acknowledged", "justification", "comments", "expiry", "status", "message", "updated", "error", "dryRun"]
+            items = []
+            for r in rows:
+                it = dict(zip(cols, r)); it["serials"] = json.loads(it["serials"] or "[]"); it["acknowledged"] = bool(it["acknowledged"]); items.append(it)
+            self._json_response(200, {"ok": True, "items": items})
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
 
     def handle_doctor(self):
         """GET /api/doctor[?exchange=1]: the connection check (see _doctor_run). Administrators only (it is not in the viewer allow-list)."""

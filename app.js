@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.318";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.319";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.319",
+    date: "12 October 2026",
+    title: "Risk Acknowledgement Rebuilt",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Risk acknowledgement, rebuilt. The write is now made by the server, with the token of the Active IQ account that owns each system, instead of from the browser (which only held one token and could write with the wrong account). Acknowledging a risk now offers Active IQ's own five justifications (resolution planned, system to be decommissioned, risk allowed for this system, workaround applied, other), a comment, and an optional expiry date. One risk can be acknowledged on several systems in one go, with a checklist of the systems in scope, a \"this customer\" shortcut, a count of customers in the confirmation, and a limit of 500 systems at a time.",
+          "An acknowledgement can be withdrawn from ARIA (the same mutation with the flag off), from the Technical Risks tab and from the risk detail in Technical Audit. Acknowledged risks show a badge with who, when, why and the expiry. Every change is recorded in a log (Acknowledgements made from ARIA) with an Undo button. POST /api/risk/ack has a dry-run mode that checks the owning account's token without changing anything, and is administrator-only.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.318",
     date: "12 October 2026",
@@ -11992,34 +12008,6 @@ async function _callAIQMutation(mutationQuery, variables) {
   return result.data;
 }
 
-// Marks a risk as acknowledged in Active IQ — writes back to the real customer
-// account, visible in the actual Active IQ portal, not just inside ARIA.
-async function acknowledgeRiskInAIQ(riskId, serialNumber, riskTitle) {
-  const justification = window.prompt(
-    `⚠ This will WRITE BACK to the customer's live Active IQ account.\n\n` +
-    `Acknowledge risk "${riskTitle}" on system ${serialNumber}?\n\n` +
-    `Enter a justification/comment (required by Active IQ):`
-  );
-  if (justification === null) return; // user cancelled
-  if (!justification.trim()) { alert("Justification is required — acknowledgement cancelled."); return; }
-
-  const mutation = aiqQuery("AckRisk");
-  const variables = {
-    riskId,
-    systemKeys: [{ serialNumber }],
-    ackBy: (window.currentUser && window.currentUser.name) || "ARIA User",
-    justification: "OTHER",
-    comments: justification.trim()
-  };
-  try {
-    await _callAIQMutation(mutation, variables);
-    alert("✓ Risk acknowledged in Active IQ.");
-  } catch (e) {
-    alert("✗ Failed to acknowledge risk in Active IQ: " + e.message);
-    console.error("[AIQ Mutation] riskAcknowledge failed:", e);
-  }
-}
-
 // Marks a risk as mitigated in Active IQ — writes back to the real customer
 // account, visible in the actual Active IQ portal, not just inside ARIA.
 async function mitigateRiskInAIQ(riskId, serialNumber, riskTitle) {
@@ -15623,6 +15611,127 @@ function toggleBulletinSecondary(btn) {
   }
 }
 
+// ── Acknowledge a risk in Active IQ, or withdraw the acknowledgement ──────────────────────────────────────────────────────────────
+// The write is made by the server (POST /api/risk/ack), with the token of the Active IQ account that owns each system: the tokens live on the server, and one risk can
+// sit on systems of several accounts. The same risk can be acknowledged on many systems in one go; every change is logged and can be withdrawn.
+const _ACK_JUSTIFICATIONS = [['RESOLUTION_PLANNED', 'Resolution planned', 'Activity is scheduled within a year'], ['SYSTEM_DECOMMISSIONED', 'Will not resolve: system to be decommissioned', 'within a year'],
+  ['RISK_ALLOWED', 'Will not resolve: risk allowed for this system', ''], ['WORKAROUND_APPLIED', 'Workaround applied', ''], ['OTHER', 'Other', 'a comment is required']];
+function _ackLabel(code) { const j = _ACK_JUSTIFICATIONS.find(x => x[0] === code); return j ? j[1] : (code || ''); }
+function _ackBadgeHtml(a) {
+  if (!a) return '';
+  const when = a.date ? String(a.date).slice(0, 10) : '', exp = a.expiry ? `, expires ${String(a.expiry).slice(0, 10)}` : '';
+  const tip = `${_esc(a.by || 'unknown')}${when ? ' on ' + when : ''}: ${_esc(_ackLabel(a.justification))}${a.comments ? ' - ' + _esc(a.comments) : ''}${exp}`;
+  return `<span title="${tip}" style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.68rem;font-weight:700;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.35);color:var(--accent-cyan);">Acknowledged${when ? ' ' + when : ''}</span>`;
+}
+function acknowledgeRiskInAIQ(riskId, serialNumber, riskTitle) { openRiskAckDialog(riskId, serialNumber, riskTitle, false); }
+function withdrawRiskAckInAIQ(riskId, serialNumber, riskTitle) { openRiskAckDialog(riskId, serialNumber, riskTitle, true); }
+function _ackRowsFor(riskId) {
+  const rows = [];
+  (getFilteredSystems(true) || []).forEach(s => { const r = (s.risks || []).find(x => String(x.id) === String(riskId)); if (r) rows.push({ serial: s.serialNumber, name: s.systemName || s.serialNumber, customer: s.customerName || '', ack: r.ack || null }); });
+  return rows;
+}
+function _ackApplyLocal(riskId, serials, flag, info) {
+  const set = new Set(serials.map(String));
+  (state.systems || []).forEach(s => { if (!set.has(String(s.serialNumber))) return; (s.risks || []).forEach(r => { if (String(r.id) === String(riskId)) r.ack = flag ? info : null; }); });
+}
+async function _ackSend(body) {
+  const r = await fetch('/api/risk/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ }
+  if (!j) throw new Error('The server answered HTTP ' + r.status);
+  return j;
+}
+function closeRiskAckDialog() { const m = document.getElementById('riskAckModal'); if (m) m.remove(); }
+function openRiskAckDialog(riskId, serialNumber, riskTitle, withdraw) {
+  closeRiskAckDialog();
+  const rows = _ackRowsFor(riskId), cand = rows.filter(x => withdraw ? !!x.ack : !x.ack);
+  if (!cand.length && !rows.length) rows.push({ serial: serialNumber, name: serialNumber, customer: '', ack: null });
+  const list = cand.length ? cand : rows;
+  window._ackMyCust = ((rows.find(x => x.serial === serialNumber) || {}).customer) || '';
+  const _myCustN = list.filter(x => x.customer === window._ackMyCust).length;
+  const wrap = document.createElement('div'); wrap.id = 'riskAckModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  const inp = 'width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-input);color:var(--text-primary);font-size:0.82rem;';
+  wrap.innerHTML = `<div style="background:var(--bg-sidebar);border:1px solid var(--border-color);border-radius:12px;max-width:640px;width:100%;max-height:92vh;overflow:auto;padding:22px;box-shadow:var(--shadow);">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;"><div style="font-size:1.05rem;font-weight:700;">${withdraw ? 'Withdraw the acknowledgement' : 'Acknowledge risk'}</div><button class="action-btn secondary" onclick="closeRiskAckDialog()" style="padding:2px 10px;">✕</button></div>
+    <div style="font-size:0.82rem;margin:8px 0 10px;color:var(--text-secondary);">${_esc(riskTitle || 'Risk ' + riskId)}</div>
+    <div style="font-size:0.74rem;padding:8px 10px;border-radius:6px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.35);margin-bottom:12px;">This changes the customer's <b>live Active IQ account</b>, as if done in Active IQ itself. It is logged here and can be withdrawn.</div>
+    <div style="font-size:0.78rem;font-weight:600;margin-bottom:4px;">Systems <span style="font-weight:400;color:var(--text-muted);">(${list.length} in the current scope ${withdraw ? 'with this acknowledgement' : 'without it'})</span>
+      ${window._ackMyCust ? `<a href="#" onclick="document.querySelectorAll('#riskAckList input').forEach(x=>x.checked=(x.dataset.cust===window._ackMyCust));_ackCount();return false;" style="font-size:0.72rem;margin-left:8px;">this customer (${_myCustN})</a>` : ''}
+      <a href="#" onclick="document.querySelectorAll('#riskAckList input').forEach(x=>x.checked=true);_ackCount();return false;" style="font-size:0.72rem;margin-left:6px;">all (${list.length})</a>
+      <a href="#" onclick="document.querySelectorAll('#riskAckList input').forEach(x=>x.checked=false);_ackCount();return false;" style="font-size:0.72rem;margin-left:6px;">none</a></div>
+    <div id="riskAckList" style="max-height:170px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:6px 8px;margin-bottom:12px;font-size:0.76rem;">${list.map(x => `<label style="display:flex;gap:8px;align-items:center;padding:2px 0;"><input type="checkbox" value="${_esc(x.serial)}" data-cust="${_esc(x.customer)}" ${x.serial === serialNumber ? 'checked' : ''} onchange="_ackCount()"> <span>${_esc(x.name)}</span><span style="color:var(--text-muted);">${_esc(x.customer)}</span></label>`).join('')}</div>
+    ${withdraw ? `<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">The acknowledgement is withdrawn with the comment "Acknowledgement withdrawn from ARIA" unless you write another below.</div>` : `
+    <div style="margin-bottom:10px;"><label style="font-size:0.78rem;font-weight:600;">Justification</label><select id="riskAckJust" style="${inp}">${_ACK_JUSTIFICATIONS.map(j => `<option value="${j[0]}">${_esc(j[1])}${j[2] ? ' (' + _esc(j[2]) + ')' : ''}</option>`).join('')}</select></div>`}
+    <div style="margin-bottom:10px;"><label style="font-size:0.78rem;font-weight:600;">Comment</label><textarea id="riskAckComment" style="${inp}min-height:60px;" maxlength="500" placeholder="${withdraw ? 'optional' : 'why this risk is acknowledged'}"></textarea></div>
+    ${withdraw ? '' : `<div style="margin-bottom:12px;"><label style="font-size:0.78rem;font-weight:600;">Expires <span style="font-weight:400;color:var(--text-muted);">(optional; never expires if empty)</span></label><input id="riskAckExpiry" type="date" min="${new Date(Date.now() + 86400000).toISOString().slice(0, 10)}" style="${inp}max-width:200px;"></div>`}
+    <div id="riskAckMsg" style="font-size:0.78rem;margin-bottom:10px;"></div>
+    <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap;"><a href="#" onclick="closeRiskAckDialog();showAckLog();return false;" style="font-size:0.74rem;">Acknowledgement log</a>
+      <div style="display:flex;gap:8px;"><button class="action-btn secondary" onclick="closeRiskAckDialog()">Cancel</button><button class="action-btn" id="riskAckGo" onclick="_ackSubmit('${_esc(String(riskId).replace(/'/g, ''))}', ${withdraw ? 'true' : 'false'})"></button></div></div></div>`;
+  wrap.addEventListener('click', e => { if (e.target === wrap) closeRiskAckDialog(); });
+  wrap.dataset.title = riskTitle || '';
+  document.body.appendChild(wrap); _ackCount(withdraw);
+}
+function _ackCount(withdraw) {
+  const n = document.querySelectorAll('#riskAckList input:checked').length, b = document.getElementById('riskAckGo'); if (!b) return;
+  const w = b.dataset.w != null ? b.dataset.w === '1' : !!withdraw; b.dataset.w = w ? '1' : '0';
+  b.textContent = (w ? 'Withdraw on ' : 'Acknowledge on ') + n + ' system' + (n !== 1 ? 's' : ''); b.disabled = n === 0;
+}
+async function _ackSubmit(riskId, withdraw) {
+  const serials = [...document.querySelectorAll('#riskAckList input:checked')].map(x => x.value), msg = document.getElementById('riskAckMsg'), go = document.getElementById('riskAckGo');
+  const just = withdraw ? 'OTHER' : (document.getElementById('riskAckJust') || {}).value, comments = (document.getElementById('riskAckComment') || {}).value.trim(), expiry = (document.getElementById('riskAckExpiry') || {}).value || '';
+  if (!serials.length) return;
+  if (!withdraw && just === 'OTHER' && !comments) { msg.style.color = 'var(--status-critical)'; msg.textContent = 'A comment is required when the justification is Other.'; return; }
+  if (serials.length > 500) { msg.style.color = 'var(--status-critical)'; msg.textContent = 'At most 500 systems can be changed at a time: untick some or do it in two steps.'; return; }
+  const _custs = new Set([...document.querySelectorAll('#riskAckList input:checked')].map(x => x.dataset.cust)).size;
+  if (!confirm((withdraw ? 'Withdraw the acknowledgement of this risk on ' : 'Acknowledge this risk on ') + serials.length + ' system' + (serials.length !== 1 ? 's' : '') + (_custs > 1 ? ' of ' + _custs + ' different customers' : '') + ' in the live Active IQ account(s)?')) return;
+  go.disabled = true; msg.style.color = 'var(--text-muted)'; msg.textContent = 'Sending…';
+  try {
+    const title = (document.getElementById('riskAckModal') || {}).dataset ? document.getElementById('riskAckModal').dataset.title : '';
+    const j = await _ackSend({ riskId, riskTitle: title, serials, acknowledge: !withdraw, justification: just, comments, expiry });
+    const lines = (j.results || []).map(r => `${r.account || 'unassigned systems'}: ${r.error ? '✖ ' + r.error : '✔ ' + (r.updated || r.systems) + ' system' + ((r.updated || r.systems) !== 1 ? 's' : '') + ' ' + (withdraw ? 'withdrawn' : 'acknowledged')}`);
+    const okSerials = (j.results || []).filter(r => !r.error && r.serials).flatMap(r => r.serials);
+    if (okSerials.length) { _ackApplyLocal(riskId, okSerials, !withdraw, { by: 'ARIA', date: new Date().toISOString(), justification: just, comments, expiry: expiry || null }); }
+    msg.style.color = j.ok ? 'var(--status-normal)' : 'var(--status-critical)'; msg.innerHTML = lines.map(_esc).join('<br>');
+    if (okSerials.length) setTimeout(() => { closeRiskAckDialog(); try { switchTab(state.currentTab); if (document.getElementById('remediationModal') && document.getElementById('remediationModal').style.display === 'flex') openRemediationModal(riskId); } catch (e) { /* redrawn on the next navigation */ } }, 1800);
+    else go.disabled = false;
+  } catch (e) { msg.style.color = 'var(--status-critical)'; msg.textContent = 'Not sent: ' + e.message; go.disabled = false; }
+}
+async function showAckLog() {
+  document.getElementById('riskAckLogModal') && document.getElementById('riskAckLogModal').remove();
+  const wrap = document.createElement('div'); wrap.id = 'riskAckLogModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  wrap.innerHTML = '<div style="background:var(--bg-sidebar);border:1px solid var(--border-color);border-radius:12px;max-width:900px;width:100%;max-height:90vh;overflow:auto;padding:22px;"><div style="display:flex;justify-content:space-between;"><div style="font-size:1.05rem;font-weight:700;">Acknowledgements made from ARIA</div><button class="action-btn secondary" onclick="document.getElementById(\'riskAckLogModal\').remove()" style="padding:2px 10px;">✕</button></div><div id="riskAckLogBody" style="margin-top:12px;font-size:0.78rem;">Loading…</div></div>';
+  wrap.addEventListener('click', e => { if (e.target === wrap) wrap.remove(); });
+  document.body.appendChild(wrap);
+  const body = document.getElementById('riskAckLogBody');
+  try {
+    const r = await fetch('/api/risk/ack-log', { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); const j = await r.json(), items = j.items || [];
+    if (!items.length) { body.textContent = 'Nothing has been acknowledged or withdrawn from ARIA yet.'; return; }
+    window._ackLogItems = items;
+    body.innerHTML = `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-muted);font-size:0.7rem;text-transform:uppercase;"><th style="padding:4px 6px;">When</th><th>Action</th><th>Risk</th><th>Systems</th><th>Result</th><th></th></tr></thead><tbody>` + items.map((it, i) => {
+      const later = items.slice(0, i).some(x => x.riskId === it.riskId && x.account === it.account && !x.acknowledged && !x.error);
+      const undo = it.acknowledged && !it.error && !later ? `<button class="action-btn secondary" style="font-size:0.7rem;padding:3px 8px;" onclick="_ackUndo(${i})">Undo</button>` : (it.acknowledged && later ? '<span style="color:var(--text-muted);">withdrawn</span>' : '');
+      return `<tr style="border-bottom:1px solid var(--border-color);"><td style="padding:5px 6px;white-space:nowrap;">${_esc(String(it.createdAt).slice(0, 16).replace('T', ' '))}</td><td>${it.acknowledged ? 'Acknowledged' : 'Withdrawn'}<div style="color:var(--text-muted);font-size:0.68rem;">${it.acknowledged ? _esc(_ackLabel(it.justification)) : ''}</div></td><td>${_esc(it.riskTitle || it.riskId)}</td><td>${(it.serials || []).length} (${_esc(it.account)})</td><td style="color:${it.error ? 'var(--status-critical)' : 'var(--status-normal)'};">${_esc(it.error || it.status || '')}</td><td>${undo}</td></tr>`;
+    }).join('') + '</tbody></table>';
+  } catch (e) { body.textContent = 'The log could not be read: ' + e.message; }
+}
+async function _ackUndo(i) {
+  const it = (window._ackLogItems || [])[i]; if (!it) return;
+  if (!confirm('Withdraw the acknowledgement of "' + (it.riskTitle || it.riskId) + '" on ' + it.serials.length + ' system(s) in the live Active IQ account?')) return;
+  try {
+    const j = await _ackSend({ riskId: it.riskId, riskTitle: it.riskTitle, serials: it.serials, acknowledge: false });
+    (j.results || []).filter(r => !r.error && r.serials).forEach(r => _ackApplyLocal(it.riskId, r.serials, false, null));
+    alert((j.ok ? '✔ Withdrawn.' : '✖ ' + (j.results || []).map(r => r.error).filter(Boolean).join('; ')));
+    showAckLog();
+  } catch (e) { alert('Not sent: ' + e.message); }
+}
+// the Technical Audit slide-out: the risk's acknowledgement state and the buttons
+function _ackFillModalRow(risk, sys) {
+  const el = document.getElementById('modalAckRow'); if (!el) return;
+  const sn = String(sys.serialNumber || '').replace(/'/g, ''), id = String(risk.id).replace(/'/g, ''), t = String(risk.description || risk.category || 'Risk').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+  el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:12px;border-top:1px dashed var(--border-color);"><span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;">Active IQ acknowledgement</span>${risk.ack ? _ackBadgeHtml(risk.ack) + `<button class="action-btn secondary" style="font-size:0.72rem;padding:4px 10px;" onclick="withdrawRiskAckInAIQ('${id}','${sn}','${t}')">Withdraw…</button>` : `<button class="action-btn secondary" style="font-size:0.72rem;padding:4px 10px;" onclick="acknowledgeRiskInAIQ('${id}','${sn}','${t}')">Acknowledge…</button>`}<a href="#" onclick="showAckLog();return false;" style="font-size:0.72rem;">log</a></div>`;
+}
+
 function openRemediationModal(riskId) {
 
   let risk = null;
@@ -15802,6 +15911,7 @@ function openRemediationModal(riskId) {
 
   const kbBtn = document.getElementById("modalKbLink");
   kbBtn.href = buildKBSearchURL(risk.description, risk.category);
+  _ackFillModalRow(risk, ownerSys);
 
   modal.style.display = "flex";
 }
@@ -22376,7 +22486,8 @@ function enrichSystemTelemetry(s) {
       // what kind of change fixes the risk, from Active IQ's risk metadata (used by the Service History tab)
       fixAction: r.fixAction || '', fixActionSub: r.fixActionSub || '', fixCategory: r.fixCategory || '', hasFixit: !!r.hasFixit,
       // when Active IQ first and last raised the risk on this system, and the versions that fix it
-      firstSeen: r.riskTriggeredDate || '', lastSeen: r.riskLastTriggeredDate || '', fixedVersions: Array.isArray(r.fixedVersions) ? r.fixedVersions : []
+      firstSeen: r.riskTriggeredDate || '', lastSeen: r.riskLastTriggeredDate || '', fixedVersions: Array.isArray(r.fixedVersions) ? r.fixedVersions : [],
+      ack: (r.acknowledgement && typeof r.acknowledgement === 'object' && (r.acknowledgement.acknowledgedBy || r.acknowledgement.acknowledgementDate)) ? { by: r.acknowledgement.acknowledgedBy || '', date: r.acknowledgement.acknowledgementDate || '', justification: r.acknowledgement.justification || '', comments: r.acknowledgement.comments || '', expiry: r.acknowledgement.acknowledgementExpiryDate || null } : null
       // Note: kbLink is intentionally excluded — search URLs are built dynamically
       // at render time from description+category via buildKBSearchURL(), ensuring
       // any new condition from the AIQ API gets a working, relevant search link.
@@ -35349,7 +35460,7 @@ function generateActionPlan() {
             return `
           <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border-color); display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
             <span style="font-size: 0.68rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;">⚠ Writes to Active IQ:</span>
-            <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="acknowledgeRiskInAIQ('${_rid}','${_sn}','${_title}')" data-tooltip="Acknowledges this risk directly in the customer's live Active IQ account — visible in the real Active IQ portal, not just here.">Acknowledge in AIQ</button>
+            ${r.ack ? _ackBadgeHtml(r.ack) + `<button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="withdrawRiskAckInAIQ('${_rid}','${_sn}','${_title}')" data-tooltip="Withdraws the acknowledgement in the customer's live Active IQ account.">Withdraw acknowledgement…</button>` : `<button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="acknowledgeRiskInAIQ('${_rid}','${_sn}','${_title}')" data-tooltip="Acknowledges this risk in the customer's live Active IQ account, on this system or on several at once. Choose a justification; it can be withdrawn.">Acknowledge…</button>`}<a href="#" onclick="showAckLog();return false;" style="font-size:0.72rem;">log</a><span style="display:none"></span>
             <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="mitigateRiskInAIQ('${_rid}','${_sn}','${_title}')" data-tooltip="Marks this risk as mitigated directly in the customer's live Active IQ account — only use after the fix has actually been applied.">Mark Mitigated in AIQ</button>
           </div>`;
           })() : ''}
