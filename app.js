@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.320";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.321";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.321",
+    date: "12 October 2026",
+    title: "Open Case Counts",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The support-case counts beside customers and groups in the sidebar, and the \"Open\" badge on each system in the systems table, counted every case ever raised, closed ones included (one customer showed 619 where 12 are open; across the fleet 1,605 cases of which 49 are open). They now count only open cases, using the same definition as the documents: not closed, resolved or cancelled, and not still being set up. Statuses such as Open - Active, Open - Customer Action, Open - Awaiting TSE and Solution Proposed count as open.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.320",
     date: "12 October 2026",
@@ -13796,8 +13811,9 @@ function renderOverviewTable() {
     }
 
     let nameHtml = sys.systemName;
-    if (sys.supportCases && sys.supportCases.length > 0) {
-      nameHtml += ` <span class="badge warning" style="font-size: 0.65rem; padding: 2px 4px; vertical-align: middle; margin-left: 4px; background-color: var(--status-info); color: var(--on-info); border-color: rgba(0, 230, 118, 0.2); cursor: pointer;" onclick="navigateToSupportCases('SYSTEM', '${sys.serialNumber}', event)" data-tooltip="Click to view active support cases for this system">✉ ${sys.supportCases.length} Open</span>`;
+    const _openN = _openCaseCount(sys.supportCases);
+    if (_openN > 0) {
+      nameHtml += ` <span class="badge warning" style="font-size: 0.65rem; padding: 2px 4px; vertical-align: middle; margin-left: 4px; background-color: var(--status-info); color: var(--on-info); border-color: rgba(0, 230, 118, 0.2); cursor: pointer;" onclick="navigateToSupportCases('SYSTEM', '${sys.serialNumber}', event)" data-tooltip="Click to view active support cases for this system">✉ ${_openN} Open</span>`;
     }
 
     tr.innerHTML = `
@@ -24577,10 +24593,18 @@ Reason for Change: Updating local datacenter access restrictions and primary sit
 }
 
 // Filter support cases: only open/active, sorted by highest priority
+const _CASE_CLOSED_STATUSES = ['closed', 'resolved', 'cancelled', 'canceled', 'auto-close', 'pendingclose', 'pendingclosed', 'internaluserreqclosed'];
+const _CASE_INACTIVE_STATUSES = ['coreancillary', 'corereceived', 'coreincomplete', 'duplicatecore', 'coreunderanalysis', 'initializing'];
+// An open case is one that is neither closed nor still being set up. The counts beside customers, groups and systems count only these, never the whole history.
+function _caseIsOpen(c) {
+  const st = ((c && c.status) || '').toLowerCase().replace(/[\s_-]/g, '');
+  return !_CASE_CLOSED_STATUSES.some(cs => st.includes(cs.replace(/[\s_-]/g, ''))) && !_CASE_INACTIVE_STATUSES.some(cs => st.includes(cs.replace(/[\s_-]/g, '')));
+}
+function _openCaseCount(cases) { return Array.isArray(cases) ? cases.filter(_caseIsOpen).length : 0; }
 function filterActiveCases(cases) {
   // Classify each case as active or inactive/closed
-  const closedStatuses = ['closed', 'resolved', 'cancelled', 'canceled', 'auto-close', 'pendingclose', 'pendingclosed', 'internaluserreqclosed'];
-  const inactiveStatuses = ['coreancillary', 'corereceived', 'coreincomplete', 'duplicatecore', 'coreunderanalysis', 'initializing'];
+  const closedStatuses = _CASE_CLOSED_STATUSES;
+  const inactiveStatuses = _CASE_INACTIVE_STATUSES;
   
   cases.forEach(c => {
     const st = (c.status || '').toLowerCase().replace(/[\s_-]/g, '');
@@ -39078,7 +39102,7 @@ function renderSidebarGroups() {
       const riskCount = custSystems.reduce((acc, s) => acc + s.risks.length, 0);
       const badge = riskCount > 0 ? `<span class="tree-badge ${custSystems.some(s => s.status === 'critical') ? 'critical' : 'warning'}">${riskCount}</span>` : '';
       
-      const caseCount = custSystems.reduce((acc, s) => acc + (s.supportCases ? s.supportCases.length : 0), 0);
+      const caseCount = custSystems.reduce((acc, s) => acc + _openCaseCount(s.supportCases), 0);
       const caseBadge = caseCount > 0 ? `<span class="tree-badge info" style="background: var(--status-info); cursor: pointer;" onclick="navigateToSupportCases('CUSTOMER', '${cust}', event)" data-tooltip="Click to view all ${caseCount} open support cases">✉ ${caseCount}</span>` : '';
 
       item.innerHTML = `
@@ -39116,7 +39140,7 @@ function renderSidebarGroups() {
       const riskCount = groupSystems.reduce((acc, s) => acc + s.risks.length, 0);
       const badge = riskCount > 0 ? `<span class="tree-badge ${groupSystems.some(s => s.status === 'critical') ? 'critical' : 'warning'}">${riskCount}</span>` : '';
 
-      const caseCount = groupSystems.reduce((acc, s) => acc + (s.supportCases ? s.supportCases.length : 0), 0);
+      const caseCount = groupSystems.reduce((acc, s) => acc + _openCaseCount(s.supportCases), 0);
       const caseBadge = caseCount > 0 ? `<span class="tree-badge info" style="background: var(--status-info); cursor: pointer;" onclick="navigateToSupportCases('GROUP', '${grp.id}', event)" data-tooltip="Click to view all ${caseCount} open support cases">✉ ${caseCount}</span>` : '';
 
       item.innerHTML = `

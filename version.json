@@ -1,8 +1,8 @@
 {
-  "version": "5.6.320",
+  "version": "5.6.321",
   "major": 5,
   "minor": 6,
-  "patch": 320,
+  "patch": 321,
   "date": "2026-10-11",
-  "notes": "Fix JavaScript error from risk titles containing quotes in the Acknowledge/Mitigate buttons."
+  "notes": "Sidebar and system-table case counts show open cases only."
 }

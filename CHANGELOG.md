@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.321 (2026-10-12)
+
+### Fixed
+- The support-case counts beside customers and groups in the sidebar, and the "Open" badge on each system in the systems table, counted every case ever raised, closed ones included (one customer showed 619 where 12 are open; across the fleet 1,605 cases of which 49 are open). They now count only open cases, using the same definition as the documents: not closed, resolved or cancelled, and not still being set up. Statuses such as Open - Active, Open - Customer Action, Open - Awaiting TSE and Solution Proposed count as open.
+
 ## 5.6.320 (2026-10-12)
 
 ### Fixed
