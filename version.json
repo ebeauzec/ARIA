@@ -1,8 +1,8 @@
 {
-  "version": "5.6.322",
+  "version": "5.6.323",
   "major": 5,
   "minor": 6,
-  "patch": 322,
+  "patch": 323,
   "date": "2026-10-11",
-  "notes": "Risk pill: open risks, severity tooltip, click to Technical Audit; sidebar counts stay current."
+  "notes": "KEV exposure card and brief section; KEV check now evidence-based."
 }

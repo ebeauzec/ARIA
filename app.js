@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.322";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.323";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.323",
+    date: "12 October 2026",
+    title: "Known Exploited Vulnerabilities View",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New \"Known exploited vulnerabilities (CISA KEV)\" card on the Overview tab, and the same section in the Security Posture Brief. For the systems in scope it lists each CISA KEV CVE with when it was added and its federal due date (and how many days past), the products, the number of systems and customers, the evidence, and the fixed release on each system's own release line. \"Show systems\" lists the systems grouped by customer (each opens in Technical Audit) and \"Copy\" copies the list.",
+          "A system is listed against a KEV CVE only on evidence: Active IQ reported the CVE on it, or NetApp's advisory lists a fixed release for its product and the installed release is below the fix on its line. Advisories that name other products, releases that are already fixed, and advisories that publish no fixed release for the system's product are not counted as exposure; the card says how many were left out.",
+          "The \"No CISA KEV Active Exploitation Alerts\" check, and the per-system version of it, now use the same evidence. Before, they matched nearly every ONTAP system (1,285 of 1,296) to three KEV CVEs, two of which are about other NetApp products (the ONTAP Select Deploy utility and Cloud Backup); the evidence-based result is 4 CVEs on 365 systems. Scores that include this check will rise accordingly.",
+          "The CVE index no longer marks every CVE in a multi-CVE advisory as known exploited because one of them is.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.322",
     date: "12 October 2026",
@@ -18430,7 +18448,7 @@ function renderCSMTab() {
       else _fail('fw', s, `${_fwRisks.length} firmware finding${_fwRisks.length > 1 ? 's' : ''}`);
 
       // 14. No CISA KEV active exploitation alerts
-      const _cisaHits = _sec.filter(_bulletinIsKev);
+      const _cisaHits = _kevCvesOfSystem(s).hits;
       if (_isOnt && _cisaHits.length === 0) _cisaKevPass++;
       else if (_isOnt) _fail('kev', s, `${_cisaHits.length} CISA KEV CVE${_cisaHits.length > 1 ? 's' : ''}`);
 
@@ -18985,7 +19003,7 @@ function renderCSMTab() {
     const desc = ((r.description || '') + ' ' + (r.name || '') + ' ' + (r.category || '')).toLowerCase();
     return desc.includes('firmware') || desc.includes('disk qual') || desc.includes('shelf fw');
   });
-  const _sCisaHits   = _sCVEs.filter(_bulletinIsKev);
+  const _sCisaHits   = _kevCvesOfSystem(sys).hits;
   const _sSvms       = (typeof getSystemSvms === 'function') ? (getSystemSvms(sys) || []) : (sys.vservers || []);
   const _sCloneCount = sys.flexCloneCount || 0;
   const _sAdoptScore = (typeof computeFeatureAdoptionScore === 'function') ? computeFeatureAdoptionScore(sys) : null;
@@ -21751,6 +21769,111 @@ function _bulletinIsKev(b) {
   const ids = (String(b.cve || '') + ' ' + String(b.cveId || '') + ' ' + String(b.id || '') + ' ' + String(b.title || '')).match(/CVE-\d{4}-\d{4,}/gi) || [];
   return ids.some(id => _kevCves.has(id.toUpperCase()));
 }
+// ── Known exploited vulnerabilities (CISA KEV): exposure ──────────────────────────────────────────────────────────────────────────
+// A system is listed against a KEV CVE only on evidence: (1) Active IQ raised a finding that names the CVE on that system, or (2) NetApp's advisory for the CVE lists a
+// fixed release for the system's product and the installed release is below the fix on its line. Advisories that name other products, releases already fixed, and
+// advisories that give no fixed release for the system's product are NOT exposure: the last kind is counted apart as "unverified".
+const _kevMemo = new Map();
+function _kevIdsOf(text) { return (String(text || '').match(/CVE-\d{4}-\d{4,}/gi) || []).map(x => x.toUpperCase()); }
+function _kevCvesOfSystem(s) {
+  if (!s || !_kevCves || !_kevCves.size) return { hits: [], unverified: 0 };
+  const key = [typeof _advResVersion !== 'undefined' ? _advResVersion : 0, (s.risks || []).length, s.ontapVersion || s.osVersion || '', _kevCves.size].join('|');
+  const hit = _kevMemo.get(s.serialNumber); if (hit && hit.k === key) return hit.v;
+  const found = new Map(); let unverified = 0;
+  (s.risks || []).forEach(r => {
+    const ids = new Set(((r.cveDetails || []).map(d => d && d.id).filter(Boolean).map(x => String(x).toUpperCase())).concat(_kevIdsOf(r.description)));
+    ids.forEach(id => {
+      if (!_kevCves.has(id)) return;
+      let fix = ''; try { const x = riskResolution(s, r); fix = (x && x.minVersion) || ''; } catch (e) { /* the fix column stays empty */ }
+      found.set(id, { id, tier: 'aiq', fix, ack: r.ack || null, riskId: r.id });
+    });
+  });
+  if (typeof ADVISORY_RES !== 'undefined') {
+    for (const [cve] of _kevCves) {
+      const adv = _advIdFromCve(cve); if (!adv || !ADVISORY_RES[adv]) continue;
+      if (_advApplicability(s, adv).applies !== true) continue;
+      let x = null; try { x = riskResolution(s, { advisoryId: adv, advisoryUrl: '', description: '', cveDetails: [{ id: cve }], fixAction: '', fixedVersions: [] }); } catch (e) { x = null; }
+      if (!x || x.kind === 'na' || x.cleared) continue;
+      if (x.kind === 'upgrade' && x.minVersion) { const f = found.get(cve); if (f) { f.tier = 'both'; f.fix = f.fix || x.minVersion; } else found.set(cve, { id: cve, tier: 'advisory', fix: x.minVersion, ack: null, advisory: adv }); }
+      else if (!found.has(cve)) unverified++;
+    }
+  }
+  const v = { hits: [...found.values()], unverified };
+  _kevMemo.set(s.serialNumber, { k: key, v });
+  return v;
+}
+function _kevExposure(systems) {
+  const rows = new Map(); let unverified = 0, exposedSystems = new Set();
+  (systems || []).forEach(s => {
+    const r = _kevCvesOfSystem(s); unverified += r.unverified;
+    r.hits.forEach(h => {
+      const e = _kevCves.get(h.id) || {};
+      let row = rows.get(h.id); if (!row) { row = { id: h.id, name: (e.product && e.vendorProject && String(e.product).toLowerCase().startsWith(String(e.vendorProject).toLowerCase())) ? e.product : [e.vendorProject, e.product].filter(Boolean).join(' '), added: e.dateAdded || '', due: e.dueDate || '', action: e.requiredAction || '', ransomware: e.knownRansomwareCampaignUse || '', ntap: _advIdFromCve(h.id) || '', systems: [], customers: new Set(), aiq: 0, advisoryOnly: 0 }; rows.set(h.id, row); }
+      row.systems.push({ serial: s.serialNumber, name: s.systemName || s.serialNumber, customer: s.customerName || '', release: s.ontapVersion || s.osVersion || '', tier: h.tier, fix: h.fix, ack: h.ack });
+      if (s.customerName) row.customers.add(s.customerName);
+      if (h.tier === 'advisory') row.advisoryOnly++; else row.aiq++;
+      exposedSystems.add(s.serialNumber);
+    });
+  });
+  const list = [...rows.values()].sort((a, b) => b.systems.length - a.systems.length || a.id.localeCompare(b.id));
+  return { rows: list, systems: exposedSystems.size, unverified, catalog: _kevCves ? _kevCves.size : 0 };
+}
+function _kevDueText(due) {
+  if (!due) return '';
+  const d = Date.parse(due); if (isNaN(d)) return due;
+  const days = Math.floor((Date.now() - d) / 86400000);
+  return due + (days > 0 ? ` (${days} days past the federal due date)` : '');
+}
+function _kevOpenToggle(id) { state.kevOpen = state.kevOpen || {}; state.kevOpen[id] = !state.kevOpen[id]; renderKevCard(); }
+function _kevCopy(id) {
+  const row = _kevExposure(getFilteredSystems(true) || []).rows.find(r => r.id === id); if (!row) return;
+  const txt = row.systems.map(x => `${x.customer ? x.customer + ' / ' : ''}${x.name} (${x.release || 'release unknown'})${x.fix ? ' -> ' + x.fix : ''}`).join('\n');
+  try { navigator.clipboard.writeText(txt); showToast && showToast(`Copied ${row.systems.length} system${row.systems.length !== 1 ? 's' : ''} for ${id}`); } catch (e) { /* the list is still on screen */ }
+}
+function renderKevCard() {
+  const card = document.getElementById('overviewKevCard'); if (!card) return;
+  const systems = getFilteredSystems(true) || [];
+  if (!systems.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const esc2 = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  if (!_kevCves || !_kevCves.size) { card.innerHTML = `<div class="section-title">Known exploited vulnerabilities (CISA KEV)</div><div style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;">The CISA catalogue has not been loaded yet (it is refreshed by the reference-data scan).</div>`; return; }
+  const ex = _kevExposure(systems), th = 'text-align:left;padding:5px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:7px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.76rem;';
+  let h = `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;"><div class="section-title" style="margin:0;">Known exploited vulnerabilities (CISA KEV)</div><div style="font-size:0.74rem;color:var(--text-muted);">${systems.length} system${systems.length !== 1 ? 's' : ''} in scope · catalogue of ${ex.catalog.toLocaleString()} CVEs</div></div>`;
+  if (!ex.rows.length) {
+    h += `<div style="font-size:0.8rem;margin-top:10px;color:var(--status-normal);">No system in scope carries a known exploited CVE that Active IQ has reported or that NetApp's advisory confirms for its release.</div>`;
+  } else {
+    h += `<div style="font-size:0.8rem;margin:8px 0 10px;"><b>${ex.rows.length}</b> known exploited CVE${ex.rows.length !== 1 ? 's' : ''} on <b>${ex.systems}</b> system${ex.systems !== 1 ? 's' : ''}. A system is listed only when Active IQ has reported the CVE on it, or NetApp's advisory lists a fixed release for its product and the installed release is below the fix on its line.</div>`;
+    h += `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">CVE</th><th style="${th}">Added to KEV · federal due date</th><th style="${th}">Systems</th><th style="${th}">Evidence</th><th style="${th}">Fix</th><th style="${th}"></th></tr></thead><tbody>`;
+    ex.rows.forEach(r => {
+      const open = !!(state.kevOpen && state.kevOpen[r.id]), fixes = [...new Set(r.systems.map(x => x.fix).filter(Boolean))];
+      h += `<tr><td style="${td}"><b>${esc2(r.id)}</b><div style="color:var(--text-muted);font-size:0.7rem;">${esc2(r.name)}${r.ntap ? ' · ' + esc2(r.ntap.toUpperCase()) : ''}${r.ransomware && /^known$/i.test(String(r.ransomware).trim()) ? ' · <span style="color:var(--status-critical);">used in ransomware</span>' : ''}</div></td>`
+        + `<td style="${td}">${esc2(r.added)}<div style="color:var(--text-muted);font-size:0.7rem;">${esc2(_kevDueText(r.due))}</div></td>`
+        + `<td style="${td}"><b>${r.systems.length}</b><div style="color:var(--text-muted);font-size:0.7rem;">${r.customers.size} customer${r.customers.size !== 1 ? 's' : ''}</div></td>`
+        + `<td style="${td}">${r.aiq ? `${r.aiq} reported by Active IQ` : ''}${r.aiq && r.advisoryOnly ? '<br>' : ''}${r.advisoryOnly ? `${r.advisoryOnly} confirmed by NetApp's advisory` : ''}</td>`
+        + `<td style="${td}">${fixes.length ? esc2(fixes.slice(0, 3).join(', ')) + (fixes.length > 3 ? ` +${fixes.length - 3}` : '') + '<div style="color:var(--text-muted);font-size:0.7rem;">on the system\'s own release line</div>' : '<span style="color:var(--text-muted);">no fixed release published</span>'}</td>`
+        + `<td style="${td}white-space:nowrap;"><a href="#" onclick="_kevOpenToggle('${esc2(r.id)}');return false;">${open ? 'Hide systems' : 'Show systems'}</a> · <a href="#" onclick="_kevCopy('${esc2(r.id)}');return false;">Copy</a></td></tr>`;
+      if (open) {
+        const byCust = new Map(); r.systems.forEach(x => { const k = x.customer || '(no customer)'; if (!byCust.has(k)) byCust.set(k, []); byCust.get(k).push(x); });
+        h += `<tr><td colspan="6" style="padding:4px 8px 12px;border-bottom:1px solid var(--wa-40);"><div style="max-height:320px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:4px 10px 8px;">` + [...byCust.entries()].sort((a, b) => b[1].length - a[1].length).map(([c, list]) => `<div style="font-size:0.74rem;margin-top:6px;"><b>${esc2(c)}</b> <span style="color:var(--text-muted);">${list.length} system${list.length !== 1 ? 's' : ''}</span></div><div style="font-size:0.72rem;line-height:1.7;">` + list.map(x => `<a href="#" data-serial="${esc2(x.serial)}" onclick="selectSystem(this.dataset.serial);switchTab('tam');return false;" title="${esc2(x.release)}${x.fix ? ' → ' + esc2(x.fix) : ''}${x.tier === 'advisory' ? ' (confirmed by NetApp advisory)' : ' (reported by Active IQ)'}${x.ack ? ' · acknowledged' : ''}">${esc2(x.name)}</a>${x.ack ? ' <span style="color:var(--text-muted);">(acknowledged)</span>' : ''}`).join(', ') + '</div>').join('') + `</div></td></tr>`;
+      }
+    });
+    h += `</tbody></table>`;
+  }
+  if (ex.unverified) h += `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:8px;">${ex.unverified} further advisory match${ex.unverified !== 1 ? 'es' : ''} are not counted: NetApp's advisory names the CVE but publishes no fixed release for that system's product, so exposure cannot be confirmed (for example advisories about other NetApp products).</div>`;
+  card.innerHTML = h;
+}
+function _dfKevExposureText(systems, heading) {
+  if (!_kevCves || !_kevCves.size) return '';
+  const ex = _kevExposure(systems), cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  let o = `\n${heading || '## Known Exploited Vulnerabilities (CISA KEV)'}\n\n`;
+  if (!ex.rows.length) return o + `**Finding:** no system in scope carries a known exploited CVE that Active IQ has reported or that NetApp's advisory confirms for its release.\n\n`;
+  o += `**Finding:** ${ex.rows.length} known exploited CVE${ex.rows.length !== 1 ? 's' : ''} on ${ex.systems} system${ex.systems !== 1 ? 's' : ''}. A system is listed only when Active IQ has reported the CVE on it, or NetApp's advisory lists a fixed release for its product and the installed release is below the fix on its line.\n\n`;
+  o += '| CVE | Product | Added to KEV | Federal due date | Systems | Customers | Evidence | Fix on the system\'s own line |\n|---|---|---|---|---|---|---|---|\n' + ex.rows.map(r => `| ${cell(r.id)} | ${cell(r.name)} | ${cell(r.added)} | ${cell(_kevDueText(r.due))} | ${r.systems.length} | ${r.customers.size} | ${r.aiq ? r.aiq + ' reported by Active IQ' : ''}${r.aiq && r.advisoryOnly ? '; ' : ''}${r.advisoryOnly ? r.advisoryOnly + " confirmed by NetApp's advisory" : ''} | ${cell([...new Set(r.systems.map(x => x.fix).filter(Boolean))].join(', '))} |`).join('\n') + '\n\n';
+  ex.rows.forEach(r => { o += `**${r.id}**${r.action ? ' (CISA required action: ' + r.action + ')' : ''}\n\n| System | Customer | Installed release | Fix | Evidence |\n|---|---|---|---|---|\n` + r.systems.map(x => `| ${cell(x.name)} | ${cell(x.customer)} | ${cell(x.release)} | ${cell(x.fix)} | ${x.tier === 'advisory' ? "NetApp advisory" : 'Active IQ'}${x.ack ? ', acknowledged' : ''} |`).join('\n') + '\n\n'; });
+  if (ex.unverified) o += `${ex.unverified} further advisory matches are not counted: the advisory names the CVE but publishes no fixed release for that system's product, so exposure cannot be confirmed.\n\n`;
+  return o;
+}
+
 function _dfCveIndex(systems) {
   const map = {};
   // kev: true if ANY source flags this CVE as CISA Known Exploited (confirmed active
@@ -21770,8 +21893,8 @@ function _dfCveIndex(systems) {
   (systems || []).forEach(sys => {
     (sys.securityBulletins || []).forEach(b => {
       const ids = new Set([...(String(b.cve || '').match(/CVE-\d{4}-\d{4,}/gi) || []), ...(String(b.cveId || b.id || '').match(/CVE-\d{4}-\d{4,}/gi) || []), ...(String(b.title || '').match(/CVE-\d{4}-\d{4,}/gi) || [])]);
-      const isKev = _bulletinIsKev(b);
-      ids.forEach(id => add(id, b.severity, b.cvss || b.cvssScore, b.title, sys, isKev));
+      const _flagged = b.cisaKEV === true || b.cisaKev === true || (b.tags || []).includes('CISA-KEV');
+      ids.forEach(id => add(id, b.severity, b.cvss || b.cvssScore, b.title, sys, _flagged || !!(_kevCves && _kevCves.has(String(id).toUpperCase()))));
     });
     (sys.risks || []).forEach(r => (r.cveDetails || []).forEach(d => { if (d) add(d.id, d.severity, d.cvss || d.cvssScore, d.title || d.description, sys, !!r.knownExploited); }));
   });
@@ -31357,6 +31480,7 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   let securityBrief = compileSecurityBrief(targetSystems, allRisks, expiringContracts, allSupportCases, scopeTitle, fw);
   if (_riskTrendText) securityBrief += _riskTrendText;
   securityBrief += _dfHardeningText(targetSystems, '## Hardening Scorecard');
+  securityBrief += _dfKevExposureText(targetSystems, '## Known Exploited Vulnerabilities (CISA KEV)');
   // Portfolio Exposure: counts only, never names other customers -- see the comment
   // on the MSP report above.
 
@@ -42936,6 +43060,7 @@ function switchTab(tabId) {
     updateOverviewKpis();
     renderNeedsAttention();
     renderChangesCard();
+    renderKevCard();
     renderOverviewTable();
     renderCharts();
     renderRiskTrendChart();

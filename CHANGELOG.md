@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.323 (2026-10-12)
+
+### Added
+- New "Known exploited vulnerabilities (CISA KEV)" card on the Overview tab, and the same section in the Security Posture Brief. For the systems in scope it lists each CISA KEV CVE with when it was added and its federal due date (and how many days past), the products, the number of systems and customers, the evidence, and the fixed release on each system's own release line. "Show systems" lists the systems grouped by customer (each opens in Technical Audit) and "Copy" copies the list.
+- A system is listed against a KEV CVE only on evidence: Active IQ reported the CVE on it, or NetApp's advisory lists a fixed release for its product and the installed release is below the fix on its line. Advisories that name other products, releases that are already fixed, and advisories that publish no fixed release for the system's product are not counted as exposure; the card says how many were left out.
+- The "No CISA KEV Active Exploitation Alerts" check, and the per-system version of it, now use the same evidence. Before, they matched nearly every ONTAP system (1,285 of 1,296) to three KEV CVEs, two of which are about other NetApp products (the ONTAP Select Deploy utility and Cloud Backup); the evidence-based result is 4 CVEs on 365 systems. Scores that include this check will rise accordingly.
+- The CVE index no longer marks every CVE in a multi-CVE advisory as known exploited because one of them is.
+
 ## 5.6.322 (2026-10-12)
 
 ### Fixed
