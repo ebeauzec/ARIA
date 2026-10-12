@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.317";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.318";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.318",
+    date: "12 October 2026",
+    title: "Light Theme Readability",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Light theme readability pass, found with an automated contrast audit that reads every visible piece of text and its background on every tab. Headings, values and port or SVM names that were written in white on the card background (invisible on a white card) now use a strong-text colour that is white in dark mode and near-black in light mode. Amber, green and badge text that scripts write into style attributes now maps to readable shades in light mode. The case-count badge in the system table (orange text on a blue fill) is legible in both themes. Dark grey inset panels become a soft tint. Small text on tinted status badges is now at least 4.2:1 against its background, and almost everything is above the 4.5:1 AA level.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.317",
     date: "12 October 2026",
@@ -13778,7 +13793,7 @@ function renderOverviewTable() {
 
     let nameHtml = sys.systemName;
     if (sys.supportCases && sys.supportCases.length > 0) {
-      nameHtml += ` <span class="badge warning" style="font-size: 0.65rem; padding: 2px 4px; vertical-align: middle; margin-left: 4px; background-color: var(--status-info); border-color: rgba(0, 230, 118, 0.2); cursor: pointer;" onclick="navigateToSupportCases('SYSTEM', '${sys.serialNumber}', event)" data-tooltip="Click to view active support cases for this system">✉ ${sys.supportCases.length} Open</span>`;
+      nameHtml += ` <span class="badge warning" style="font-size: 0.65rem; padding: 2px 4px; vertical-align: middle; margin-left: 4px; background-color: var(--status-info); color: var(--on-info); border-color: rgba(0, 230, 118, 0.2); cursor: pointer;" onclick="navigateToSupportCases('SYSTEM', '${sys.serialNumber}', event)" data-tooltip="Click to view active support cases for this system">✉ ${sys.supportCases.length} Open</span>`;
     }
 
     tr.innerHTML = `
@@ -18099,7 +18114,7 @@ function renderCSMTab() {
         </div>
         <div style="background-color: rgba(0, 230, 118, 0.08); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(0, 230, 118, 0.2);">
           <div style="font-size: 0.75rem; color: var(--status-normal); font-weight: 700; text-transform: uppercase; margin-bottom: 2px;">Data Reduction Saved</div>
-          <div style="font-size: 1.2rem; font-weight: 700; color: #fff;">${totalSaved.toFixed(1)} TB</div>
+          <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-strong);">${totalSaved.toFixed(1)} TB</div>
           <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">Dedupe + compaction savings only</div>
         </div>
       </div>
@@ -18740,7 +18755,7 @@ function renderCSMTab() {
       </div>
       <div style="background-color: rgba(0, 230, 118, 0.08); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(0, 230, 118, 0.2);">
         <div style="font-size: 0.75rem; color: var(--status-normal); font-weight: 700; text-transform: uppercase; margin-bottom: 2px;">Data Reduction Saved</div>
-        <div style="font-size: 1.2rem; font-weight: 700; color: #fff;">${(sys.efficiency.spaceSavedTB || 0).toFixed(1)} TB</div>
+        <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-strong);">${(sys.efficiency.spaceSavedTB || 0).toFixed(1)} TB</div>
         <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">Dedupe + compaction savings only</div>
       </div>
       ${sys.efficiency.physicalUsedTB === 0 && sys.efficiency.platformNote ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-style: italic;">${sys.efficiency.platformNote}</div>` : ''}
@@ -35024,7 +35039,7 @@ function generateActionPlan() {
     issues.forEach(iss => {
       html += `
         <tr style="border-bottom: 1px dashed var(--wa-50); font-size: 0.8rem;">
-          <td style="padding: 8px 0; font-weight: 600; color: #fff;">${iss.name} <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">${iss.model || ''}</span></td>
+          <td style="padding: 8px 0; font-weight: 600; color: var(--text-strong);">${iss.name} <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">${iss.model || ''}</span></td>
           <td style="padding: 8px 0; font-family: monospace;">${iss.serial}</td>
           <td style="padding: 8px 0;"><span class="badge ${iss.type === 'Disabled' ? 'critical' : 'warning'}" style="font-size: 0.65rem; padding: 2px 6px;">${iss.type}</span></td>
           <td style="padding: 8px 0; color: var(--text-secondary); font-size: 0.78rem;">${iss.detail}</td>
@@ -35109,7 +35124,7 @@ function generateActionPlan() {
     <div class="plan-section active" data-section-index="1">
       <div class="plan-document-header">
         <div style="font-size: 0.85rem; color: var(--accent-cyan); text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">NetApp Operations & Advisory Plan</div>
-        <h1 style="font-size: 1.8rem; margin: 8px 0 16px 0; color: #fff;">Executive Action Plan & Best Practices Guide</h1>
+        <h1 style="font-size: 1.8rem; margin: 8px 0 16px 0; color: var(--text-strong);">Executive Action Plan & Best Practices Guide</h1>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 0.85rem; color: var(--text-secondary); border-top: 1px solid var(--border-color); padding-top: 12px;">
           <div>Scope: <strong>${scopeTitle}</strong></div>
           <div>Date Generated: <strong>${new Date().toISOString().split('T')[0]}</strong></div>
@@ -35261,7 +35276,7 @@ function generateActionPlan() {
       html += `
         <div style="background: var(--bk-150); border-left: 4px solid ${borderColor}; padding: 14px 16px; border-radius: var(--radius-sm); margin-bottom: 10px;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
-            <strong style="font-size: 0.88rem; color: #fff;">MC-${idx + 1}: ${r.description || r.shortName || 'MetroCluster Finding'}</strong>
+            <strong style="font-size: 0.88rem; color: var(--text-strong);">MC-${idx + 1}: ${r.description || r.shortName || 'MetroCluster Finding'}</strong>
             <span class="badge ${isHigh ? 'critical' : 'warning'}" style="font-size: 0.65rem; flex-shrink: 0; margin-left: 8px;">${r.severity}</span>
           </div>
           ${r.remediationPlan ? `<div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 6px;"><strong>Impact:</strong> ${r.remediationPlan.impact || r.recommendation || ''}</div>` : ''}
@@ -35298,7 +35313,7 @@ function generateActionPlan() {
       html += `
         <div style="background: var(--wa-20); border: 1px solid var(--border-color); border-left: 4px solid ${badgeColor}; padding: 18px; border-radius: var(--radius-sm); margin-bottom: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <strong style="font-size: 0.95rem; color: #fff;">Item 2.${idx + 1}: ${r.category} Risk - ${r.systemName}</strong>
+            <strong style="font-size: 0.95rem; color: var(--text-strong);">Item 2.${idx + 1}: ${r.category} Risk - ${r.systemName}</strong>
             <span class="badge ${r.severity}" style="font-size: 0.7rem;">${r.severity}</span>
           </div>
           
@@ -35400,7 +35415,7 @@ function generateActionPlan() {
             <strong>${s.id}</strong>
             <span class="${badgeClass}" style="font-size: 0.7rem;">${s.severity === 'unknown' ? 'Not Reported' : s.severity}</span>
           </div>
-          <div style="font-size: 0.85rem; font-weight: 600; color: #fff; margin-bottom: 6px;">${s.title}</div>
+          <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-strong); margin-bottom: 6px;">${s.title}</div>
           <div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.5;">
             <strong>Mitigation:</strong> ${s.mitigation}
           </div>
@@ -35535,7 +35550,7 @@ function generateActionPlan() {
             ${c.serialNumber ? '<span><strong>S/N:</strong> <code style="font-size: 0.75rem; color: var(--text-secondary);">' + c.serialNumber + '</code></span>' : ''}
             ${c.clusterName ? '<span><strong>Cluster:</strong> ' + c.clusterName + '</span>' : ''}
           </div>
-          <div style="font-size: 0.85rem; font-weight: 600; color: #fff; margin-bottom: 4px;">${c.title}</div>
+          <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-strong); margin-bottom: 4px;">${c.title}</div>
           ${c.description ? '<div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 4px;">' + c.description + '</div>' : ''}
           <div style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 4px;">
             <strong>Category:</strong> ${c.criticality || 'N/A'}${c.subCategory ? ' / ' + c.subCategory : ''}
@@ -35795,7 +35810,7 @@ function generateActionPlan() {
       html += `
         <div style="background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 0.85rem; line-height: 1.4;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <strong style="font-size: 0.95rem; color: #fff;">${sw.model} (${sw.type})</strong>
+            <strong style="font-size: 0.95rem; color: var(--text-strong);">${sw.model} (${sw.type})</strong>
             <span class="${badgeClass}" style="font-size: 0.7rem;">${sw.status}</span>
           </div>
           <div style="font-size: 0.85rem; color: var(--text-primary); margin-bottom: 8px;">
@@ -44174,7 +44189,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
            style="background: rgba(0,0,0,0.4); border: 2px solid ${portColor}; padding: 8px 4px; border-radius: var(--radius-sm); cursor: pointer; transition: background-color 0.25s ease, border-color 0.25s ease;"
            onmouseenter="hoverCablingPort('${port.name}')" 
            onmouseleave="unhoverCablingPort('${port.name}')">
-        <div style="font-size: 0.65rem; color: #fff; margin-bottom: 2px; text-align: center; font-weight: 600;">${port.name}</div>
+        <div style="font-size: 0.65rem; color: var(--text-strong); margin-bottom: 2px; text-align: center; font-weight: 600;">${port.name}</div>
         <div style="width: 16px; height: 16px; background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.3); border-radius: 2px; display: flex; align-items: center; justify-content: center; margin: 0 auto; position: relative;">
           <div style="width: 4px; height: 4px; border-radius: 50%; background: ${statusLedColor}; box-shadow: ${statusLedShadow}; position: absolute; top: 1px; right: 1px;"></div>
           <div style="width: 8px; height: 6px; background: #fff; opacity: 0.1;"></div>
@@ -44219,7 +44234,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
           onmouseenter="hoverCablingPort('${port.name}')"
           onmouseleave="unhoverCablingPort('${port.name}')" onclick="bpPin('${port.name}')">
         <td style="padding: 10px; width: 44px;">${_no ? `<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#0b0e14;border:2px solid ${_sc};color:#fff;font-size:0.7rem;font-weight:800;">${_no}</span>` : '<span style="color:var(--text-muted);" title="Logical interface (interface group / VLAN): no physical connector">—</span>'}</td>
-        <td style="padding: 10px; font-weight: 700; color: #fff;"><code>${port.name}</code></td>
+        <td style="padding: 10px; font-weight: 700; color: var(--text-strong);"><code>${port.name}</code></td>
         <td style="padding: 10px;">
           <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem;">
             <span style="width: 8px; height: 8px; border-radius: 50%; background: ${portColor};"></span>
@@ -44307,7 +44322,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
             : '<span style="display:inline-flex;align-items:center;gap:4px;color:var(--status-warning);border:1px solid rgba(255,152,0,0.35);background:rgba(255,152,0,0.08);padding:2px 8px;border-radius:12px;font-size:0.68rem;font-weight:700;">&#9888; Migrated</span>';
           lifRowsHtml += `
             <tr class="bp-lif-row" data-lifport="${(l.currentNode === hostName || !l.homePort) ? l.currentPort : l.homePort}" title="Click to light up the physical port(s) behind this LIF" style="border-bottom: 1px solid var(--border-color); border-left: 4px solid transparent; cursor: pointer; transition: background-color 0.15s ease;" onmouseenter="bpLifHover(this,true)" onmouseleave="bpLifHover(this,false)" onclick="bpLifPin(this)">
-              <td style="padding:8px 10px;font-weight:700;color:#fff;"><code>${l.name}</code></td>
+              <td style="padding:8px 10px;font-weight:700;color:var(--text-strong);"><code>${l.name}</code></td>
               <td style="padding:8px 10px;color:var(--text-secondary);font-size:0.75rem;">${svm.name}</td>
               <td style="padding:8px 10px;font-family:monospace;font-size:0.72rem;color:var(--accent-cyan);" title="${addrLabel}">${addrDisplay}</td>
               <td style="padding:8px 10px;">
@@ -44335,7 +44350,7 @@ function renderNodeVisualLayout(selectedSystems, sys) {
         lifTableHtml = `
           <div style="margin-top:20px;">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-              <h4 style="font-size:0.82rem;font-weight:700;color:#fff;letter-spacing:0.5px;text-transform:uppercase;margin:0;">Logical Interface (LIF) Inventory</h4>
+              <h4 style="font-size:0.82rem;font-weight:700;color:var(--text-strong);letter-spacing:0.5px;text-transform:uppercase;margin:0;">Logical Interface (LIF) Inventory</h4>
               <span style="font-size:0.72rem;color:var(--text-muted);">${totalNodeLifs} LIF${totalNodeLifs !== 1 ? 's' : ''} on this node</span>
               ${migratedAlert}
             </div>
@@ -44521,7 +44536,7 @@ async function _bpFillDocs(platform, sys) {
   const tbl = Object.keys(e.slotTable || {}).sort((a, b) => a - b).map(k => `<tr><td style="${td}font-weight:700;">${esc(k)}</td><td style="${td}" colspan="3">${esc(e.slotTable[k])}</td></tr>`).join('');
   const portRows = Object.keys(e.ports || {}).sort().map(k => { const p = e.ports[k]; return `<tr><td style="${td}font-family:monospace;font-weight:700;">${esc(k)}</td><td style="${td}">${esc((p.roles || []).join(', '))}</td><td style="${td}">${esc((p.speed || []).join(' / '))}</td><td style="${td}color:var(--text-muted);">${esc((p.evidence || [])[0])}</td></tr>`; }).join('');
   const ks = Object.entries(e.keySpecs || {}).map(([k, v]) => `${esc(k)}: ${esc(Array.isArray(v) ? v.join('; ') : v)}`).join(' · ');
-  el2.innerHTML = `<details style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--navy-300);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.78rem;font-weight:700;color:#fff;">NetApp documentation: slot and port assignments for ${esc((e.models || []).join(' / '))} <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">(harvested ${esc(String(_HW_DOCS.fetchedAt || '').slice(0, 10))} from NetApp's official documentation)</span></summary><div style="padding:0 12px 12px;">` +
+  el2.innerHTML = `<details style="margin-top:12px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--navy-300);"><summary style="cursor:pointer;padding:10px 12px;font-size:0.78rem;font-weight:700;color:var(--text-strong);">NetApp documentation: slot and port assignments for ${esc((e.models || []).join(' / '))} <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">(harvested ${esc(String(_HW_DOCS.fetchedAt || '').slice(0, 10))} from NetApp's official documentation)</span></summary><div style="padding:0 12px 12px;">` +
     (ks ? `<div style="font-size:0.7rem;color:var(--text-secondary);margin:4px 0 8px;">${ks}</div>` : '') +
     (tbl ? `<div style="font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;margin:6px 0 2px;">I/O slot numbering</div><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Slot</th><th style="${th}" colspan="3">Documented role</th></tr></thead><tbody>${tbl}</tbody></table>` : '') +
     (slotRows ? `<div style="font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;margin:8px 0 2px;">Slots the documentation names</div><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Slot</th><th style="${th}">Role</th><th style="${th}">Ports</th><th style="${th}">Documentation says</th></tr></thead><tbody>${slotRows}</tbody></table>` : '') +
@@ -44862,7 +44877,7 @@ function renderMetroClusterStatus(mcSystems) {
     allMcRisks.forEach(r => {
       const sevColor = { critical: 'var(--status-critical)', high: '#ff9800', medium: 'var(--status-warning)' }[r.severity] || 'var(--text-muted)';
       html += `<div style="background:var(--wa-30);border:1px solid var(--wa-100);border-left:3px solid ${sevColor};border-radius:var(--radius-sm);padding:10px 12px;">
-        <div style="font-size:0.78rem;font-weight:600;color:#fff;">${r.systemName}: ${r.description || r.shortName || 'MetroCluster finding'}</div>
+        <div style="font-size:0.78rem;font-weight:600;color:var(--text-strong);">${r.systemName}: ${r.description || r.shortName || 'MetroCluster finding'}</div>
         <div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;text-transform:uppercase;">${r.severity || ''}</div>
       </div>`;
     });
@@ -44895,7 +44910,7 @@ function renderEseriesHardwareAudit(sys) {
     controllersHtml += `
       <div style="background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 16px; display: flex; flex-direction: column; gap: 8px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h4 style="font-weight: 600; color: #fff; font-size: 0.9rem; margin: 0;">${ctrl.name}</h4>
+          <h4 style="font-weight: 600; color: var(--text-strong); font-size: 0.9rem; margin: 0;">${ctrl.name}</h4>
           <span style="font-size: 0.72rem; color: ${statusColor}; font-weight: 700;">● ${ctrl.status}</span>
         </div>
         <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; margin-top: 8px;">
@@ -44918,7 +44933,7 @@ function renderEseriesHardwareAudit(sys) {
     poolsHtml += `
       <div style="background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; display: flex; flex-direction: column; gap: 6px;">
         <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;">
-          <strong style="color: #fff;">${pool.name}</strong>
+          <strong style="color: var(--text-strong);">${pool.name}</strong>
           <span style="color: var(--status-info); font-size: 0.72rem; font-weight: 600;">${pool.raidType}</span>
         </div>
         <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
@@ -44967,7 +44982,7 @@ function renderEseriesHardwareAudit(sys) {
     shelvesHtml += `
       <div style="border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 16px; background: var(--navy-200); display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;">
         <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
-          <span style="font-weight: 600; color: #fff; font-size: 0.82rem;">${shelf.name} (${shelf.model})</span>
+          <span style="font-weight: 600; color: var(--text-strong); font-size: 0.82rem;">${shelf.name} (${shelf.model})</span>
           <span style="font-size: 0.72rem; color: var(--text-secondary);">DE224C Multi-Interface SAS</span>
         </div>
         <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px;">
@@ -45146,7 +45161,7 @@ function renderSvmSecurityAudit(sys) {
 
     svmRowsHtml += `
       <tr style="border-bottom: 1px solid var(--border-color);">
-        <td style="padding: 10px; font-weight: 700; color: #fff;"><code>${svm.name}</code></td>
+        <td style="padding: 10px; font-weight: 700; color: var(--text-strong);"><code>${svm.name}</code></td>
         <td style="padding: 10px;">
           <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--status-normal);">
             <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--status-normal);"></span>
@@ -45174,7 +45189,7 @@ function renderSvmSecurityAudit(sys) {
   // visible in the status text itself, never hidden in the tooltip.
   const _checkRow = (label, statusText, color, tooltip) => `
     <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--wa-50);"${tooltip ? ` data-tooltip="${_xe(tooltip)}"` : ''}>
-      <span style="font-size: 0.78rem; color: #fff;">${label}</span>
+      <span style="font-size: 0.78rem; color: var(--text-strong);">${label}</span>
       <span style="font-size: 0.75rem; font-weight: 700; color: ${color}; white-space: nowrap; text-align: right;">${statusText}</span>
     </div>`;
 
@@ -45227,7 +45242,7 @@ function renderSvmSecurityAudit(sys) {
 
       <!-- Hardening Audit Checklist -->
       <div style="background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px 16px;">
-        <h4 style="font-size: 0.82rem; font-weight: 700; color: #fff; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">Protocol Security Checklist <span style="font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--text-muted); font-size: 0.68rem;">(hover a row for detail)</span></h4>
+        <h4 style="font-size: 0.82rem; font-weight: 700; color: var(--text-strong); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">Protocol Security Checklist <span style="font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--text-muted); font-size: 0.68rem;">(hover a row for detail)</span></h4>
         <div>
           ${smb1Row}${nfsRow}${auditRow}${tlsRow}${lifRow}
         </div>

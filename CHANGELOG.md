@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.318 (2026-10-12)
+
+### Fixed
+- Light theme readability pass, found with an automated contrast audit that reads every visible piece of text and its background on every tab. Headings, values and port or SVM names that were written in white on the card background (invisible on a white card) now use a strong-text colour that is white in dark mode and near-black in light mode. Amber, green and badge text that scripts write into style attributes now maps to readable shades in light mode. The case-count badge in the system table (orange text on a blue fill) is legible in both themes. Dark grey inset panels become a soft tint. Small text on tinted status badges is now at least 4.2:1 against its background, and almost everything is above the 4.5:1 AA level.
+
 ## 5.6.317 (2026-10-12)
 
 ### Added
