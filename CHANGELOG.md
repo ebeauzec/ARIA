@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.330 (2026-10-12)
+
+### Added
+- The Overview now reports one row per cluster, grid or array instead of one row per node: 1,808 node records become 556 ONTAP clusters, 16 StorageGRID grids, 321 E-Series arrays and 84 StorageGRID nodes that cannot be placed in a grid. A StorageGRID grid or E-Series array carries a badge and is never called a cluster; the KPI tiles, the table, Needs Attention, What changed, Known exploited vulnerabilities and Unowned drives all count and list these units. A risk found on both nodes of a pair counts once, a contract shows its most urgent node, and the table defaults to the units with the most critical and high risks (50 rows, with a button for the rest).
+- Node-specific issues stay visible: a unit with a hardware or node-firmware finding on only some nodes, nodes on different releases, or nodes of different models is marked 'node-specific' with the detail in the tooltip, and a click on a multi-node row lists its nodes. Known exploited CVEs say 'N of M nodes' where only some nodes are affected. Unowned drives are counted per cluster (nodes of a cluster share their drives, so the count is the largest a node reports, 59 rather than 121).
+- The Technical Audit node strip no longer files StorageGRID nodes under 'No cluster name reported' (it says 'StorageGRID nodes (grid not identified)'). What changed, Known exploited vulnerabilities and Unowned drives fold to a header and one summary line (the choice is remembered), to make the Overview less busy.
+
 ## 5.6.329 (2026-10-12)
 
 ### Fixed

@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.329";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.330";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.330",
+    date: "12 Oct 2026",
+    title: "Cluster-level Overview",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "The Overview now reports one row per cluster, grid or array instead of one row per node: 1,808 node records become 556 ONTAP clusters, 16 StorageGRID grids, 321 E-Series arrays and 84 StorageGRID nodes that cannot be placed in a grid. A StorageGRID grid or E-Series array carries a badge and is never called a cluster; the KPI tiles, the table, Needs Attention, What changed, Known exploited vulnerabilities and Unowned drives all count and list these units. A risk found on both nodes of a pair counts once, a contract shows its most urgent node, and the table defaults to the units with the most critical and high risks (50 rows, with a button for the rest).",
+          "Node-specific issues stay visible: a unit with a hardware or node-firmware finding on only some nodes, nodes on different releases, or nodes of different models is marked 'node-specific' with the detail in the tooltip, and a click on a multi-node row lists its nodes. Known exploited CVEs say 'N of M nodes' where only some nodes are affected. Unowned drives are counted per cluster (nodes of a cluster share their drives, so the count is the largest a node reports, 59 rather than 121).",
+          "The Technical Audit node strip no longer files StorageGRID nodes under 'No cluster name reported' (it says 'StorageGRID nodes (grid not identified)'). What changed, Known exploited vulnerabilities and Unowned drives fold to a header and one summary line (the choice is remembered), to make the Overview less busy.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.329",
     date: "12 Oct 2026",
@@ -10631,8 +10648,8 @@ let state = {
   activeSearchQuery: "",
   activeFilterType: "ALL", // "ALL", "CUSTOMER", "GROUP", "WATCHLIST"
   activeFilterValue: "",   // Customer Name, Group ID, or Watchlist ID
-  overviewSortKey: "systemName",
-  overviewSortOrder: "asc",
+  overviewSortKey: "riskScore",   // the clusters with the most critical and high risks first
+  overviewSortOrder: "desc",
   activeKpiFilter: "NONE", // "NONE", "ALL", "CRITICAL", "WARNING", "CONTRACT"
   syncInterval: 0,         // Polling interval in hours (0 = Manual Only)
   lastSync: "",            // ISO Timestamp of last successful Active IQ sync
@@ -12736,16 +12753,110 @@ function getFilteredSystems(excludeKpiFilter = false) {
   return filtered.slice();
 }
 
-function updateOverviewKpis() {
-  const filtered = getFilteredSystems(true); // Exclude activeKpiFilter to calculate accurate KPI counts
-  const totalSystems = filtered.length;
-  const criticalRisksCount = filtered.reduce((acc, sys) => 
-    acc + sys.risks.filter(r => r.severity === 'critical').length, 0);
-  const warningRisksCount = filtered.reduce((acc, sys) => 
-    acc + sys.risks.filter(r => r.severity === 'high' || r.severity === 'medium').length, 0);
-  const expiringContracts = filtered.filter(sys => sys.contracts.daysRemaining != null && sys.contracts.daysRemaining <= 90).length;
+// ── Clusters ─────────────────────────────────────────────────────────────────────────────────────
+// A system record is one node (one serial number). Testers asked for the cluster to be the unit the interface reports on:
+// one row, one risk list, one contract line per cluster, with a node named only where the issue is node-specific.
+// A node with no cluster name is its own unit. Everything that counts or lists systems for a person should go through here.
+// What counts as one unit: an ONTAP cluster, a StorageGRID grid, an E-Series array (or a lone node that cannot be placed). The key carries the kind.
+let _unitMemo = new WeakMap(), _sgMap = null, _sgMapN = -1;
+function _sgGridNameOf(s) {
+  const all = state.systems || [];
+  if (!_sgMap || _sgMapN !== all.length) {
+    _sgMap = new Map(); _unitMemo = new WeakMap(); _sgMapN = all.length;
+    all.forEach(gs => { const t = gs.storagegridTopology; if (!t) return; const gn = t.gridName || gs.systemName; _sgMap.set('s:' + gs.serialNumber, gn); (t.sites || []).forEach(st => (st.nodes || []).forEach(nd => { if (nd.serialNumber) _sgMap.set('s:' + nd.serialNumber, gn); if (nd.hostName) _sgMap.set('h:' + String(nd.hostName).toLowerCase(), gn); })); });
+  }
+  const pg = s.platformExtras && s.platformExtras.parentGrid; if (pg) return pg;
+  return _sgMap.get('s:' + s.serialNumber) || _sgMap.get('h:' + String(s.systemName || s.hostName || '').toLowerCase()) || '';
+}
+function _unitOf(s) {
+  let u = _unitMemo.get(s); if (u) return u;
+  const fam = _platformFamily(s), base = (s.accountId || '') + '|' + (s.customerName || '') + '|';
+  if (fam === 'storagegrid') { const gn = _sgGridNameOf(s); u = gn ? { kind: 'grid', name: gn, key: base + 'grid:' + gn } : { kind: 'node', name: s.systemName || s.serialNumber, key: base + 'node:' + s.serialNumber }; }
+  else if (fam === 'eseries') u = { kind: 'array', name: s.systemName || s.serialNumber, key: base + 'array:' + s.serialNumber };
+  else if (s.clusterName && s.clusterName !== s.serialNumber) u = { kind: 'cluster', name: s.clusterName, key: base + 'cluster:' + s.clusterName };
+  else u = { kind: 'cluster', name: s.systemName || s.serialNumber, key: base + 'cluster:~' + s.serialNumber };
+  _unitMemo.set(s, u); return u;
+}
+const _clusterKeyOf = s => _unitOf(s).key;
+const _kindOfKey = k => String(k || '').split('|')[2] ? String(k).split('|')[2].split(':')[0] : 'cluster';
+// "212 clusters", "3 grids", "40 systems" when the kinds are mixed (or unknown)
+function _uN(kinds, n) {
+  const set = new Set((kinds || []).filter(Boolean)); const k = set.size === 1 ? [...set][0] : 'system';
+  const word = k === 'node' ? 'StorageGRID node' : k;
+  return `${n} ${word}${n !== 1 ? 's' : ''}`;
+}
+const _UNIT_BADGE = { grid: 'StorageGRID', array: 'E-Series', node: 'StorageGRID node' };
+const _riskKeyOf = r => [String(r.description || r.title || '').trim().toLowerCase(), r.advisoryId || '', (r.cveDetails || []).map(c => c && c.id).filter(Boolean).sort().join(',')].join('|');
+const _SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, best_practice: 4 };
+function _clusterBuild(c) {
+  const nodes = c.nodes, n = nodes.length;
+  c.nodeCount = n; c.systemName = c.name; c.serialNumber = nodes[0].serialNumber; c.clusterName = c.name;
+  c.platform = [...new Set(nodes.map(x => x.model || x.platform).filter(Boolean))].join(', ');
+  c.platformType = nodes[0].platformType || '';
+  c.releases = [...new Set(nodes.map(x => x.ontapVersion || x.sgVersion || x.santricityVersion || x.osVersion).filter(Boolean))];
+  c.release = c.releases.join(' / ');
+  c.status = nodes.some(x => x.status === 'critical') ? 'critical' : nodes.some(x => x.status === 'warning') ? 'warning' : 'normal';
+  const rk = new Map();
+  nodes.forEach(x => (x.risks || []).forEach(r => { const k = _riskKeyOf(r); let e = rk.get(k); if (!e) { e = { key: k, risk: r, serials: new Set() }; rk.set(k, e); } e.serials.add(x.serialNumber); }));
+  // only a hardware or node-firmware finding that Active IQ attached to some nodes is node-specific; the rest (configuration, efficiency, security ...) are cluster findings that Active IQ happened to attach to one node
+  const nodeFix = r => /^HW_/.test(r.fixAction || '') || (r.fixAction === 'FIRMWARE_UPGRADE' && /^(SP|BIOS)$/.test(r.fixActionSub || '')) || /hardware/i.test(r.category || '');
+  c.risks = [...rk.values()].map(e => ({ key: e.key, risk: e.risk, serials: [...e.serials], nodeCount: e.serials.size, allNodes: e.serials.size === n, nodeSpecific: n > 1 && e.serials.size < n && nodeFix(e.risk) })).sort((a, b) => (_SEV_ORDER[a.risk.severity] ?? 9) - (_SEV_ORDER[b.risk.severity] ?? 9));
+  c.counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  c.risks.forEach(x => { if (c.counts[x.risk.severity] !== undefined) c.counts[x.risk.severity]++; });
+  c.critCount = c.counts.critical; c.riskScore = c.counts.critical * 1000 + c.counts.high;
+  // node-specific: a risk found on only some nodes of a multi-node cluster, and nodes that differ from their partners
+  c.nodeIssues = [];
+  if (n > 1) {
+    const partial = c.risks.filter(x => x.nodeSpecific);
+    if (partial.length) { const byNode = new Map(); partial.forEach(x => x.serials.forEach(sr => byNode.set(sr, (byNode.get(sr) || 0) + 1))); c.nodeIssues.push({ kind: 'risks', text: `${partial.length} hardware or firmware finding${partial.length !== 1 ? 's' : ''} on only some nodes`, serials: [...byNode.keys()] }); }
+    if (c.releases.length > 1) c.nodeIssues.push({ kind: 'release', text: 'nodes run different releases: ' + nodes.map(x => `${x.systemName} ${x.ontapVersion || x.osVersion || '?'}`).join(', '), serials: nodes.map(x => x.serialNumber) });
+    const models = new Set(nodes.map(x => x.model || x.platform)); if (models.size > 1) c.nodeIssues.push({ kind: 'model', text: 'nodes are different models: ' + [...models].join(', '), serials: nodes.map(x => x.serialNumber) });
+  }
+  // contract: the most urgent node
+  let worst = null; nodes.forEach(x => { const d = x.contracts && x.contracts.daysRemaining; if (d != null && (!worst || d < worst.contracts.daysRemaining)) worst = x; });
+  const first = worst || nodes.find(x => x.contracts && x.contracts.endDate) || nodes[0];
+  c.contracts = { endDate: first.contracts && first.contracts.endDate || '', daysRemaining: worst ? worst.contracts.daysRemaining : null };
+  const seen = new Set(); c.supportCases = []; nodes.forEach(x => (x.supportCases || []).forEach(k => { const id = k.id != null ? 'id' + k.id : null; if (id && seen.has(id)) return; if (id) seen.add(id); c.supportCases.push(k); }));
+  c.customerName = c.customer;
+  return c;
+}
+let _clMemo = null;
+function getClusters(systems) {
+  let sig = (systems || []).length + '|' + (typeof _advResVersion !== 'undefined' ? _advResVersion : 0);
+  (systems || []).forEach(x => { let a = 0; const rs = x.risks || []; for (let i = 0; i < rs.length; i++) if (rs[i].ack) a++; sig += ',' + x.serialNumber + rs.length + x.status + a; });
+  if (_clMemo && _clMemo.sig === sig) return _clMemo.list.slice();
+  const list = _getClustersRaw(systems); _clMemo = { sig, list }; return list.slice();
+}
+function _getClustersRaw(systems) {
+  const map = new Map();
+  (systems || []).forEach(x => { const k = _clusterKeyOf(x); let c = map.get(k); if (!c) { const u = _unitOf(x); c = { key: k, name: u.name, kind: u.kind, customer: x.customerName || '', nodes: [] }; map.set(k, c); } c.nodes.push(x); });
+  return [...map.values()].map(_clusterBuild);
+}
+const _clusterMatchesKpi = (c, kpi) => kpi === 'CRITICAL' ? (c.status === 'critical' || c.counts.critical > 0) : kpi === 'WARNING' ? (c.status === 'warning' || c.counts.high > 0 || c.counts.medium > 0) : kpi === 'CONTRACT' ? (c.contracts.daysRemaining != null && c.contracts.daysRemaining <= 90) : true;
+// the clusters in the current scope, with the KPI card filter applied to whole clusters
+function getScopeClusters(excludeKpiFilter) {
+  const cl = getClusters(getFilteredSystems(true));
+  const k = state.activeKpiFilter;
+  return (excludeKpiFilter || !k || k === 'NONE') ? cl : cl.filter(c => _clusterMatchesKpi(c, k));
+}
+function selectCluster(key) {
+  const c = getClusters(state.systems).find(x => x.key === key); if (!c) return;
+  focusOnSystem(c.nodes[0].serialNumber);
+  state.selectedTAMSerials = c.nodes.map(x => x.serialNumber);
+  if (c.kind === 'cluster' && c.nodes[0].clusterName && c.nodes[0].clusterName !== c.nodes[0].serialNumber) { state.selectedSAMSystemSerial = 'CLUSTER:' + c.nodes[0].clusterName; state.selectedCSMSystemSerial = 'CLUSTER:' + c.nodes[0].clusterName; }
+  switchTab('tam');
+}
+function toggleClusterOpen(key) { state.clusterOpen = state.clusterOpen || {}; state.clusterOpen[key] = !state.clusterOpen[key]; renderOverviewTable(); }
 
-  document.getElementById("kpiTotalSystems").innerText = totalSystems;
+function updateOverviewKpis() {
+  const clusters = getClusters(getFilteredSystems(true)); // KPI filter excluded so the counts stay accurate
+  const totalClusters = clusters.length, totalNodes = clusters.reduce((n, c) => n + c.nodeCount, 0);
+  const criticalRisksCount = clusters.reduce((n, c) => n + c.counts.critical, 0);
+  const warningRisksCount = clusters.reduce((n, c) => n + c.counts.high + c.counts.medium, 0);
+  const expiringContracts = clusters.filter(c => c.contracts.daysRemaining != null && c.contracts.daysRemaining <= 90).length;
+
+  document.getElementById("kpiTotalSystems").innerText = totalClusters;
+  const _sub = document.querySelector('#kpiCardAll .card-subtitle'); if (_sub) { const kc = {}; clusters.forEach(c => { kc[c.kind] = (kc[c.kind] || 0) + 1; }); const parts = [['cluster', 'cluster'], ['grid', 'grid'], ['array', 'array'], ['node', 'StorageGRID node']].filter(([k]) => kc[k]).map(([k, w]) => `${kc[k]} ${w}${kc[k] !== 1 ? 's' : ''}`); _sub.textContent = parts.length > 1 || totalNodes !== totalClusters ? `${parts.join(' · ')} · ${totalNodes} nodes` : 'Active monitored assets'; }
   document.getElementById("kpiCriticalRisks").innerText = criticalRisksCount;
   document.getElementById("kpiWarningRisks").innerText = warningRisksCount;
   document.getElementById("kpiContracts").innerText = expiringContracts;
@@ -12979,16 +13090,29 @@ function _chgData(days, serials) {
 }
 // Risks first raised inside the window, grouped by risk, for the given systems.
 function _chgNewRisks(systems, days) {
-  const cutoff = Date.now() - days * 86400000, groups = new Map(), bySev = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }, sysSet = new Set();
-  (systems || []).forEach(s => (s.risks || []).forEach(r => {
+  // once per cluster: the same risk raised on both nodes of a pair is one new risk
+  const cutoff = Date.now() - days * 86400000, groups = new Map(), bySev = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 }, sysSet = new Set(), seen = new Set();
+  (systems || []).forEach(s => { const ck = _clusterKeyOf(s); (s.risks || []).forEach(r => {
     const t = Date.parse(r.firstSeen || ''); if (isNaN(t) || t < cutoff) return;   // the date Active IQ first raised the risk on this system
+    const dk = ck + '|' + _riskKeyOf(r); if (seen.has(dk)) return; seen.add(dk);
     const sev = String(r.severity || '').toUpperCase(); if (sev in bySev) bySev[sev]++;
-    sysSet.add(s.serialNumber);
+    sysSet.add(ck);
     let g = groups.get(r.id); if (!g) { g = { id: r.id, title: String(r.description || ('Risk ' + r.id)).slice(0, 140), sev, systems: new Set() }; groups.set(r.id, g); }
-    g.systems.add(s.systemName || s.serialNumber);
-  }));
+    g.systems.add(ck);
+  }); });
   const rank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-  return { bySev, systems: sysSet.size, total: Object.values(bySev).reduce((a, b) => a + b, 0), groups: [...groups.values()].sort((x, y) => (rank[x.sev] ?? 9) - (rank[y.sev] ?? 9) || y.systems.size - x.systems.size) };
+  return { bySev, systems: sysSet.size, kinds: [...sysSet].map(_kindOfKey), total: Object.values(bySev).reduce((a, b) => a + b, 0), groups: [...groups.values()].sort((x, y) => (rank[x.sev] ?? 9) - (rank[y.sev] ?? 9) || y.systems.size - x.systems.size) };
+}
+// the snapshot comparison is per node; show one row per cluster
+function _chgByCluster(rows) {
+  const bySerial = new Map((state.systems || []).map(x => [x.serialNumber, x])), out = new Map();
+  (rows || []).forEach(c => {
+    const x = bySerial.get(c.serial), k = x ? _clusterKeyOf(x) : 'x|' + c.serial;
+    let e = out.get(k); if (!e) { e = { ...c, name: x ? (x.clusterName || x.systemName || c.name) : (c.name || c.serial), nodes: 0, resolved: new Set() }; out.set(k, e); }
+    e.nodes++; (c.resolvedRiskIds || []).forEach(i => e.resolved.add(i));
+    ['os', 'sp', 'contractEnd', 'contractActive', 'arp', 'watchlists'].forEach(f => { if (!e[f] && c[f]) e[f] = c[f]; });
+  });
+  return [...out.values()].map(e => ({ ...e, resolvedRiskIds: [...e.resolved] }));
 }
 function _chgRiskTitles(systems) { const m = {}; (systems || []).forEach(s => (s.risks || []).forEach(r => { if (r.id != null && !m[r.id]) m[r.id] = { title: String(r.description || ('Risk ' + r.id)).slice(0, 140), sev: String(r.severity || '').toUpperCase() }; })); return m; }
 // The same two views as the Overview card, as document text: newly raised risks (live, complete list) and the snapshot comparison with its data-quality notes.
@@ -12999,17 +13123,36 @@ function _dfChangesText(systems, heading, days) {
   const nr = _chgNewRisks(systems, days), data = _chgData(days, (systems || []).map(s => s.serialNumber).filter(Boolean));
   let o = `\n${heading || 'WHAT CHANGED'}\n\n`;
   if (nr.total) {
-    o += `**Finding:** ${nr.total} risk${nr.total !== 1 ? 's were' : ' was'} first raised by Active IQ in the last ${days} days, on ${nr.systems} system${nr.systems !== 1 ? 's' : ''} (` + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].filter(k => nr.bySev[k]).map(k => `${nr.bySev[k]} ${k.toLowerCase()}`).join(', ') + `).\n\n`;
+    o += `**Finding:** ${nr.total} risk${nr.total !== 1 ? 's were' : ' was'} first raised by Active IQ in the last ${days} days, on ${_uN(nr.kinds, nr.systems)} (` + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].filter(k => nr.bySev[k]).map(k => `${nr.bySev[k]} ${k.toLowerCase()}`).join(', ') + `).\n\n`;
     o += '| Severity | Risk | Systems |\n|---|---|---|\n' + nr.groups.map(g => `| ${cell(g.sev.toLowerCase())} | ${cell(g.title)} | ${g.systems.size} |`).join('\n') + '\n\n';
   } else o += `**Finding:** no risk was first raised on these systems in the last ${days} days.\n\n`;
   if (data && data.available) {
     const t = data.totals || {};
     o += `Compared with the daily snapshot of ${data.fromDate} (${data.systemsCompared} systems in both): ${t.osChanged || 0} changed OS version, ${t.spChanged || 0} changed SP/BMC version, ${t.contractChanged || 0} changed contract, ${t.arpChanged || 0} changed ransomware-protection flag` + (data.riskListsAvailable ? `, ${t.resolvedRisks || 0} risks resolved` : '') + `.\n\n`;
-    const rows = (data.changed || []).filter(c => c.os || c.sp);
+    const rows = _chgByCluster((data.changed || []).filter(c => c.os || c.sp));
     if (rows.length) o += '| System | OS version | SP/BMC version |\n|---|---|---|\n' + rows.map(c => `| ${cell(c.name || c.serial)} | ${c.os ? cell(c.os.from) + ' -> ' + cell(c.os.to) : '-'} | ${c.sp ? cell(c.sp.from) + ' -> ' + cell(c.sp.to) : '-'} |`).join('\n') + '\n\n';
     (data.notes || []).forEach(n => { o += `Note: ${n}\n\n`; });
   }
   return o;
+}
+// Secondary Overview cards start folded to a header and one summary line; the choice is remembered per browser.
+const _ovOpenGet = id => { try { return localStorage.getItem('aria_ov_' + id) === '1'; } catch (e) { return false; } };
+function _ovToggle(id) {
+  const card = document.getElementById(id); if (!card) return;
+  const open = card.classList.contains('ov-folded');
+  card.classList.toggle('ov-folded', !open);
+  const ch = card.querySelector('.ov-chev'); if (ch) ch.textContent = open ? '▾' : '▸';
+  try { localStorage.setItem('aria_ov_' + id, open ? '1' : '0'); } catch (e) { /* the choice just does not persist */ }
+}
+function _ovFoldCard(card, summary) {
+  if (!card || !card.firstElementChild) return;
+  const head = card.firstElementChild, open = _ovOpenGet(card.id);
+  head.style.cursor = 'pointer';
+  head.insertAdjacentHTML('afterbegin', `<span class="ov-chev" style="display:inline-block;width:1.1em;color:var(--text-muted);margin-right:2px;">${open ? '▾' : '▸'}</span>`);
+  head.onclick = ev => { if (!ev.target.closest('a,button,select,input')) _ovToggle(card.id); };
+  const sum = document.createElement('div'); sum.className = 'ov-sum'; sum.style.cssText = 'font-size:0.78rem;color:var(--text-secondary);margin-top:6px;cursor:pointer;'; sum.textContent = summary || ''; sum.onclick = () => _ovToggle(card.id);
+  head.after(sum);
+  card.classList.toggle('ov-folded', !open);
 }
 function renderChangesCard() {
   const card = document.getElementById('overviewChangesCard'); if (!card) return;
@@ -13025,7 +13168,7 @@ function renderChangesCard() {
   h += `<div style="font-size:0.78rem;font-weight:600;margin:4px 0;">Newly raised risks <span style="font-weight:400;color:var(--text-muted);">(first raised by Active IQ in the last ${days} days)</span></div>`;
   if (!nr.total) h += `<div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">No risk was first raised on these systems in the last ${days} days.</div>`;
   else {
-    h += `<div style="font-size:0.78rem;margin-bottom:6px;">${nr.total} risk${nr.total !== 1 ? 's' : ''} on ${nr.systems} system${nr.systems !== 1 ? 's' : ''}: ` + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].filter(k => nr.bySev[k]).map(k => `<span style="color:${sevCol[k]};font-weight:600;">${nr.bySev[k]} ${k.toLowerCase()}</span>`).join(' · ') + `</div>`;
+    h += `<div style="font-size:0.78rem;margin-bottom:6px;">${nr.total} risk${nr.total !== 1 ? 's' : ''} on ${_uN(nr.kinds, nr.systems)}: ` + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].filter(k => nr.bySev[k]).map(k => `<span style="color:${sevCol[k]};font-weight:600;">${nr.bySev[k]} ${k.toLowerCase()}</span>`).join(' · ') + `</div>`;
     const top = state.changesShowAll ? nr.groups : nr.groups.slice(0, 8);
     h += `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;margin-bottom:6px;">` + top.map(g => `<tr style="border-bottom:1px solid var(--wa-50);"><td style="padding:4px 6px;color:${sevCol[g.sev] || 'inherit'};font-weight:600;width:70px;">${esc2(g.sev.toLowerCase())}</td><td style="padding:4px 6px;">${esc2(g.title)}</td><td style="padding:4px 6px;text-align:right;color:var(--text-muted);white-space:nowrap;">${g.systems.size} system${g.systems.size !== 1 ? 's' : ''}</td></tr>`).join('') + `</table>`;
     if (nr.groups.length > 8) h += `<a href="#" onclick="state.changesShowAll=!state.changesShowAll;renderChangesCard();return false;" style="font-size:0.72rem;">${state.changesShowAll ? 'Show fewer' : 'Show all ' + nr.groups.length + ' risks'}</a>`;
@@ -13040,7 +13183,7 @@ function renderChangesCard() {
     h += `<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:8px;">${esc2(data.fromDate)} to ${esc2(data.toDate)} (${data.actualDays} days${data.partialWindow ? ', the longest history available' : ''}); ${data.systemsCompared} systems present in both.</div>`;
     h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">${tile(t.osChanged || 0, 'OS version changed')}${tile(t.spChanged || 0, 'SP/BMC version changed')}${tile(t.contractChanged || 0, 'Contract changed')}${tile(t.arpChanged || 0, 'Ransomware protection flag changed')}${data.riskListsAvailable ? tile(t.resolvedRisks || 0, 'Risks resolved') + tile(t.newRisks || 0, 'Risks appeared (snapshots)') : ''}${t.scopeChanged ? tile(t.scopeChanged, 'Moved between watchlists') : ''}</div>`;
     if (t.riskNet && data.riskCountsReliable) h += `<div style="font-size:0.76rem;margin-bottom:8px;">Net change in risk counts on those systems: ` + ['critical', 'high', 'medium', 'low'].map(k => `<span style="color:${sevCol[k.toUpperCase()]};">${t.riskNet[k] > 0 ? '+' : ''}${t.riskNet[k]} ${k}</span>`).join(' · ') + `</div>`;
-    const rows = (data.changed || []).filter(c => c.os || c.sp || c.contractEnd || c.contractActive || c.arp || c.resolvedRiskIds || c.watchlists);
+    const rows = _chgByCluster((data.changed || []).filter(c => c.os || c.sp || c.contractEnd || c.contractActive || c.arp || c.resolvedRiskIds || c.watchlists));
     if (rows.length) {
       const shown = state.changesShowAllSys ? rows : rows.slice(0, 15);
       const pr = (x, f) => x ? `${esc2(x.from == null ? '—' : x.from)} → ${esc2(x.to == null ? '—' : x.to)}` : '';
@@ -13051,6 +13194,7 @@ function renderChangesCard() {
     (data.notes || []).forEach(n => { h += `<div style="font-size:0.7rem;color:var(--hx-f59e0b);margin-top:6px;">${esc2(n)}</div>`; });
   }
   card.innerHTML = h;
+  _ovFoldCard(card, nr.total ? `${nr.total} risk${nr.total !== 1 ? 's' : ''} first raised on ${_uN(nr.kinds, nr.systems)} in the last ${days} days` : `No new risks in the last ${days} days`);
 }
 
 // ── Theme (dark / light / match system) ───────────────────────────────────────────────────────────
@@ -13105,12 +13249,14 @@ function renderNeedsAttention() {
   // still needs to surface here (contract urgency isn't part of that score),
   // so this merges the ranking back over every filtered system rather than
   // only the ones _dfSystemIssueRanking() itself returns.
+  // Ranked per cluster: the nodes of a cluster share their findings, so a cluster scores as its worst node and its risks are counted once.
   const scoreByKey = {}; _dfSystemIssueRanking(filtered).forEach(r => { scoreByKey[r.systemName] = r; });
-  const ranked = filtered.map(sys => {
-    const key = sys.systemName || sys.serialNumber;
-    const r = scoreByKey[key] || { critRisks: 0, highRisks: 0, critCves: 0, openCases: 0, aiqHealthScore: sys.aiqHealthScore != null ? sys.aiqHealthScore : null, score: 0 };
-    const daysRemaining = sys.contracts ? sys.contracts.daysRemaining : null;
-    return { sys, ...r, contractExpiringSoon: daysRemaining != null && daysRemaining <= 30, daysRemaining };
+  const ranked = getClusters(filtered).map(c => {
+    const rs = c.nodes.map(sys => scoreByKey[sys.systemName || sys.serialNumber]).filter(Boolean);
+    const hs = c.nodes.map(x => x.aiqHealthScore).filter(v => v != null && v !== '').map(Number);
+    const r = { critRisks: c.counts.critical, highRisks: c.counts.high, critCves: Math.max(0, ...rs.map(x => x.critCves || 0)), openCases: _openCaseCount(c.supportCases), aiqHealthScore: hs.length ? Math.min(...hs) : null, score: Math.max(0, ...rs.map(x => x.score || 0)) };
+    const daysRemaining = c.contracts.daysRemaining;
+    return { c, ...r, contractExpiringSoon: daysRemaining != null && daysRemaining <= 30, daysRemaining };
   }).filter(r => r.score > 0 || r.contractExpiringSoon)
     .sort((a, b) => b.score - a.score || ((a.daysRemaining ?? 999) - (b.daysRemaining ?? 999)));
 
@@ -13128,10 +13274,10 @@ function renderNeedsAttention() {
     if (r.aiqHealthScore != null) parts.push(`<span style="color: var(--text-secondary);">AIQ score ${r.aiqHealthScore}</span>`);
     if (r.contractExpiringSoon) parts.push(`<span style="color: var(--status-warning);">contract expires in ${r.daysRemaining}d</span>`);
     return `
-      <div onclick="focusOnSystem('${r.sys.serialNumber}'); switchTab('tam');" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+      <div data-ckey="${String(r.c.key).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" onclick="selectCluster(this.dataset.ckey);" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--wa-20); border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
         <div>
-          <span style="font-weight: 600;">${r.sys.systemName}</span>
-          <span style="color: var(--text-muted); font-size: 0.78rem; margin-left: 8px;">${r.sys.customerName || ''}</span>
+          <span style="font-weight: 600;">${r.c.name}</span>${r.c.nodeIssues.length ? ` <span style="color:var(--hx-fbbf24);font-size:0.72rem;cursor:help;" title="${String(r.c.nodeIssues.map(x => x.text).join(' / ')).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}">⚑ node-specific</span>` : ''}
+          <span style="color: var(--text-muted); font-size: 0.78rem; margin-left: 8px;">${r.c.customer || ''}${r.c.nodeCount > 1 ? ' · ' + r.c.nodeCount + ' nodes' : ''}</span>
         </div>
         <div style="font-size: 0.78rem; display: flex; gap: 10px;">${parts.join(' · ')}</div>
       </div>
@@ -13153,7 +13299,7 @@ function renderNeedsAttention() {
   card.innerHTML = `
     <div class="table-header-row" style="margin-bottom: 12px;">
       <div class="section-title" style="color: var(--status-critical);">⚠ Needs Attention</div>
-      <div style="font-size: 0.72rem; color: var(--text-muted);">Worst-first by risk/CVE/case severity + Active IQ Health Score — click a system to open it in Technical Audit</div>
+      <div style="font-size: 0.72rem; color: var(--text-muted);">Worst-first by risk/CVE/case severity + Active IQ Health Score — click a row to open it in Technical Audit</div>
     </div>
     <div style="display: flex; flex-direction: column; gap: 6px;">
       ${head.map(rowHtml).join('')}
@@ -13245,8 +13391,9 @@ function updateSortIndicatorsGeneric(tableId, headersMap) {
 function updateSortIndicators() {
   updateSortIndicatorsGeneric("overview", {
     "systemName": "sort-systemName",
-    "serialNumber": "sort-serialNumber",
-    "clusterName": "sort-clusterName",
+    "nodeCount": "sort-nodeCount",
+    "release": "sort-release",
+    "riskScore": "sort-riskScore",
     "customerName": "sort-customerName",
     "platform": "sort-platform",
     "status": "sort-status",
@@ -13474,7 +13621,7 @@ const enrichmentEngine = {
     if (cveCount > 0) segments.push(`<span title="${cveCount} CVEs enriched with CVSS scores, severity, and NVD details" style="cursor:help">${cveCount} CVE</span>`);
     if (advCount > 0) segments.push(`<span title="${advCount} NetApp PSIRT security advisories loaded from security.netapp.com" style="color:var(--hx-f0abfc);cursor:help">${advCount} PSIRT</span>`);
     if (kbCount > 0)  segments.push(`<span title="${kbCount} knowledge base articles matched to fleet ONTAP versions and platform families" style="color:var(--hx-93c5fd);cursor:help">${kbCount} KB</span>`);
-    if (kevCount > 0) segments.push(`<span title="${kevEx ? `${kevCount} CISA known-exploited CVE${kevCount !== 1 ? 's' : ''} affecting ${kevEx.systems} of your systems (see the Known exploited vulnerabilities card on the Overview)` : `${kevCount} advisories matched to the CISA Known Exploited Vulnerabilities catalog`}" style="color:var(--hx-fbbf24);cursor:help">⚠ ${kevCount} KEV</span>`);
+    if (kevCount > 0) segments.push(`<span title="${kevEx ? `${kevCount} CISA known-exploited CVE${kevCount !== 1 ? 's' : ''} affecting ${_uN(kevEx.kinds, kevEx.systems)} (see the Known exploited vulnerabilities card on the Overview)` : `${kevCount} advisories matched to the CISA Known Exploited Vulnerabilities catalog`}" style="color:var(--hx-fbbf24);cursor:help">⚠ ${kevCount} KEV</span>`);
 
     if (segments.length === 0) {
       text.textContent = `${this._count} enriched`;
@@ -13915,65 +14062,61 @@ function renderOverviewTable() {
   if (!tbody) return;
   tbody.innerHTML = "";
 
-  const filteredSystems = getFilteredSystems();
-
-  // Sort filteredSystems based on state.overviewSortKey and state.overviewSortOrder
-  const sortKey = state.overviewSortKey || "systemName";
-  const sortOrder = state.overviewSortOrder || "asc";
-
-  sortDataList(filteredSystems, sortKey, sortOrder);
-
-  // Update visual sort indicators on table headers
+  const clusters = getScopeClusters(false);
+  sortDataList(clusters, state.overviewSortKey || "systemName", state.overviewSortOrder || "asc");
   updateSortIndicators();
+  const hd = document.getElementById('overviewTableHint');
+  if (hd) hd.textContent = `${_uN(clusters.map(c => c.kind), clusters.length)}${clusters.some(c => c.nodeCount > 1) ? ' · click a row to see its nodes' : ''}`;
 
-  if (filteredSystems.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No matching systems found.</td></tr>`;
+  if (clusters.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No matching systems found.</td></tr>`;
     return;
   }
-
-  filteredSystems.forEach(sys => {
+  const esc2 = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const fmtDate = d => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A';
+  const contractOf = x => {
+    const dr = x.contracts.daysRemaining, e = fmtDate(x.contracts.endDate);
+    if (dr != null && dr < 0) return `<span style="color: var(--status-critical); font-weight: 600;">Expired (${Math.abs(dr)}d ago)</span>`;
+    if (dr != null && dr <= 90) return `<span style="color: var(--status-warning); font-weight: 600;">${e} (${dr}d)</span>`;
+    return dr != null ? `${e} (${dr}d)` : e;
+  };
+  const badge = st => st === 'critical' ? '<span class="badge critical">Critical</span>' : st === 'warning' ? '<span class="badge warning">Warning</span>' : '<span class="badge normal">Healthy</span>';
+  const frag = document.createDocumentFragment(), limit = state.overviewLimit || 50;
+  clusters.slice(0, limit).forEach(c => {
+    const open = !!(state.clusterOpen && state.clusterOpen[c.key]), multi = c.nodeCount > 1;
     const tr = document.createElement("tr");
     tr.style.cursor = "pointer";
-    tr.onclick = () => selectSystem(sys.serialNumber);
-    
-    let statusBadge = `<span class="badge normal">Healthy</span>`;
-    if (sys.status === "critical") statusBadge = `<span class="badge critical">Critical</span>`;
-    else if (sys.status === "warning") statusBadge = `<span class="badge warning">Warning</span>`;
-
-    const endDateShort = sys.contracts.endDate ? new Date(sys.contracts.endDate).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) : 'N/A';
-    const dr = sys.contracts.daysRemaining;
-    let contractText = dr != null ? `${endDateShort} (${dr}d)` : endDateShort;
-    if (dr != null && dr < 0) {
-      contractText = `<span style="color: var(--status-critical); font-weight: 600;">Expired (${Math.abs(dr)}d ago)</span>`;
-    } else if (dr != null && dr <= 90) {
-      contractText = `<span style="color: var(--status-warning); font-weight: 600;">${endDateShort} (${dr}d)</span>`;
-    }
-
-    let nameHtml = sys.systemName;
-    const _openN = _openCaseCount(sys.supportCases);
-    if (_openN > 0) {
-      nameHtml += ` <span class="badge warning" style="font-size: 0.65rem; padding: 2px 4px; vertical-align: middle; margin-left: 4px; background-color: var(--status-info); color: var(--on-info); border-color: rgba(0, 230, 118, 0.2); cursor: pointer;" onclick="navigateToSupportCases('SYSTEM', '${sys.serialNumber}', event)" data-tooltip="Click to view active support cases for this system">✉ ${_openN} Open</span>`;
-    }
-
+    tr.setAttribute('data-ckey', c.key);
+    tr.onclick = () => multi ? toggleClusterOpen(tr.getAttribute('data-ckey')) : selectCluster(tr.getAttribute('data-ckey'));
+    const openN = _openCaseCount(c.supportCases);
+    const cases = openN > 0 ? ` <span class="badge warning" style="font-size: 0.65rem; padding: 2px 4px; vertical-align: middle; margin-left: 4px; background-color: var(--status-info); color: var(--on-info); border-color: rgba(0, 230, 118, 0.2); cursor: pointer;" data-ckey="${esc2(c.key)}" onclick="navigateToSupportCases('CLUSTER', this.dataset.ckey, event)" data-tooltip="Click to view the open support cases for this cluster">✉ ${openN} Open</span>` : '';
+    const flag = c.nodeIssues.length ? ` <span style="color:var(--hx-fbbf24);cursor:help;font-size:0.72rem;" title="${esc2(c.nodeIssues.map(x => x.text).join('\n'))}">⚑ node-specific</span>` : '';
+    const risks = (c.counts.critical || c.counts.high) ? `${c.counts.critical ? `<span style="color:var(--status-critical);font-weight:600;">${c.counts.critical} critical</span>` : ''}${c.counts.critical && c.counts.high ? ' · ' : ''}${c.counts.high ? `<span style="color:var(--status-warning);">${c.counts.high} high</span>` : ''}` : '<span style="color:var(--text-muted);">none</span>';
     tr.innerHTML = `
-      <td>${sys.customerName}</td>
-      <td style="font-weight: 600; color: var(--accent-cyan);">${nameHtml}</td>
-      <td>
-        <code class="copyable-code" onclick="copyToClipboard('${sys.serialNumber}', event)" title="Click to copy Serial Number">
-          ${sys.serialNumber}
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-        </code>
-      </td>
-      <td>${sys.clusterName}</td>
-      <td>
-        <div style="font-weight:500;">${sys.platform}</div>
-        ${sys.platformType && sys.platformType !== sys.platform ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:1px;">${sys.platformType}</div>` : ''}
-      </td>
-      <td>${statusBadge}</td>
-      <td>${contractText}</td>
-    `;
-    tbody.appendChild(tr);
+      <td>${esc2(c.customer)}</td>
+      <td style="font-weight: 600; color: var(--accent-cyan);">${multi ? `<span style="display:inline-block;width:1em;color:var(--text-muted);">${open ? '▾' : '▸'}</span>` : ''}${esc2(c.name)}${_UNIT_BADGE[c.kind] ? ` <span style="font-size:0.64rem;font-weight:600;color:var(--text-muted);border:1px solid var(--border-color);border-radius:8px;padding:1px 6px;margin-left:4px;">${_UNIT_BADGE[c.kind]}</span>` : ''}${cases}${flag}</td>
+      <td>${c.nodeCount}</td>
+      <td><div style="font-weight:500;">${esc2(c.platform)}</div>${c.platformType && c.platformType !== c.platform ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:1px;">${esc2(c.platformType)}</div>` : ''}</td>
+      <td style="font-size:0.78rem;">${esc2(c.release) || '-'}</td>
+      <td>${badge(c.status)}</td>
+      <td style="font-size:0.78rem;">${risks}</td>
+      <td>${contractOf(c)}</td>`;
+    frag.appendChild(tr);
+    if (multi && open) {
+      const nodeIssueSerials = new Map(); c.nodeIssues.forEach(x => x.serials.forEach(sr => { if (x.kind === 'risks') nodeIssueSerials.set(sr, true); }));
+      c.nodes.forEach(x => {
+        const nt = document.createElement('tr'); nt.style.cursor = 'pointer'; nt.setAttribute('data-serial', x.serialNumber);
+        nt.onclick = () => selectSystem(nt.getAttribute('data-serial'));
+        const own = (x.risks || []).filter(r => c.risks.some(q => q.nodeSpecific && q.key === _riskKeyOf(r))).length;
+        nt.innerHTML = `<td></td><td style="padding-left:28px;font-size:0.78rem;">${esc2(x.systemName)} <code class="copyable-code" style="font-size:0.68rem;" data-serial="${esc2(x.serialNumber)}" onclick="copyToClipboard(this.dataset.serial, event)" title="Click to copy the serial number">${esc2(x.serialNumber)}</code></td><td></td><td style="font-size:0.78rem;">${esc2(x.model || x.platform)}</td><td style="font-size:0.78rem;">${esc2(x.ontapVersion || x.sgVersion || x.santricityVersion || x.osVersion || '')}</td><td>${badge(x.status)}</td><td style="font-size:0.74rem;color:var(--text-muted);">${own ? `<span style="color:var(--hx-fbbf24);">${own} only on this node</span>` : ''}</td><td style="font-size:0.78rem;">${contractOf(x)}</td>`;
+        nt.style.background = 'var(--wa-30, rgba(255,255,255,0.03))';
+        frag.appendChild(nt);
+      });
+    }
   });
+  if (clusters.length > limit) { const mr = document.createElement('tr'); mr.innerHTML = `<td colspan="8" style="text-align:center;padding:10px;"><a href="#" onclick="state.overviewLimit=${clusters.length};renderOverviewTable();return false;">Show the other ${clusters.length - limit} clusters</a></td>`; frag.appendChild(mr); }
+  else if (state.overviewLimit && clusters.length > 50) { const mr = document.createElement('tr'); mr.innerHTML = `<td colspan="8" style="text-align:center;padding:10px;"><a href="#" onclick="state.overviewLimit=0;renderOverviewTable();return false;">Show only the first 50</a></td>`; frag.appendChild(mr); }
+  tbody.appendChild(frag);
 }
 
 // ── Cross-tab system focus ──────────────────────────────────────────────────
@@ -21942,19 +22085,26 @@ function _kevCvesOfSystem(s) {
   return v;
 }
 function _kevExposure(systems) {
-  const rows = new Map(), others = new Map(); let unverified = 0; const exposedSystems = new Set();
+  // reported per cluster: a CVE on both nodes of a pair is one exposure, and a CVE on one node only says which
+  const rows = new Map(), others = new Map(); let unverified = 0; const exposedClusters = new Set(), nodesIn = new Map();
+  (systems || []).forEach(s => { const k = _clusterKeyOf(s); nodesIn.set(k, (nodesIn.get(k) || 0) + 1); });
   (systems || []).forEach(s => {
-    const r = _kevCvesOfSystem(s); unverified += r.unverified;
+    const r = _kevCvesOfSystem(s); unverified += r.unverified; const ck = _clusterKeyOf(s);
     r.hits.forEach(h => {
       const e = _kevCves.get(h.id) || {};
-      let row = rows.get(h.id); if (!row) { row = { id: h.id, name: (e.product && e.vendorProject && String(e.product).toLowerCase().startsWith(String(e.vendorProject).toLowerCase())) ? e.product : [e.vendorProject, e.product].filter(Boolean).join(' '), added: e.dateAdded || '', due: e.dueDate || '', action: e.requiredAction || '', ransomware: e.knownRansomwareCampaignUse || '', ntap: _advIdFromCve(h.id) || '', systems: [], customers: new Set(), aiq: 0, advisoryOnly: 0 }; rows.set(h.id, row); }
-      row.systems.push({ serial: s.serialNumber, name: s.systemName || s.serialNumber, customer: s.customerName || '', release: s.ontapVersion || s.osVersion || '', tier: h.tier, fix: h.fix, ack: h.ack });
+      let row = rows.get(h.id); if (!row) { row = { id: h.id, name: (e.product && e.vendorProject && String(e.product).toLowerCase().startsWith(String(e.vendorProject).toLowerCase())) ? e.product : [e.vendorProject, e.product].filter(Boolean).join(' '), added: e.dateAdded || '', due: e.dueDate || '', action: e.requiredAction || '', ransomware: e.knownRansomwareCampaignUse || '', ntap: _advIdFromCve(h.id) || '', systems: [], customers: new Set(), aiq: 0, advisoryOnly: 0, _by: new Map() }; rows.set(h.id, row); }
+      let c = row._by.get(ck);
+      if (!c) { c = { serial: s.serialNumber, name: _unitOf(s).name, kind: _unitOf(s).kind, customer: s.customerName || '', releases: new Set(), tier: h.tier, fix: h.fix, ack: h.ack, nodes: 0, nodeCount: nodesIn.get(ck) || 1, ckey: ck }; row._by.set(ck, c); row.systems.push(c); }
+      else if (c.tier !== h.tier) c.tier = 'both';
+      if (!c.fix) c.fix = h.fix;
+      c.nodes++; if (s.ontapVersion || s.osVersion) c.releases.add(s.ontapVersion || s.osVersion);
       if (s.customerName) row.customers.add(s.customerName);
-      if (h.tier === 'advisory') row.advisoryOnly++; else row.aiq++;
-      exposedSystems.add(s.serialNumber);
+      exposedClusters.add(ck);
     });
     Object.entries(r.outcomes).forEach(([cve, o]) => { let c = others.get(cve); if (!c) { c = { id: cve, cleared: 0, nofix: 0, unknown: 0, na: 0, notapplicable: 0, exposed: 0, older: 0 }; others.set(cve, c); } c[o] = (c[o] || 0) + 1; });
   });
+  rows.forEach(row => { row.systems.forEach(c => { c.release = [...c.releases].join(' / '); delete c.releases; }); row.aiq = row.systems.filter(x => x.tier !== 'advisory').length; row.advisoryOnly = row.systems.filter(x => x.tier === 'advisory').length; delete row._by; });
+  const exposedSystems = exposedClusters;
   const list = [...rows.values()].sort((a, b) => b.systems.length - a.systems.length || a.id.localeCompare(b.id));
   // every other KEV CVE that NetApp has an advisory for: the reason it is not counted
   const notCounted = [];
@@ -21973,7 +22123,7 @@ function _kevExposure(systems) {
     notCounted.push({ id: cve, name: [e.vendorProject, e.product].filter(Boolean).join(' '), ntap: adv, products: prods, why, kind: !rec || !prods.length ? 'nodata' : (c.nofix || c.unknown) ? 'unverified' : (c.cleared || c.older) ? 'fixed' : 'other' });
   }
   notCounted.sort((a, b) => ({ unverified: 0, nodata: 1, fixed: 2, other: 3 }[a.kind] - { unverified: 0, nodata: 1, fixed: 2, other: 3 }[b.kind]) || a.id.localeCompare(b.id));
-  return { rows: list, systems: exposedSystems.size, unverified, catalog: _kevCves ? _kevCves.size : 0, notCounted };
+  return { rows: list, systems: exposedSystems.size, kinds: [...exposedSystems].map(_kindOfKey), unverified, catalog: _kevCves ? _kevCves.size : 0, notCounted };
 }
 function _kevDueText(due) {
   if (!due) return '';
@@ -21982,10 +22132,11 @@ function _kevDueText(due) {
   return due + (days > 0 ? ` (${days} days past the federal due date)` : '');
 }
 function _kevOpenToggle(id) { state.kevOpen = state.kevOpen || {}; state.kevOpen[id] = !state.kevOpen[id]; renderKevCard(); }
+const _kevNodeNote = x => x.nodeCount > 1 && x.nodes < x.nodeCount ? ` (${x.nodes} of ${x.nodeCount} nodes)` : '';
 function _kevCopy(id) {
   const row = _kevExposure(getFilteredSystems(true) || []).rows.find(r => r.id === id); if (!row) return;
-  const txt = row.systems.map(x => `${x.customer ? x.customer + ' / ' : ''}${x.name} (${x.release || 'release unknown'})${x.fix ? ' -> ' + x.fix : ''}`).join('\n');
-  try { navigator.clipboard.writeText(txt); showToast && showToast(`Copied ${row.systems.length} system${row.systems.length !== 1 ? 's' : ''} for ${id}`); } catch (e) { /* the list is still on screen */ }
+  const txt = row.systems.map(x => `${x.customer ? x.customer + ' / ' : ''}${x.name}${_kevNodeNote(x)} (${x.release || 'release unknown'})${x.fix ? ' -> ' + x.fix : ''}`).join('\n');
+  try { navigator.clipboard.writeText(txt); showToast && showToast(`Copied ${_uN(row.systems.map(x => x.kind), row.systems.length)} for ${id}`); } catch (e) { /* the list is still on screen */ }
 }
 function renderKevCard() {
   const card = document.getElementById('overviewKevCard'); if (!card) return;
@@ -21994,12 +22145,13 @@ function renderKevCard() {
   card.style.display = 'block';
   const esc2 = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   if (!_kevCves || !_kevCves.size) { card.innerHTML = `<div class="section-title">Known exploited vulnerabilities (CISA KEV)</div><div style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;">The CISA catalogue has not been loaded yet (it is refreshed by the reference-data scan).</div>`; return; }
+  const scopeUnits = getClusters(systems), nClusters = scopeUnits.length, scopeKinds = scopeUnits.map(c => c.kind);
   const ex = _kevExposure(systems), th = 'text-align:left;padding:5px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:7px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.76rem;';
-  let h = `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;"><div class="section-title" style="margin:0;">Known exploited vulnerabilities (CISA KEV)</div><div style="font-size:0.74rem;color:var(--text-muted);">${systems.length} system${systems.length !== 1 ? 's' : ''} in scope · catalogue of ${ex.catalog.toLocaleString()} CVEs</div></div>`;
+  let h = `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;"><div class="section-title" style="margin:0;">Known exploited vulnerabilities (CISA KEV)</div><div style="font-size:0.74rem;color:var(--text-muted);">${_uN(scopeKinds, nClusters)} in scope · catalogue of ${ex.catalog.toLocaleString()} CVEs</div></div>`;
   if (!ex.rows.length) {
     h += `<div style="font-size:0.8rem;margin-top:10px;color:var(--status-normal);">No system in scope carries a known exploited CVE that Active IQ has reported or that NetApp's advisory confirms for its release.</div>`;
   } else {
-    h += `<div style="font-size:0.8rem;margin:8px 0 10px;"><b>${ex.rows.length}</b> known exploited CVE${ex.rows.length !== 1 ? 's' : ''} on <b>${ex.systems}</b> system${ex.systems !== 1 ? 's' : ''}. A system is listed only when Active IQ has reported the CVE on it, or NetApp's advisory lists a fixed release for its product and the installed release is below the fix on its line.</div>`;
+    h += `<div style="font-size:0.8rem;margin:8px 0 10px;"><b>${ex.rows.length}</b> known exploited CVE${ex.rows.length !== 1 ? 's' : ''} on <b>${_uN(ex.kinds, ex.systems)}</b>. A cluster, grid or array is listed only when Active IQ has reported the CVE on one of its nodes, or NetApp's advisory lists a fixed release for its product and a node's installed release is below the fix on its line. Where only some nodes are affected, the list says which.</div>`;
     h += `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">CVE</th><th style="${th}">Added to KEV · federal due date</th><th style="${th}">Systems</th><th style="${th}">Evidence</th><th style="${th}">Fix</th><th style="${th}"></th></tr></thead><tbody>`;
     ex.rows.forEach(r => {
       const open = !!(state.kevOpen && state.kevOpen[r.id]), fixes = [...new Set(r.systems.map(x => x.fix).filter(Boolean))];
@@ -22011,7 +22163,7 @@ function renderKevCard() {
         + `<td style="${td}white-space:nowrap;"><a href="#" onclick="_kevOpenToggle('${esc2(r.id)}');return false;">${open ? 'Hide systems' : 'Show systems'}</a> · <a href="#" onclick="_kevCopy('${esc2(r.id)}');return false;">Copy</a></td></tr>`;
       if (open) {
         const byCust = new Map(); r.systems.forEach(x => { const k = x.customer || '(no customer)'; if (!byCust.has(k)) byCust.set(k, []); byCust.get(k).push(x); });
-        h += `<tr><td colspan="6" style="padding:4px 8px 12px;border-bottom:1px solid var(--wa-40);"><div style="max-height:320px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:4px 10px 8px;">` + [...byCust.entries()].sort((a, b) => b[1].length - a[1].length).map(([c, list]) => `<div style="font-size:0.74rem;margin-top:6px;"><b>${esc2(c)}</b> <span style="color:var(--text-muted);">${list.length} system${list.length !== 1 ? 's' : ''}</span></div><div style="font-size:0.72rem;line-height:1.7;">` + list.map(x => `<a href="#" data-serial="${esc2(x.serial)}" onclick="selectSystem(this.dataset.serial);switchTab('tam');return false;" title="${esc2(x.release)}${x.fix ? ' → ' + esc2(x.fix) : ''}${x.tier === 'advisory' ? ' (confirmed by NetApp advisory)' : ' (reported by Active IQ)'}${x.ack ? ' · acknowledged' : ''}">${esc2(x.name)}</a>${x.ack ? ' <span style="color:var(--text-muted);">(acknowledged)</span>' : ''}`).join(', ') + '</div>').join('') + `</div></td></tr>`;
+        h += `<tr><td colspan="6" style="padding:4px 8px 12px;border-bottom:1px solid var(--wa-40);"><div style="max-height:320px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:4px 10px 8px;">` + [...byCust.entries()].sort((a, b) => b[1].length - a[1].length).map(([c, list]) => `<div style="font-size:0.74rem;margin-top:6px;"><b>${esc2(c)}</b> <span style="color:var(--text-muted);">${_uN(list.map(x => x.kind), list.length)}</span></div><div style="font-size:0.72rem;line-height:1.7;">` + list.map(x => `<a href="#" data-ckey="${esc2(x.ckey)}" onclick="selectCluster(this.dataset.ckey);return false;" title="${esc2(x.release)}${x.fix ? ' → ' + esc2(x.fix) : ''}${x.tier === 'advisory' ? ' (confirmed by NetApp advisory)' : ' (reported by Active IQ)'}${x.ack ? ' · acknowledged' : ''}${x.nodeCount > 1 ? ' · ' + x.nodes + ' of ' + x.nodeCount + ' nodes' : ''}">${esc2(x.name)}</a>${x.nodeCount > 1 && x.nodes < x.nodeCount ? ` <span style="color:var(--hx-fbbf24);">(${x.nodes} of ${x.nodeCount} nodes)</span>` : ''}${x.ack ? ' <span style="color:var(--text-muted);">(acknowledged)</span>' : ''}`).join(', ') + '</div>').join('') + `</div></td></tr>`;
       }
     });
     h += `</tbody></table>`;
@@ -22022,15 +22174,16 @@ function renderKevCard() {
     if (open) h += `<div style="max-height:340px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:6px 10px;margin-top:6px;">` + groups.map(([k, label]) => { const g = ex.notCounted.filter(x => x.kind === k); return g.length ? `<div style="font-size:0.72rem;font-weight:700;margin:8px 0 3px;">${label} (${g.length})</div>` + g.map(x => `<div style="font-size:0.72rem;margin-bottom:3px;"><b>${esc2(x.id)}</b> <span style="color:var(--text-muted);">${esc2(x.name)} · ${esc2(String(x.ntap).toUpperCase())}${x.products.length ? ' · ' + esc2(x.products.slice(0, 3).join(', ')) + (x.products.length > 3 ? ' and ' + (x.products.length - 3) + ' more' : '') : ''}</span><br><span style="color:var(--text-secondary);">${esc2(x.why)}.</span></div>`).join('') : ''; }).join('') + `</div>`;
   }
   card.innerHTML = h;
+  _ovFoldCard(card, ex.rows.length ? `${ex.rows.length} known exploited CVE${ex.rows.length !== 1 ? 's' : ''} on ${_uN(ex.kinds, ex.systems)}` : 'No exposure found');
 }
 function _dfKevExposureText(systems, heading) {
   if (!_kevCves || !_kevCves.size) return '';
   const ex = _kevExposure(systems), cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
   let o = `\n${heading || '## Known Exploited Vulnerabilities (CISA KEV)'}\n\n`;
   if (!ex.rows.length) return o + `**Finding:** no system in scope carries a known exploited CVE that Active IQ has reported or that NetApp's advisory confirms for its release.\n\n`;
-  o += `**Finding:** ${ex.rows.length} known exploited CVE${ex.rows.length !== 1 ? 's' : ''} on ${ex.systems} system${ex.systems !== 1 ? 's' : ''}. A system is listed only when Active IQ has reported the CVE on it, or NetApp's advisory lists a fixed release for its product and the installed release is below the fix on its line.\n\n`;
-  o += '| CVE | Product | Added to KEV | Federal due date | Systems | Customers | Evidence | Fix on the system\'s own line |\n|---|---|---|---|---|---|---|---|\n' + ex.rows.map(r => `| ${cell(r.id)} | ${cell(r.name)} | ${cell(r.added)} | ${cell(_kevDueText(r.due))} | ${r.systems.length} | ${r.customers.size} | ${r.aiq ? r.aiq + ' reported by Active IQ' : ''}${r.aiq && r.advisoryOnly ? '; ' : ''}${r.advisoryOnly ? r.advisoryOnly + " confirmed by NetApp's advisory" : ''} | ${cell([...new Set(r.systems.map(x => x.fix).filter(Boolean))].join(', '))} |`).join('\n') + '\n\n';
-  ex.rows.forEach(r => { o += `**${r.id}**${r.action ? ' (CISA required action: ' + r.action + ')' : ''}\n\n| System | Customer | Installed release | Fix | Evidence |\n|---|---|---|---|---|\n` + r.systems.map(x => `| ${cell(x.name)} | ${cell(x.customer)} | ${cell(x.release)} | ${cell(x.fix)} | ${x.tier === 'advisory' ? "NetApp advisory" : 'Active IQ'}${x.ack ? ', acknowledged' : ''} |`).join('\n') + '\n\n'; });
+  o += `**Finding:** ${ex.rows.length} known exploited CVE${ex.rows.length !== 1 ? 's' : ''} on ${_uN(ex.kinds, ex.systems)}. A cluster, grid or array is listed only when Active IQ has reported the CVE on one of its nodes, or NetApp's advisory lists a fixed release for its product and a node's installed release is below the fix on its line. Where only some nodes are affected, the table says which.\n\n`;
+  o += '| CVE | Product | Added to KEV | Federal due date | Systems | Customers | Evidence | Fix (lowest fixed release on its own line, else the next line up) |\n|---|---|---|---|---|---|---|---|\n' + ex.rows.map(r => `| ${cell(r.id)} | ${cell(r.name)} | ${cell(r.added)} | ${cell(_kevDueText(r.due))} | ${r.systems.length} | ${r.customers.size} | ${r.aiq ? r.aiq + ' reported by Active IQ' : ''}${r.aiq && r.advisoryOnly ? '; ' : ''}${r.advisoryOnly ? r.advisoryOnly + " confirmed by NetApp's advisory" : ''} | ${cell([...new Set(r.systems.map(x => x.fix).filter(Boolean))].join(', '))} |`).join('\n') + '\n\n';
+  ex.rows.forEach(r => { o += `**${r.id}**${r.action ? ' (CISA required action: ' + r.action + ')' : ''}\n\n| System | Customer | Installed release | Fix | Evidence |\n|---|---|---|---|---|\n` + r.systems.map(x => `| ${cell(x.name + _kevNodeNote(x))} | ${cell(x.customer)} | ${cell(x.release)} | ${cell(x.fix)} | ${x.tier === 'advisory' ? "NetApp advisory" : 'Active IQ'}${x.ack ? ', acknowledged' : ''} |`).join('\n') + '\n\n'; });
   if (ex.notCounted.length) o += `**Other known exploited CVEs that NetApp has advisories for, and why they are not counted (${ex.notCounted.length}):**\n\n| CVE | Advisory | Products | Why it is not counted |\n|---|---|---|---|\n` + ex.notCounted.map(x => `| ${cell(x.id)} | ${cell(String(x.ntap).toUpperCase())} | ${cell(x.products.slice(0, 3).join(', '))} | ${cell(x.why)} |`).join('\n') + '\n\n';
   return o;
 }
@@ -22041,24 +22194,36 @@ const _unownedRiskOf = s => (s.risks || []).find(r => _UNOWNED_RX.test(String(r.
 const _UNOWNED_CMD = 'storage disk show -container-type unassigned';
 const _dayOf = v => { const t = Date.parse(v || ''); return isNaN(t) ? '' : new Date(t).toISOString().slice(0, 10); };
 function _unownedDrives(systems) {
-  const rows = [];
+  // one row per cluster: the nodes of a cluster share their drives, so the count is the largest one a node reports, not the sum
+  const byC = new Map(), nodesIn = new Map();
+  (systems || []).forEach(s => { const k = _clusterKeyOf(s); nodesIn.set(k, (nodesIn.get(k) || 0) + 1); });
   (systems || []).forEach(s => {
     const r = _unownedRiskOf(s); if (!r) return;
-    const t = Date.parse(r.firstSeen || ''), days = isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 86400000));
+    const k = _clusterKeyOf(s), t = Date.parse(r.firstSeen || '');
     const m = String(r.riskDetail || '').match(/there (?:are|is) (\d+) unowned/i), count = m ? parseInt(m[1], 10) : null;
     const ds460 = (s.risks || []).some(x => /DS460 shelf has drives assigned incorrectly/i.test(String(x.description || x.title || '')));
     const g = ((r.guidance || [])[0] || {}).url || r.advisoryUrl || '';
-    const ct = Date.parse(s.contractEndDate || s.contractExpiry || ''), sup = s.contractActive === true || s.contractActive === 'true' ? 'Active' : (s.contractActive === false || s.contractActive === 'false' ? 'Expired' : '');
-    rows.push({ serial: s.serialNumber, name: s.systemName || s.serialNumber, cluster: s.clusterName || '', customer: s.customerName || '', site: [s.siteName, s.siteCity, s.siteCountry].filter(Boolean).join(', '), model: s.model || s.platform || '', release: s.ontapVersion || s.osVersion || '', config: s.storageConfiguration || '',
-      count, severity: String(r.severity || '').replace(/_/g, ' '), first: _dayOf(r.firstSeen), last: _dayOf(r.lastSeen), days, ack: r.ack || null, ds460, guide: g,
-      support: sup ? sup + (isNaN(ct) ? '' : ' to ' + _dayOf(s.contractEndDate || s.contractExpiry)) : '', asup: _dayOf(s.latestAsupDate), health: s.aiqHealthScore != null && s.aiqHealthScore !== '' ? s.aiqHealthScore : '' });
+    const sup = s.contractActive === true || s.contractActive === 'true' ? 'Active' : (s.contractActive === false || s.contractActive === 'false' ? 'Expired' : '');
+    const ctEnd = _dayOf(s.contractEndDate || s.contractExpiry);
+    let e = byC.get(k);
+    if (!e) { e = { ckey: k, kind: _unitOf(s).kind, serial: s.serialNumber, name: _unitOf(s).name, serials: [], customer: s.customerName || '', site: [s.siteName, s.siteCity, s.siteCountry].filter(Boolean).join(', '), model: new Set(), release: new Set(), config: s.storageConfiguration || '', count: null, severity: '', firstT: NaN, lastT: NaN, ack: null, ds460: false, guide: g, support: sup, supportEnd: ctEnd, asup: '', health: null, nodes: 0, nodeCount: nodesIn.get(k) || 1 }; byC.set(k, e); }
+    e.nodes++; e.serials.push(s.serialNumber); e.model.add(s.model || s.platform || ''); e.release.add(s.ontapVersion || s.osVersion || '');
+    if (count != null) e.count = Math.max(e.count == null ? 0 : e.count, count);
+    if (!e.severity) e.severity = String(r.severity || '').replace(/_/g, ' ');
+    if (!isNaN(t) && (isNaN(e.firstT) || t < e.firstT)) e.firstT = t;
+    const lt = Date.parse(r.lastSeen || ''); if (!isNaN(lt) && (isNaN(e.lastT) || lt > e.lastT)) e.lastT = lt;
+    if (r.ack) e.ack = r.ack; if (ds460) e.ds460 = true;
+    if (sup === 'Expired') e.support = 'Expired';
+    const as = _dayOf(s.latestAsupDate); if (as && (!e.asup || as < e.asup)) e.asup = as;   // the stalest AutoSupport of the cluster's nodes
+    const hs = s.aiqHealthScore != null && s.aiqHealthScore !== '' ? Number(s.aiqHealthScore) : null; if (hs != null && (e.health == null || hs < e.health)) e.health = hs;
   });
+  const rows = [...byC.values()].map(e => ({ ...e, model: [...e.model].filter(Boolean).join(', '), release: [...e.release].filter(Boolean).join(' / '), first: isNaN(e.firstT) ? '' : new Date(e.firstT).toISOString().slice(0, 10), last: isNaN(e.lastT) ? '' : new Date(e.lastT).toISOString().slice(0, 10), days: isNaN(e.firstT) ? null : Math.max(0, Math.floor((Date.now() - e.firstT) / 86400000)), support: e.support ? e.support + (e.supportEnd ? ' to ' + e.supportEnd : '') : '', health: e.health == null ? '' : e.health }));
   return rows.sort((a, b) => (b.days == null ? -1 : b.days) - (a.days == null ? -1 : a.days) || a.customer.localeCompare(b.customer));
 }
 function _unownedCopy() {
   const rows = _unownedDrives(getFilteredSystems(true) || []);
-  const txt = rows.map(x => [x.customer, x.name, x.serial, x.model, x.release, x.count == null ? 'count not reported' : x.count + ' unowned', x.first ? 'open since ' + x.first : ''].filter(Boolean).join(' | ')).join('\n');
-  try { navigator.clipboard.writeText(txt); showToast && showToast(`Copied ${rows.length} system${rows.length !== 1 ? 's' : ''}`); } catch (e) { /* the list is still on screen */ }
+  const txt = rows.map(x => [x.customer, x.name + (x.nodeCount > 1 ? ` (${x.nodes} of ${x.nodeCount} nodes)` : ''), x.serials.join(' '), x.model, x.release, x.count == null ? 'count not reported' : x.count + ' unowned', x.first ? 'open since ' + x.first : ''].filter(Boolean).join(' | ')).join('\n');
+  try { navigator.clipboard.writeText(txt); showToast && showToast(`Copied ${_uN(rows.map(x => x.kind), rows.length)}`); } catch (e) { /* the list is still on screen */ }
 }
 function renderUnownedCard() {
   const card = document.getElementById('overviewUnownedCard'); if (!card) return;
@@ -22070,9 +22235,9 @@ function renderUnownedCard() {
   const custs = new Set(rows.map(x => x.customer).filter(Boolean)), open = !!(state.unownedOpen), counted = rows.filter(x => x.count != null), total = counted.reduce((n, x) => n + x.count, 0);
   const shown = open ? rows : rows.slice(0, 10);
   let h = `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;"><div class="section-title" style="margin:0;">Unowned drives</div><div style="font-size:0.74rem;color:var(--text-muted);"><a href="#" onclick="_unownedCopy();return false;">Copy list</a></div></div>`
-    + `<div style="font-size:0.8rem;margin:8px 0 6px;"><b>${rows.length}</b> system${rows.length !== 1 ? 's' : ''} (${custs.size} customer${custs.size !== 1 ? 's' : ''}) ${rows.length !== 1 ? 'have' : 'has'} at least one drive or partition without an owner${counted.length ? (counted.length === rows.length ? `; <b>${total}</b> drives or partitions in all` : `; Active IQ gives the count for ${counted.length} of them, <b>${total}</b> in all`) : ''}. Unowned drives cannot be used as spares or in an aggregate. Active IQ does not say which drives; to list them run <code>${esc2(_UNOWNED_CMD)}</code> on the cluster, then assign them with <code>storage disk assign</code>.</div>`
+    + `<div style="font-size:0.8rem;margin:8px 0 6px;"><b>${_uN(rows.map(x => x.kind), rows.length)}</b> (${custs.size} customer${custs.size !== 1 ? 's' : ''}) ${rows.length !== 1 ? 'have' : 'has'} at least one drive or partition without an owner${counted.length ? (counted.length === rows.length ? `; <b>${total}</b> drives or partitions in all` : `; Active IQ gives the count for ${counted.length} of them, <b>${total}</b> in all`) : ''}. Unowned drives cannot be used as spares or in an aggregate. Active IQ does not say which drives; to list them run <code>${esc2(_UNOWNED_CMD)}</code> on the cluster, then assign them with <code>storage disk assign</code>.</div>`
     + `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>` + ['System', 'Customer · site', 'Model · release', 'Unowned', 'Severity', 'First seen · last seen', 'Open for', 'Support', 'Last AutoSupport', 'Health', 'Note'].map(c => `<th style="${th}">${c}</th>`).join('') + `</tr></thead><tbody>`
-    + shown.map(x => `<tr><td style="${td}"><a href="#" data-serial="${esc2(x.serial)}" onclick="selectSystem(this.dataset.serial);switchTab('tam');return false;">${esc2(x.name)}</a><div style="${sub}">${x.cluster && x.cluster !== x.name ? 'cluster ' + esc2(x.cluster) + ' · ' : ''}${esc2(x.serial)}</div></td>`
+    + shown.map(x => `<tr><td style="${td}"><a href="#" data-ckey="${esc2(x.ckey)}" onclick="selectCluster(this.dataset.ckey);return false;">${esc2(x.name)}</a><div style="${sub}">${x.nodeCount > 1 ? (x.nodes < x.nodeCount ? `<span style="color:var(--hx-fbbf24);">${x.nodes} of ${x.nodeCount} nodes</span>` : `${x.nodeCount} nodes`) : esc2(x.serial)}</div></td>`
       + `<td style="${td}">${esc2(x.customer)}<div style="${sub}">${esc2(x.site)}</div></td><td style="${td}">${esc2(x.model)}<div style="${sub}">${esc2(x.release)}${x.config ? ' · ' + esc2(x.config) : ''}</div></td>`
       + `<td style="${td}">${x.count == null ? '<span style="color:var(--text-muted);">not reported</span>' : '<b>' + x.count + '</b>'}</td><td style="${td}">${esc2(x.severity)}</td>`
       + `<td style="${td}">${esc2(x.first) || '-'}<div style="${sub}">${esc2(x.last)}</div></td><td style="${td}">${x.days == null ? '-' : x.days + ' day' + (x.days !== 1 ? 's' : '')}</td>`
@@ -22081,15 +22246,16 @@ function renderUnownedCard() {
     + `</tbody></table></div>`;
   if (rows.length > 10) h += `<div style="margin-top:8px;font-size:0.76rem;"><a href="#" onclick="state.unownedOpen=!state.unownedOpen;renderUnownedCard();return false;">${open ? 'Show the first 10 only' : 'Show all ' + rows.length + ' systems'}</a></div>`;
   card.innerHTML = h;
+  _ovFoldCard(card, `${_uN(rows.map(x => x.kind), rows.length)}${counted.length ? ', ' + total + ' drives or partitions' : ''}`);
 }
 function _dfUnownedText(systems, heading) {
   const rows = _unownedDrives(systems), cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
   let o = `\n${heading || '## Unowned Drives'}\n\n`;
   if (!rows.length) return o + '**Finding:** Active IQ reports no unowned drives or partitions on the systems in scope.\n\n';
   const counted = rows.filter(x => x.count != null);
-  o += `**Finding:** ${rows.length} system${rows.length !== 1 ? 's' : ''} report unowned drives or partitions${counted.length ? (counted.length === rows.length ? ` (${counted.reduce((n, x) => n + x.count, 0)} drives or partitions in all)` : ` (${counted.reduce((n, x) => n + x.count, 0)} in the ${counted.length} where Active IQ gives the count)`) : ''}. Unowned drives cannot serve as spares or hold data. Active IQ does not say which drives; run \`${_UNOWNED_CMD}\` on the cluster and assign them with \`storage disk assign\`.\n\n`;
-  o += '| System | Cluster | Serial | Customer | Site | Model | Release | Unowned | Severity | First seen | Last seen | Open for (days) | Support | Last AutoSupport | Health | Note |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n'
-    + rows.map(x => `| ${cell(x.name)} | ${cell(x.cluster)} | ${cell(x.serial)} | ${cell(x.customer)} | ${cell(x.site)} | ${cell(x.model)} | ${cell(x.release)} | ${x.count == null ? 'not reported' : x.count} | ${cell(x.severity)} | ${cell(x.first)} | ${cell(x.last)} | ${x.days == null ? '-' : x.days} | ${cell(x.support)} | ${cell(x.asup)} | ${cell(x.health)} | ${x.ds460 ? 'DS460 ownership rule broken; ' : ''}${x.ack ? 'acknowledged' : ''} |`).join('\n') + '\n\n';
+  o += `**Finding:** ${_uN(rows.map(x => x.kind), rows.length)} report unowned drives or partitions${counted.length ? (counted.length === rows.length ? ` (${counted.reduce((n, x) => n + x.count, 0)} drives or partitions in all)` : ` (${counted.reduce((n, x) => n + x.count, 0)} in the ${counted.length} where Active IQ gives the count)`) : ''}. Unowned drives cannot serve as spares or hold data. Active IQ does not say which drives; run \`${_UNOWNED_CMD}\` on the cluster and assign them with \`storage disk assign\`.\n\n`;
+  o += '| System | Nodes affected | Serials | Customer | Site | Model | Release | Unowned | Severity | First seen | Last seen | Open for (days) | Support | Last AutoSupport | Health | Note |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n'
+    + rows.map(x => `| ${cell(x.name)} | ${x.nodes} of ${x.nodeCount} | ${cell(x.serials.join(' '))} | ${cell(x.customer)} | ${cell(x.site)} | ${cell(x.model)} | ${cell(x.release)} | ${x.count == null ? 'not reported' : x.count} | ${cell(x.severity)} | ${cell(x.first)} | ${cell(x.last)} | ${x.days == null ? '-' : x.days} | ${cell(x.support)} | ${cell(x.asup)} | ${cell(x.health)} | ${x.ds460 ? 'DS460 ownership rule broken; ' : ''}${x.ack ? 'acknowledged' : ''} |`).join('\n') + '\n\n';
   return o;
 }
 function _dfCveIndex(systems) {
@@ -39644,6 +39810,14 @@ function navigateToSupportCases(type, value, event) {
       state.selectedSAMSystemSerial = value;
       switchTab("sam");
     }
+  } else if (type === "CLUSTER") {
+    const c = getClusters(state.systems).find(x => x.key === value);
+    if (c) {
+      state.currentTab = "sam";
+      setFilter("CUSTOMER", c.customer);
+      state.selectedSAMSystemSerial = (c.kind === 'cluster' && c.nodes[0].clusterName && c.nodes[0].clusterName !== c.nodes[0].serialNumber) ? 'CLUSTER:' + c.nodes[0].clusterName : c.nodes[0].serialNumber;
+      switchTab("sam");
+    }
   } else if (type === "CUSTOMER") {
     state.currentTab = "sam";
     setFilter("CUSTOMER", value);
@@ -44566,7 +44740,7 @@ function _dfNodeStrip(systems) {
     const _cl = s.clusterName || '';
     e.group = _cl || 'No cluster name reported';
     const _noCl = !_cl || _cl === s.serialNumber;   // standalone arrays report their serial number as the cluster name
-    if (_noCl) e.group = fam === 'eseries' ? 'E-Series arrays (standalone)' : fam === 'ontap' ? 'ONTAP (no cluster name reported)' : 'No cluster name reported';
+    if (_noCl) e.group = fam === 'eseries' ? 'E-Series arrays (standalone)' : fam === 'ontap' ? 'ONTAP (no cluster name reported)' : fam === 'storagegrid' ? 'StorageGRID nodes (grid not identified)' : 'No cluster name reported';
     e.order = (s.isMetroCluster && s.mcDrClusterName ? [_cl, s.mcDrClusterName].sort()[0] : _cl) + '\u0001' + _cl;
     if (_noCl) e.order = '\uffff' + e.group + '\u0001';
     if (m) {

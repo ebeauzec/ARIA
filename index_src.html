@@ -42,11 +42,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=5.6.329-1">
+  <link rel="stylesheet" href="styles.css?v=5.6.330-1">
   
   <!-- Load Chart.js locally -->
-  <script src="chart.js?v=5.6.329-1"></script>
-  <script src="pptxgen.bundle.js?v=5.6.329-1"></script>
+  <script src="chart.js?v=5.6.330-1"></script>
+  <script src="pptxgen.bundle.js?v=5.6.330-1"></script>
 <script>
   /* theme: 'dark' (default), 'light' or 'system'; applied before the page paints */
   (function () { var m = 'dark'; try { m = localStorage.getItem('aria_theme') || 'dark'; } catch (e) {}
@@ -213,13 +213,13 @@
       <div id="overviewTab" class="tab-content active">
         <!-- KPI Cards Row -->
         <div class="kpi-row">
-          <div class="card kpi-card" id="kpiCardAll" onclick="setKpiFilter('ALL')" style="cursor: pointer;" data-tooltip="Total number of NetApp ONTAP storage systems monitored in Active IQ. Click to show all systems in the table below.">
-            <div class="card-title">Total Systems</div>
+          <div class="card kpi-card" id="kpiCardAll" onclick="setKpiFilter('ALL')" style="cursor: pointer;" data-tooltip="Number of ONTAP clusters, StorageGRID grids and E-Series arrays monitored in Active IQ (a node that cannot be placed counts as its own). Click to show all of them in the table below.">
+            <div class="card-title">Systems</div>
             <div class="card-value" id="kpiTotalSystems">0</div>
             <div class="card-subtitle">Active monitored assets</div>
             <svg class="card-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
           </div>
-          <div class="card kpi-card" id="kpiCardCritical" onclick="setKpiFilter('CRITICAL')" style="cursor: pointer;" data-tooltip="Systems with at least one critical-severity risk flagged by Active IQ predictive analytics. Critical risks indicate potential data loss, outage, or security vulnerability. Click to filter.">
+          <div class="card kpi-card" id="kpiCardCritical" onclick="setKpiFilter('CRITICAL')" style="cursor: pointer;" data-tooltip="Distinct critical-severity risks flagged by Active IQ predictive analytics, counted once per cluster, grid or array. Critical risks indicate potential data loss, outage, or security vulnerability. Click to filter.">
             <div class="card-title">Critical Risks</div>
             <div class="card-value" id="kpiCriticalRisks">0</div>
             <div class="card-subtitle">Action required immediately</div>
@@ -286,7 +286,7 @@
         <!-- Systems Table Card -->
         <div class="card table-card">
           <div class="table-header-row">
-            <div class="section-title">Monitored Systems &amp; Clusters</div>
+            <div class="section-title">Monitored Systems <span id="overviewTableHint" style="font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:8px;"></span></div>
             <div style="display: flex; gap: 8px;">
               <span style="font-size: 0.72rem; color: var(--text-muted); align-self: center;" data-tooltip="Import/export actions moved here from the top-right menu to reduce duplicate controls scattered across the page.">Import/export: see ⬆ top-right menu</span>
             </div>
@@ -296,12 +296,13 @@
               <thead>
                 <tr>
                   <th onclick="sortTable('customerName')" style="cursor: pointer; user-select: none;">Customer Account <span id="sort-customerName" class="sort-icon"></span></th>
-                  <th onclick="sortTable('systemName')" style="cursor: pointer; user-select: none;">System Name <span id="sort-systemName" class="sort-icon"></span></th>
-                  <th onclick="sortTable('serialNumber')" style="cursor: pointer; user-select: none;">Serial Number <span id="sort-serialNumber" class="sort-icon"></span></th>
-                  <th onclick="sortTable('clusterName')" style="cursor: pointer; user-select: none;">Cluster <span id="sort-clusterName" class="sort-icon"></span></th>
+                  <th onclick="sortTable('systemName')" style="cursor: pointer; user-select: none;">Name <span id="sort-systemName" class="sort-icon"></span></th>
+                  <th onclick="sortTable('nodeCount')" style="cursor: pointer; user-select: none;">Nodes <span id="sort-nodeCount" class="sort-icon"></span></th>
                   <th onclick="sortTable('platform')" style="cursor: pointer; user-select: none;">Platform <span id="sort-platform" class="sort-icon"></span></th>
+                  <th onclick="sortTable('release')" style="cursor: pointer; user-select: none;">Release <span id="sort-release" class="sort-icon"></span></th>
                   <th onclick="sortTable('status')" style="cursor: pointer; user-select: none;">Health Status <span id="sort-status" class="sort-icon"></span></th>
-                  <th onclick="sortTable('contracts.endDate')" style="cursor: pointer; user-select: none;">Contract End Date <span id="sort-contracts-endDate" class="sort-icon"></span></th>
+                  <th onclick="sortTable('riskScore')" style="cursor: pointer; user-select: none;" data-tooltip="Distinct critical and high risks, counted once per cluster">Risks <span id="sort-riskScore" class="sort-icon"></span></th>
+                  <th onclick="sortTable('contracts.endDate')" style="cursor: pointer; user-select: none;" data-tooltip="The earliest contract end among the cluster's nodes">Contract End Date <span id="sort-contracts-endDate" class="sort-icon"></span></th>
                 </tr>
               </thead>
               <tbody id="overviewTableBody">
@@ -1630,9 +1631,9 @@
   <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleJSONImport(event)">
 
   <!-- Javascript File -->
-  <script src="aria-api.js?v=5.6.329-1"></script>
-  <script src="data/reference_library.js?v=5.6.329-1"></script>
-  <script src="app.js?v=5.6.329-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
+  <script src="aria-api.js?v=5.6.330-1"></script>
+  <script src="data/reference_library.js?v=5.6.330-1"></script>
+  <script src="app.js?v=5.6.330-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
   <script>
     // Verify app.js parsed OK — if APP_VERSION is undefined, the file had a parse error
     if (typeof APP_VERSION === 'undefined') {

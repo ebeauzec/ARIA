@@ -1,8 +1,8 @@
 {
-  "version": "5.6.329",
+  "version": "5.6.330",
   "major": 5,
   "minor": 6,
-  "patch": 329,
+  "patch": 330,
   "date": "2026-10-11",
-  "notes": "Chart text recoloured on theme switch"
+  "notes": "Overview reports clusters, grids and arrays instead of nodes; secondary cards fold"
 }
