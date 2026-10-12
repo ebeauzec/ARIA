@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.326";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.327";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.327",
+    date: "12 Oct 2026",
+    title: "Unowned drives view",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New Overview card 'Unowned drives': lists the systems for which Active IQ raises 'Unowned drives or partitions present' (21 in the current cache), with customer, model, release and how long the risk has been open, a note where the DS460 ownership rule is also broken, and a copy button. It also prints as a section in the Security Posture Brief. Active IQ's API has no drive owner, container type or auto-assign field (checked against the live schema), so the card says that it knows only that unowned drives exist and gives the array command to list them.",
+          "The hardening scorecard's 'check on the array' table gains disk auto-assign: storage disk option show -fields autoassign; storage disk show -container-type unassigned.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.326",
     date: "12 Oct 2026",
@@ -21981,6 +21997,51 @@ function _dfKevExposureText(systems, heading) {
   return o;
 }
 
+// Unowned drives: Active IQ raises one risk per system ("Unowned drives or partitions present"). It carries no drive list, owner or count.
+const _UNOWNED_RX = /unowned (drive|disk|partition)|unassigned (drive|disk)/i;
+const _unownedRiskOf = s => (s.risks || []).find(r => _UNOWNED_RX.test(String(r.description || r.title || r.shortName || '')));
+function _unownedDrives(systems) {
+  const rows = [];
+  (systems || []).forEach(s => {
+    const r = _unownedRiskOf(s); if (!r) return;
+    const t = Date.parse(r.firstSeen || ''), days = isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 86400000));
+    const ds460 = (s.risks || []).some(x => /DS460 shelf has drives assigned incorrectly/i.test(String(x.description || x.title || '')));
+    rows.push({ serial: s.serialNumber, name: s.systemName || s.serialNumber, customer: s.customerName || '', model: s.model || s.platform || '', release: s.ontapVersion || s.osVersion || '', days, ack: r.ack || null, ds460 });
+  });
+  return rows.sort((a, b) => (b.days == null ? -1 : b.days) - (a.days == null ? -1 : a.days) || a.customer.localeCompare(b.customer));
+}
+const _UNOWNED_CMD = 'storage disk show -container-type unassigned';
+function _unownedCopy() {
+  const rows = _unownedDrives(getFilteredSystems(true) || []);
+  const txt = rows.map(x => `${x.customer ? x.customer + ' / ' : ''}${x.name} (${x.model}, ${x.release || 'release unknown'})`).join('\n');
+  try { navigator.clipboard.writeText(txt); showToast && showToast(`Copied ${rows.length} system${rows.length !== 1 ? 's' : ''}`); } catch (e) { /* the list is still on screen */ }
+}
+function renderUnownedCard() {
+  const card = document.getElementById('overviewUnownedCard'); if (!card) return;
+  const rows = _unownedDrives(getFilteredSystems(true) || []);
+  if (!rows.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const esc2 = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const th = 'text-align:left;padding:5px 8px;font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:6px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.76rem;';
+  const custs = new Set(rows.map(x => x.customer).filter(Boolean)), open = !!(state.unownedOpen);
+  const shown = open ? rows : rows.slice(0, 10);
+  let h = `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;"><div class="section-title" style="margin:0;">Unowned drives</div><div style="font-size:0.74rem;color:var(--text-muted);"><a href="#" onclick="_unownedCopy();return false;">Copy list</a></div></div>`
+    + `<div style="font-size:0.8rem;margin:8px 0 6px;"><b>${rows.length}</b> system${rows.length !== 1 ? 's' : ''} (${custs.size} customer${custs.size !== 1 ? 's' : ''}) ${rows.length !== 1 ? 'have' : 'has'} at least one drive or partition without an owner. Unowned drives cannot be used as spares or in an aggregate. Active IQ reports only that they exist, not how many or which; to list them run <code>${esc2(_UNOWNED_CMD)}</code> on the cluster, then assign them with <code>storage disk assign</code>.</div>`
+    + `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">System</th><th style="${th}">Customer</th><th style="${th}">Model · release</th><th style="${th}">Open for</th><th style="${th}">Note</th></tr></thead><tbody>`
+    + shown.map(x => `<tr><td style="${td}"><a href="#" data-serial="${esc2(x.serial)}" onclick="selectSystem(this.dataset.serial);switchTab('tam');return false;">${esc2(x.name)}</a></td><td style="${td}">${esc2(x.customer)}</td><td style="${td}">${esc2(x.model)}<div style="color:var(--text-muted);font-size:0.7rem;">${esc2(x.release)}</div></td><td style="${td}">${x.days == null ? '<span style="color:var(--text-muted);">unknown</span>' : x.days + ' day' + (x.days !== 1 ? 's' : '')}</td><td style="${td}">${x.ds460 ? 'DS460 shelf with drives owned by both nodes: auto-assign cannot work until that is corrected. ' : ''}${x.ack ? '<span style="color:var(--text-muted);">acknowledged</span>' : ''}</td></tr>`).join('')
+    + `</tbody></table>`;
+  if (rows.length > 10) h += `<div style="margin-top:8px;font-size:0.76rem;"><a href="#" onclick="state.unownedOpen=!state.unownedOpen;renderUnownedCard();return false;">${open ? 'Show the first 10 only' : 'Show all ' + rows.length + ' systems'}</a></div>`;
+  card.innerHTML = h;
+}
+function _dfUnownedText(systems, heading) {
+  const rows = _unownedDrives(systems), cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  let o = `\n${heading || '## Unowned Drives'}\n\n`;
+  if (!rows.length) return o + '**Finding:** Active IQ reports no unowned drives or partitions on the systems in scope.\n\n';
+  o += `**Finding:** ${rows.length} system${rows.length !== 1 ? 's' : ''} report unowned drives or partitions. Unowned drives cannot serve as spares or hold data. Active IQ does not say how many or which; run \`${_UNOWNED_CMD}\` on the cluster and assign them with \`storage disk assign\`.\n\n`;
+  o += '| System | Customer | Model | Release | Open for (days) | Note |\n|---|---|---|---|---|---|\n' + rows.map(x => `| ${cell(x.name)} | ${cell(x.customer)} | ${cell(x.model)} | ${cell(x.release)} | ${x.days == null ? '-' : x.days} | ${x.ds460 ? 'DS460 ownership rule broken; ' : ''}${x.ack ? 'acknowledged' : ''} |`).join('\n') + '\n\n';
+  return o;
+}
+
 function _dfCveIndex(systems) {
   const map = {};
   // kev: true if ANY source flags this CVE as CISA Known Exploited (confirmed active
@@ -31588,6 +31649,7 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   if (_riskTrendText) securityBrief += _riskTrendText;
   securityBrief += _dfHardeningText(targetSystems, '## Hardening Scorecard');
   securityBrief += _dfKevExposureText(targetSystems, '## Known Exploited Vulnerabilities (CISA KEV)');
+  securityBrief += _dfUnownedText(targetSystems, '## Unowned Drives');
   // Portfolio Exposure: counts only, never names other customers -- see the comment
   // on the MSP report above.
 
@@ -43168,6 +43230,7 @@ function switchTab(tabId) {
     renderNeedsAttention();
     renderChangesCard();
     renderKevCard();
+    renderUnownedCard();
     renderOverviewTable();
     renderCharts();
     renderRiskTrendChart();
@@ -45464,6 +45527,7 @@ const HARDENING_CONTROLS = [
   { id: 'autosys', area: 'Updates', control: 'System files (for example the disk qualification package) are installed automatically (not notify-only)', test: s => { const v = (s.autoUpdateSettings || {}).systemFile; return v == null ? undefined : v !== 'automatic'; }, ref: 'ONTAP AutoSupport automatic update documentation' },
 ];
 const HARDENING_UNOBSERVED = [
+  { control: 'Disk auto-assign is enabled where the design expects it, and no drive is unowned', cmd: 'storage disk option show -fields autoassign; storage disk show -container-type unassigned', ref: 'ONTAP disk and aggregate management documentation' },
   { control: 'Multi-admin verification for destructive operations', cmd: 'security multi-admin-verify show', ref: 'ONTAP multi-admin verification documentation' },
   { control: 'Administrator authentication: multifactor or key-based SSH, no unused or default accounts', cmd: 'security login show', ref: 'TR-4569' },
   { control: 'TLS and FIPS settings', cmd: 'security config show', ref: 'TR-4569' },

@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.327 (2026-10-12)
+
+### Added
+- New Overview card 'Unowned drives': lists the systems for which Active IQ raises 'Unowned drives or partitions present' (21 in the current cache), with customer, model, release and how long the risk has been open, a note where the DS460 ownership rule is also broken, and a copy button. It also prints as a section in the Security Posture Brief. Active IQ's API has no drive owner, container type or auto-assign field (checked against the live schema), so the card says that it knows only that unowned drives exist and gives the array command to list them.
+- The hardening scorecard's 'check on the array' table gains disk auto-assign: storage disk option show -fields autoassign; storage disk show -container-type unassigned.
+
 ## 5.6.326 (2026-10-12)
 
 ### Fixed
