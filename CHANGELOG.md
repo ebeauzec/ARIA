@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.6.311 (2026-10-12)
+
+### Added
+- Success Plans now show measured outcomes. When a suggested plan is adopted, ARIA stores the systems it covers next to the baseline metric. The Success Plans tab then shows, per plan, how many of those systems are no longer affected, whether the finding that triggered the plan no longer applies ("target met: consider closing"), and plans not updated for 60 days or more.
+- The plan dialog has an outcome panel: the metric from baseline to now, and the systems no longer affected, still affected, no longer in the data, and newly affected. "Add this evidence to the notes" puts a dated evidence sentence in the notes field; nothing is sent to Active IQ until you save the plan, as before.
+- Closing a plan now keeps its record with the result at closing instead of deleting it, so closed plans still show their outcome.
+- Account documents that list the account's Success Plans now include a table of outcomes: metric at adoption and now, systems no longer affected, and the result.
+- Plans adopted before this version have the metric only; the covered systems are recorded from now on.
+
 ## 5.6.310 (2026-10-12)
 
 ### Added

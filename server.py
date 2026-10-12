@@ -810,6 +810,12 @@ def _run_db_schema_setup(db):
             created_at      TEXT NOT NULL
         );
     """)
+    # Outcome evidence: the systems the plan covered when it was adopted, and the final result recorded when it is closed
+    for _col in ("baseline_serials TEXT DEFAULT ''", "closed_at TEXT DEFAULT ''", "final_json TEXT DEFAULT ''"):
+        try:
+            db.execute("ALTER TABLE success_plan_progress ADD COLUMN " + _col)
+        except Exception:
+            pass   # already there
     # StoragePerf (Plumb) performance integration -- see perf_integration.py
     perf_integration.init_tables(db)
     # enrich_cache purge now happens in _maybe_purge_enrich_cache(), rate-
@@ -11324,13 +11330,23 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             db = _init_db()
             try:
                 rows = db.execute("""
-                    SELECT plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at
+                    SELECT plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at, baseline_serials, closed_at, final_json
                     FROM success_plan_progress
                 """).fetchall()
             finally:
                 db.close()
-            cols = ["planId", "nagpId", "templateKey", "metricLabel", "baselineValue", "targetDirection", "createdAt"]
-            self._json_response(200, {"ok": True, "items": [dict(zip(cols, r)) for r in rows]})
+            cols = ["planId", "nagpId", "templateKey", "metricLabel", "baselineValue", "targetDirection", "createdAt", "baselineSerials", "closedAt", "finalJson"]
+            items = [dict(zip(cols, r)) for r in rows]
+            for it in items:
+                try:
+                    it["baselineSerials"] = json.loads(it["baselineSerials"]) if it.get("baselineSerials") else None
+                except Exception:
+                    it["baselineSerials"] = None
+                try:
+                    it["final"] = json.loads(it.pop("finalJson")) if it.get("finalJson") else None
+                except Exception:
+                    it["final"] = None
+            self._json_response(200, {"ok": True, "items": items})
         except Exception as e:
             print(f"  [PLAN-PROGRESS] List error: {e}", flush=True)
             self._json_response(500, {"ok": False, "error": str(e)})
@@ -11351,13 +11367,16 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             now = datetime.now(timezone.utc).isoformat()
             db = _init_db()
             try:
+                serials = body.get("affectedSerials")
                 db.execute("""
                     INSERT OR REPLACE INTO success_plan_progress
-                        (plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at, baseline_serials, closed_at, final_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (plan_id, body.get("nagpId", ""), body.get("templateKey", ""),
                       body.get("metricLabel", ""), body.get("baselineValue"),
-                      body.get("targetDirection", "down"), now))
+                      body.get("targetDirection", "down"), body.get("createdAt") or now,
+                      json.dumps([str(x) for x in serials]) if isinstance(serials, list) else "",
+                      body.get("closedAt") or "", json.dumps(body["final"]) if isinstance(body.get("final"), dict) else ""))
                 db.commit()
             finally:
                 db.close()

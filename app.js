@@ -45,9 +45,28 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.310";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.311";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.311",
+    date: "12 October 2026",
+    title: "Success Plan Outcomes",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Success Plans now show measured outcomes. When a suggested plan is adopted, ARIA stores the systems it covers next to the baseline metric. The Success Plans tab then shows, per plan, how many of those systems are no longer affected, whether the finding that triggered the plan no longer applies (\"target met: consider closing\"), and plans not updated for 60 days or more.",
+          "The plan dialog has an outcome panel: the metric from baseline to now, and the systems no longer affected, still affected, no longer in the data, and newly affected. \"Add this evidence to the notes\" puts a dated evidence sentence in the notes field; nothing is sent to Active IQ until you save the plan, as before.",
+          "Closing a plan now keeps its record with the result at closing instead of deleting it, so closed plans still show their outcome.",
+          "Account documents that list the account's Success Plans now include a table of outcomes: metric at adoption and now, systems no longer affected, and the result.",
+          "Plans adopted before this version have the metric only; the covered systems are recorded from now on.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.310",
     date: "12 October 2026",
@@ -24371,6 +24390,7 @@ function getSuccessPlanAlignmentText(targetSystems) {
   // one pipe-delimited table (header + a row per plan) -- reads cleanly as text and becomes a real table in the Word download
   const _msTxt = p => { const g = _cspProgress(p); return g.milestones ? `${g.complete}/${g.milestones} (${g.pct}%)` : '—'; };
   let _o = '  Plan | Stage | Status | Health | Owner | Milestones Complete\n' + plans.map(p => `  ${(p.name || p.title || 'Untitled Plan')} | ${SUCCESS_PLAN_STAGE_LABELS[p.lifecycleStage] || p.lifecycleStage || 'Unspecified'} | ${SUCCESS_PLAN_STATUS_LABELS[p.status] || p.status} | ${SUCCESS_PLAN_HEALTH_LABELS[p.health] || p.health || '—'} | ${p.tamOwnerEmail || '—'} | ${_msTxt(p)}`).join('\n') + '\n';
+  _o += _cspOutcomesText((state.tamSuccessPlans || []).filter(p => nagpIds.has(p.nagpId)));
   const _open = []; plans.forEach(p => _cspProgress(p).ms.forEach(m => { if (m.status !== 'COMPLETE') _open.push(`  ${(p.name || p.title || 'Plan')} | ${m.objective || '—'} | ${m.name} | ${m.status || 'NOT_STARTED'} | ${(m.actions || []).filter(a => a.actionStatus !== 'COMPLETE').length} open action(s)${m.blockerNotes ? ' | Blocker: ' + m.blockerNotes : ''}`); }));
   if (_open.length) _o += '\n  Open Milestones\n  Plan | Objective | Milestone | Status | Actions\n' + _open.join('\n') + '\n';
   return _o;
@@ -41573,7 +41593,7 @@ async function adoptSelectedSuggestedPlans() {
       try {
         await fetch('/api/plan-progress', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ planId: result.id, nagpId: s.nagpId, templateKey: s.templateKey, metricLabel: s.metricLabel, baselineValue: s.metricValue, targetDirection: s.targetDirection }),
+          body: JSON.stringify({ planId: result.id, nagpId: s.nagpId, templateKey: s.templateKey, metricLabel: s.metricLabel, baselineValue: s.metricValue, targetDirection: s.targetDirection, affectedSerials: (s.affectedSystems || []).map(x => x.serial).filter(Boolean) }),
         });
       } catch (e) { console.warn('Progress baseline save failed (non-fatal):', e); }
       ok++;
@@ -41603,6 +41623,74 @@ function computePlanProgressDelta(plan) {
   const currentValue = current ? current.metricValue : (baseline.targetDirection === 'down' ? 0 : baseline.baselineValue);
   const improved = baseline.targetDirection === 'down' ? currentValue <= baseline.baselineValue : currentValue >= baseline.baselineValue;
   return { metricLabel: baseline.metricLabel, baselineValue: baseline.baselineValue, currentValue, improved };
+}
+
+// Outcome of a plan, measured from Active IQ data. The metric that triggered the plan is recomputed from the live harvest (computePlanProgressDelta), and the systems
+// the plan covered when it was adopted are checked one by one: no longer affected (resolved), still affected, no longer in the data, and systems newly affected since.
+// A plan adopted before the systems were stored has the metric only. A closed plan keeps the result recorded at closing.
+function computePlanOutcome(plan) {
+  const base = (state.planProgress || []).find(b => String(b.planId) === String(plan.id));
+  if (!base) return null;
+  const tmpl = SUCCESS_PLAN_TEMPLATES.find(t => t.key === base.templateKey); if (!tmpl) return null;
+  const closed = !!base.closedAt || plan.status === 'CLOSED';
+  const o = { planId: plan.id, metricLabel: base.metricLabel, baselineValue: base.baselineValue, direction: base.targetDirection, closed, closedAt: base.closedAt || null, createdAt: base.createdAt || null, hasSystems: Array.isArray(base.baselineSerials) };
+  if (closed && base.final) return Object.assign(o, base.final, { closed: true });
+  const cust = (state.systems || []).filter(s => s.nagpId === base.nagpId);
+  if (!cust.length) return null;
+  const cur = tmpl.evaluate(cust), now = cur ? cur.metricValue : (base.targetDirection === 'down' ? 0 : base.baselineValue);
+  o.currentValue = now; o.targetMet = !cur || (base.targetDirection === 'down' && now === 0);
+  o.improved = base.targetDirection === 'down' ? now <= base.baselineValue : now >= base.baselineValue;
+  const nameOf = {}; cust.forEach(s => { nameOf[s.serialNumber] = s.systemName || s.serialNumber; });
+  if (o.hasSystems) {
+    const curSet = new Set(((cur && cur.affectedSystems) || []).map(x => x.serial).filter(Boolean)), present = new Set(cust.map(s => s.serialNumber));
+    o.baselineCount = base.baselineSerials.length; o.resolved = []; o.still = []; o.gone = [];
+    base.baselineSerials.forEach(sn => { if (!present.has(sn)) o.gone.push(nameOf[sn] || sn); else if (curSet.has(sn)) o.still.push(nameOf[sn] || sn); else o.resolved.push(nameOf[sn] || sn); });
+    o.fresh = [...curSet].filter(sn => !base.baselineSerials.includes(sn)).map(sn => nameOf[sn] || sn);
+  }
+  const last = Date.parse(plan.lastUpdated || ''), open = plan.status !== 'CLOSED' && plan.status !== 'COMPLETE';
+  o.staleDays = (open && !isNaN(last) && Date.now() - last > 60 * 86400000) ? Math.floor((Date.now() - last) / 86400000) : null;
+  return o;
+}
+function _cspOutcomeText(plan, o) {
+  let t = `ARIA evidence, ${new Date().toISOString().slice(0, 10)}: ${o.metricLabel || 'plan metric'} ${o.baselineValue} -> ${o.currentValue}.`;
+  if (o.hasSystems) t += ` Of ${o.baselineCount} systems covered when the plan was adopted, ${o.resolved.length} are no longer affected, ${o.still.length} still are${o.gone.length ? `, ${o.gone.length} are no longer in the data` : ''}.${o.fresh.length ? ` ${o.fresh.length} other system${o.fresh.length !== 1 ? 's are' : ' is'} newly affected.` : ''}`;
+  if (o.targetMet) t += ' The finding that triggered this plan no longer applies.';
+  return t;
+}
+function _cspOutcomeCell(p) {
+  const o = computePlanOutcome(p); if (!o) return '';
+  const bits = [];
+  if (o.hasSystems && o.baselineCount != null && o.resolved != null) bits.push(`<span style="color:${(Array.isArray(o.resolved) ? o.resolved.length : o.resolved) ? 'var(--status-normal)' : 'var(--text-muted)'};">${Array.isArray(o.resolved) ? o.resolved.length : o.resolved} of ${o.baselineCount} systems no longer affected</span>`);
+  if (o.targetMet && !o.closed) bits.push('<span style="color:var(--status-normal);font-weight:600;">target met: consider closing</span>');
+  if (o.staleDays) bits.push(`<span style="color:#f59e0b;">not updated for ${o.staleDays} days</span>`);
+  return bits.length ? `<div style="font-size:0.7rem;margin-top:2px;">${bits.join(' · ')}</div>` : '';
+}
+function _cspOutcomesText(plans) {
+  const rows = [];
+  (plans || []).forEach(p => {
+    const o = computePlanOutcome(p); if (!o) return;
+    const n = x => Array.isArray(x) ? x.length : x;
+    rows.push(`  ${(p.name || p.title || 'Untitled Plan')} | ${o.metricLabel || '—'} | ${o.baselineValue} | ${o.currentValue} | ${o.hasSystems && o.baselineCount != null ? `${n(o.resolved)} of ${o.baselineCount}` : 'not recorded'} | ${o.closed ? 'Closed' : (o.targetMet ? 'Target met' : (o.improved ? 'Improving' : 'Not improving'))}`);
+  });
+  return rows.length ? '\n  Outcomes measured from Active IQ data\n  Plan | Metric | At adoption | Now | Systems no longer affected | Result\n' + rows.join('\n') + '\n' : '';
+}
+function _cspRenderEvidence(plan) {
+  const el = document.getElementById('successPlanEvidence'); if (!el) return;
+  const o = plan ? computePlanOutcome(plan) : null;
+  if (!o) { el.innerHTML = plan ? `<div style="font-size:0.72rem;color:var(--text-muted);">No outcome measurement for this plan: it was not adopted from an ARIA suggestion, so there is no baseline to compare with.</div>` : ''; return; }
+  const esc2 = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const list = (label, arr, col) => arr && arr.length ? `<div style="font-size:0.72rem;margin-top:4px;"><span style="color:${col};font-weight:600;">${label} (${arr.length}):</span> ${arr.map(esc2).join(', ')}</div>` : '';
+  el.innerHTML = `<div style="border:1px solid var(--border-color);border-radius:6px;padding:10px 12px;"><div style="font-size:0.78rem;font-weight:600;margin-bottom:4px;">Outcome measured by ARIA ${o.closed ? '(recorded at closing)' : ''}</div>`
+    + `<div style="font-size:0.76rem;">${esc2(o.metricLabel || '')}: <b>${esc2(o.baselineValue)} → ${esc2(o.currentValue)}</b> ${o.targetMet && !o.closed ? '<span style="color:var(--status-normal);font-weight:600;">· target met, consider closing this plan</span>' : ''}${o.staleDays ? `<span style="color:#f59e0b;"> · plan not updated for ${o.staleDays} days</span>` : ''}</div>`
+    + (o.hasSystems && !o.closed ? list('No longer affected', o.resolved, 'var(--status-normal)') + list('Still affected', o.still, 'var(--status-warning)') + list('No longer in the data', o.gone, 'var(--text-muted)') + list('Newly affected since', o.fresh, 'var(--status-critical)')
+      : (o.closed ? '' : `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:4px;">This plan was adopted before ARIA stored the covered systems, so only the metric is compared.</div>`))
+    + (!o.closed ? `<div style="margin-top:8px;"><button class="action-btn secondary" onclick="addPlanEvidenceToNotes('${esc2(String(plan.id))}')">Add this evidence to the notes</button> <span style="font-size:0.68rem;color:var(--text-muted);">Nothing is sent to Active IQ until you save the plan.</span></div>` : '')
+    + `</div>`;
+}
+function addPlanEvidenceToNotes(id) {
+  const plan = (state.tamSuccessPlans || []).find(p => String(p.id) === String(id)); const o = plan && computePlanOutcome(plan); if (!o) return;
+  const ta = document.getElementById('successPlanNotes'); if (!ta) return;
+  ta.value = (ta.value ? ta.value.trim() + '\n\n' : '') + _cspOutcomeText(plan, o);
 }
 
 function openSuccessPlanModal(id) {
@@ -41635,6 +41723,7 @@ function openSuccessPlanModal(id) {
   closeBtn.textContent = 'Close Plan';
   closeBtn.style.display = plan ? '' : 'none';
   closeBtn.title = "Active IQ has no delete API for Success Plans -- this sets status to Closed, the closest real equivalent.";
+  _cspRenderEvidence(plan);
   document.getElementById('successPlanModal').style.display = 'flex';
 }
 
@@ -41719,7 +41808,14 @@ async function closeSuccessPlanFromModal() {
     // Best-effort: drop the local progress baseline (if this plan was
     // adopted from a suggestion) now that the plan is closed. Non-fatal --
     // an orphaned baseline just stops showing progress, nothing breaks.
-    try { await fetch(`/api/plan-progress?planId=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch (e) {}
+    try {
+      const _o = computePlanOutcome(Object.assign({}, plan, { status: 'ACTIVE' })), _b = (state.planProgress || []).find(b => String(b.planId) === String(id));
+      if (_b) {
+        const _n = x => Array.isArray(x) ? x.length : x;
+        await fetch('/api/plan-progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId: id, nagpId: _b.nagpId, templateKey: _b.templateKey, metricLabel: _b.metricLabel, baselineValue: _b.baselineValue, targetDirection: _b.targetDirection, createdAt: _b.createdAt, affectedSerials: _b.baselineSerials || undefined, closedAt: new Date().toISOString(), final: _o ? { currentValue: _o.currentValue, targetMet: _o.targetMet, improved: _o.improved, baselineCount: _o.baselineCount, resolved: _n(_o.resolved), still: _n(_o.still), gone: _n(_o.gone), fresh: _n(_o.fresh) } : {} }) });
+        await loadPlanProgress();
+      }
+    } catch (e) { /* the record is evidence only; closing the plan does not depend on it */ }
     closeSuccessPlanModal();
     renderSuccessPlansTab();
   } catch (e) {
@@ -41795,7 +41891,7 @@ function renderSuccessPlansTab() {
       <td style="padding:8px 10px;font-size:0.8rem;">${(p.nagpName || (p.scope && p.scope.name) || '—').replace(/</g, '&lt;')}</td>
       <td style="padding:8px 10px;"><span style="background:${color}22;color:${color};border:1px solid ${color}55;border-radius:4px;padding:3px 8px;font-size:0.72rem;font-weight:700;">${SUCCESS_PLAN_STATUS_LABELS[p.status] || p.status || '—'}</span></td>
       <td style="padding:8px 10px;"><span style="background:${healthColor}22;color:${healthColor};border:1px solid ${healthColor}55;border-radius:4px;padding:3px 8px;font-size:0.72rem;font-weight:700;">${SUCCESS_PLAN_HEALTH_LABELS[p.health] || p.health || '—'}</span></td>
-      <td style="padding:8px 10px;font-size:0.78rem;">${progressCell2}</td>
+      <td style="padding:8px 10px;font-size:0.78rem;">${progressCell2}${_cspOutcomeCell(p)}</td>
     </tr>`;
   }).join('');
 }
