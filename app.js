@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.314";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.315";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.315",
+    date: "12 October 2026",
+    title: "Offline Mode Page And Recovery Copy Row",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New page docs/OFFLINE.md describing the offline and dark-site path (importing an AutoSupport bundle for a customer who does not send AutoSupport to NetApp): how to use it, what the importer reads, and what it does not give (Active IQ's own risk engine, health score, cases and contracts).",
+          "The hardening scorecard's \"not reported by Active IQ\" list gains the isolated recovery copy (a vault SnapMirror relationship or SnapLock) and a tested restore, with the commands that show them on the array.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.314",
     date: "12 October 2026",
@@ -44951,6 +44967,7 @@ const HARDENING_UNOBSERVED = [
   { control: 'TLS and FIPS settings', cmd: 'security config show', ref: 'TR-4569' },
   { control: 'Audit logging', cmd: 'security audit show', ref: 'TR-4569' },
   { control: 'Login banner and session timeouts', cmd: 'security login banner show; system timeout show', ref: 'TR-4569' },
+  { control: 'An isolated, immutable recovery copy of critical data (a vault SnapMirror relationship or SnapLock) and a tested restore', cmd: 'snapmirror show -fields policy-type; volume show -fields snaplock-type', ref: 'ONTAP data protection and SnapLock documentation' },
 ];
 function _dfHardeningRows(systems) {
   const ontap = (systems || []).filter(s => _platformFamily(s) === 'ontap');

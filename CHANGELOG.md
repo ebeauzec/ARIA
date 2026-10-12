@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.315 (2026-10-12)
+
+### Added
+- New page docs/OFFLINE.md describing the offline and dark-site path (importing an AutoSupport bundle for a customer who does not send AutoSupport to NetApp): how to use it, what the importer reads, and what it does not give (Active IQ's own risk engine, health score, cases and contracts).
+- The hardening scorecard's "not reported by Active IQ" list gains the isolated recovery copy (a vault SnapMirror relationship or SnapLock) and a tested restore, with the commands that show them on the array.
+
 ## 5.6.314 (2026-10-12)
 
 ### Added
