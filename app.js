@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.332";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.333";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.333",
+    date: "13 Oct 2026",
+    title: "Compact StorageGRID tenants",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The StorageGRID card on the Technical Audit tab (and the Action Planner StorageGRID tab) no longer runs to hundreds of rows on a large grid. Tenants and buckets are one summary line (for example 560 tenants, 3,152 buckets, 570 versioned, 0 immutable, 24 CloudMirror) with the table folded, largest tenants first and scrolling inside a 260-pixel box with a fixed header when opened. A grid with 12 tenants or fewer stays open. The node and ILM rule tables also scroll inside their own box on a large grid.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.332",
     date: "12 Oct 2026",
@@ -45602,7 +45617,7 @@ function _storageGridHtml(view) {
   view.grids.forEach(g => {
     html += `<details open style="margin-bottom:12px;border:1px solid var(--wa-80);border-radius:var(--radius-sm);padding:10px 12px;"><summary style="cursor:pointer;font-weight:600;">${esc(g.gridName)} <span style="color:var(--text-muted);font-weight:400;font-size:0.75rem;">${esc(g.customerName)} &middot; ${g.sites.length} site${g.sites.length !== 1 ? 's' : ''} &middot; ${g.nodeTotal || 0} node${g.nodeTotal !== 1 ? 's' : ''}${g.rolesText ? ' (' + esc(g.rolesText) + ')' : ''}${g.formsText ? ' &middot; ' + esc(g.formsText) : ''} &middot; ${esc(g.version)}${g.licenseCapacity ? ' &middot; licence ' + esc(g.licenseCapacity) + ' TB (' + esc(g.licenseType || '') + ')' : ''}</span></summary>`;
     if (g.nodes.length) {
-      html += `<div style="overflow-x:auto;margin-top:10px;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Site</th><th style="${th}">Node</th><th style="${th}">Role</th><th style="${th}">Appliance</th><th style="${th}">Reports to Active IQ</th><th style="${th}">Crit/High risks</th><th style="${th}">Last ASUP</th><th style="${th}">RAID</th><th style="${th}">Drives</th><th style="${th}">Version</th></tr></thead><tbody>` +
+      html += `<div style="overflow:auto;${g.nodes.length > 12 ? 'max-height:340px;' : ''}margin-top:10px;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Site</th><th style="${th}">Node</th><th style="${th}">Role</th><th style="${th}">Appliance</th><th style="${th}">Reports to Active IQ</th><th style="${th}">Crit/High risks</th><th style="${th}">Last ASUP</th><th style="${th}">RAID</th><th style="${th}">Drives</th><th style="${th}">Version</th></tr></thead><tbody>` +
         g.nodes.map(n => `<tr><td style="${td}">${esc(n.site)}</td><td style="${td}">${esc(n.hostName)}${g.primaryAdmin && n.hostName === g.primaryAdmin ? ' <span style="color:var(--accent-cyan);font-size:0.68rem;">primary</span>' : ''}</td><td style="${td}">${esc(n.storageNodeType || '—')}</td><td style="${td}">${esc(_dfSgForm(n).label)}</td><td style="${td}color:${n.reporting ? 'var(--status-normal)' : 'var(--status-warning)'};">${n.reporting ? 'Yes' : 'No'}</td><td style="${td}">${n.health ? n.health.crit + '/' + n.health.high : '—'}</td><td style="${td}">${n.health && n.health.asupDays != null ? n.health.asupDays + 'd' : '—'}</td><td style="${td}">${esc(n.raidMode || '—')}</td><td style="${td}">${n.driveType ? esc(n.driveType) + (n.driveSizeGB ? ' ' + n.driveSizeGB + ' GB' : '') : '—'}</td><td style="${td}">${esc(n.osVersion || '—')}</td></tr>`).join('') + `</tbody></table></div>`;
     } else html += `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px;">Active IQ did not return per-node detail for this grid.</div>`;
     if (g.siteCap.length) {
@@ -45610,13 +45625,18 @@ function _storageGridHtml(view) {
         g.siteCap.map(sc => `<tr><td style="${td}">${esc(sc.site)}</td><td style="${td}">${sc.totalTB}</td><td style="${td}">${sc.usedTB}</td><td style="${td}">${sc.usableLeftTB}</td><td style="${td}">${sc.usedPct != null ? sc.usedPct + '%' : '—'}</td><td style="${td}">${esc(sc.reportedOn || '—')}</td></tr>`).join('') + `</tbody></table></div>`;
     }
     if (g.rules.length) {
-      html += `<div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;margin:12px 0 4px;">ILM rules as reported by Active IQ</div><div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:6px;">Active IQ returns one ILM rule set per grid (from AutoSupport) and does not say which rules belong to the active policy. Confirm in Grid Manager > ILM > Policies.</div><div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Rule</th><th style="${th}">Default</th><th style="${th}">Placement</th><th style="${th}">Reference</th><th style="${th}">Ingest</th><th style="${th}">Applies to</th></tr></thead><tbody>` +
+      html += `<div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;margin:12px 0 4px;">ILM rules as reported by Active IQ</div><div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:6px;">Active IQ returns one ILM rule set per grid (from AutoSupport) and does not say which rules belong to the active policy. Confirm in Grid Manager > ILM > Policies.</div><div style="overflow:auto;${g.rules.length > 10 ? 'max-height:300px;' : ''}"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Rule</th><th style="${th}">Default</th><th style="${th}">Placement</th><th style="${th}">Reference</th><th style="${th}">Ingest</th><th style="${th}">Applies to</th></tr></thead><tbody>` +
         g.rules.map(r => `<tr><td style="${td}font-weight:600;">${esc(r.ruleName)}</td><td style="${td}">${r.isDefaultRule ? 'Yes' : 'No'}</td><td style="${td}">${esc(r._p.text)}</td><td style="${td}">${esc(r.referenceTime || '—')}</td><td style="${td}">${esc(r.ingestBehavior || '—')}</td><td style="${td}">${r.filter ? esc(r.filter) : 'All objects'}</td></tr>`).join('') + `</tbody></table></div>`;
     }
     if (g.findings.length) html += `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">` + g.findings.map(f => `<div style="background:var(--wa-30);border:1px solid var(--wa-100);border-left:3px solid ${sevColor[f.severity]};border-radius:var(--radius-sm);padding:8px 12px;"><div style="font-size:0.78rem;font-weight:600;">${esc(f.title)} <span style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;">${f.severity}</span></div><div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">${esc(f.detail)}</div>${f.recommendation ? `<div style="font-size:0.72rem;color:var(--accent-cyan);margin-top:4px;">Recommendation: ${esc(f.recommendation)}</div>` : ''}</div>`).join('') + `</div>`;
     if (g.tenants.length) {
-      html += `<div style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;margin:12px 0 4px;">Tenants &amp; buckets</div><div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Tenant</th><th style="${th}">Buckets</th><th style="${th}">Versioned</th><th style="${th}">Immutable</th><th style="${th}">CloudMirror</th></tr></thead><tbody>` +
-        g.tenants.map(tn => { const b = tn.buckets || []; return `<tr><td style="${td}">${esc(tn.tenantId)}</td><td style="${td}">${b.length}</td><td style="${td}">${b.filter(x => String(x.versioning || '').toUpperCase() === 'ENABLED').length}</td><td style="${td}">${b.filter(x => x.isS3ObjectLockingEnabled || x.isLegacyComplianceEnabled).length}</td><td style="${td}">${b.filter(x => x.isCloudMirror).length}</td></tr>`; }).join('') + `</tbody></table></div>`;
+      // a large grid has hundreds of tenants: one summary line, the table folded and scrolling inside its own box, biggest tenants first
+      const cnt = (tn, f) => (tn.buckets || []).filter(f).length;
+      const isVer = x => String(x.versioning || '').toUpperCase() === 'ENABLED', isImm = x => x.isS3ObjectLockingEnabled || x.isLegacyComplianceEnabled, isCm = x => x.isCloudMirror;
+      const tot = { b: 0, v: 0, i: 0, c: 0 }; g.tenants.forEach(tn => { tot.b += (tn.buckets || []).length; tot.v += cnt(tn, isVer); tot.i += cnt(tn, isImm); tot.c += cnt(tn, isCm); });
+      const big = g.tenants.length > 12, sorted = g.tenants.slice().sort((a, b) => (b.buckets || []).length - (a.buckets || []).length);
+      html += `<details${big ? '' : ' open'} style="margin-top:12px;"><summary style="cursor:pointer;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;">Tenants &amp; buckets <span style="text-transform:none;font-size:0.76rem;color:var(--text-secondary);margin-left:6px;">${g.tenants.length} tenant${g.tenants.length !== 1 ? 's' : ''}, ${tot.b} bucket${tot.b !== 1 ? 's' : ''} &middot; ${tot.v} versioned &middot; ${tot.i} immutable &middot; ${tot.c} CloudMirror${big ? ' (largest first)' : ''}</span></summary><div style="overflow:auto;max-height:260px;margin-top:6px;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}position:sticky;top:0;background:var(--bg-card);">Tenant</th><th style="${th}position:sticky;top:0;background:var(--bg-card);">Buckets</th><th style="${th}position:sticky;top:0;background:var(--bg-card);">Versioned</th><th style="${th}position:sticky;top:0;background:var(--bg-card);">Immutable</th><th style="${th}position:sticky;top:0;background:var(--bg-card);">CloudMirror</th></tr></thead><tbody>` +
+        sorted.map(tn => `<tr><td style="${td}">${esc(tn.tenantId)}</td><td style="${td}">${(tn.buckets || []).length}</td><td style="${td}">${cnt(tn, isVer)}</td><td style="${td}">${cnt(tn, isImm)}</td><td style="${td}">${cnt(tn, isCm)}</td></tr>`).join('') + `</tbody></table></div></details>`;
     }
     html += `</details>`;
   });

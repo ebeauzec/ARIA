@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.333 (2026-10-13)
+
+### Fixed
+- The StorageGRID card on the Technical Audit tab (and the Action Planner StorageGRID tab) no longer runs to hundreds of rows on a large grid. Tenants and buckets are one summary line (for example 560 tenants, 3,152 buckets, 570 versioned, 0 immutable, 24 CloudMirror) with the table folded, largest tenants first and scrolling inside a 260-pixel box with a fixed header when opened. A grid with 12 tenants or fewer stays open. The node and ILM rule tables also scroll inside their own box on a large grid.
+
 ## 5.6.332 (2026-10-12)
 
 ### Added
