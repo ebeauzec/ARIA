@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.337 (2026-10-14)
+
+### Added
+- New Overview card 'SnapMirror health' (folded to a summary line, and a section in the Security Posture Brief). Active IQ's API gives only the number of relationships per cluster (checked against the live schema: no source, destination, policy or lag), so health is built from the findings Active IQ raises, in four classes: updates failing, destination disrupted, MetroCluster, and cluster peering or intercluster network. On your data: 101 clusters report relationships (20,225 in all), 460 report none, 140 clusters have a replication finding and 16 of them have updates failing; each row shows what Active IQ says (it names the source volumes), how long the most serious class has been open and the next step.
+- The Support Cases and Firmware Currency documents now list per cluster, grid or array. A case on both nodes of a cluster is one case naming the nodes; firmware updates that apply to every node are one line, on some nodes only they name them (86 node lines became 8), a cluster's drive inventory is counted once, and the status table has one row per cluster, grid or array. The as-built workbook and the systems CSV keep one row per node (serial numbers are the point of an inventory) and gain three columns: Cluster / Grid / Array, Unit Type and Nodes in Unit.
+- StorageGRID grids can now be chosen as a scope on the Support & Ops and Customer Success tabs ('Grid: name (N nodes)'), and clicking a grid in the Overview opens it with that scope. The Technical Audit node strip titles an E-Series box 'E-Series array: name' instead of presenting it as a cluster, and the 'node-specific' marker in the Overview table no longer wraps.
+
 ## 5.6.336 (2026-10-14)
 
 ### Fixed

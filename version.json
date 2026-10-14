@@ -1,8 +1,8 @@
 {
-  "version": "5.6.336",
+  "version": "5.6.337",
   "major": 5,
   "minor": 6,
-  "patch": 336,
+  "patch": 337,
   "date": "2026-10-11",
-  "notes": "Capacity shown as TB or PB everywhere, one formatter"
+  "notes": "SnapMirror health view; cases and firmware documents per cluster; grid scope"
 }

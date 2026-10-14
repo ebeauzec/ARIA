@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.336";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.337";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.337",
+    date: "14 Oct 2026",
+    title: "SnapMirror health, cases and firmware per cluster, grid scope",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "New Overview card 'SnapMirror health' (folded to a summary line, and a section in the Security Posture Brief). Active IQ's API gives only the number of relationships per cluster (checked against the live schema: no source, destination, policy or lag), so health is built from the findings Active IQ raises, in four classes: updates failing, destination disrupted, MetroCluster, and cluster peering or intercluster network. On your data: 101 clusters report relationships (20,225 in all), 460 report none, 140 clusters have a replication finding and 16 of them have updates failing; each row shows what Active IQ says (it names the source volumes), how long the most serious class has been open and the next step.",
+          "The Support Cases and Firmware Currency documents now list per cluster, grid or array. A case on both nodes of a cluster is one case naming the nodes; firmware updates that apply to every node are one line, on some nodes only they name them (86 node lines became 8), a cluster's drive inventory is counted once, and the status table has one row per cluster, grid or array. The as-built workbook and the systems CSV keep one row per node (serial numbers are the point of an inventory) and gain three columns: Cluster / Grid / Array, Unit Type and Nodes in Unit.",
+          "StorageGRID grids can now be chosen as a scope on the Support & Ops and Customer Success tabs ('Grid: name (N nodes)'), and clicking a grid in the Overview opens it with that scope. The Technical Audit node strip titles an E-Series box 'E-Series array: name' instead of presenting it as a cluster, and the 'node-specific' marker in the Overview table no longer wraps.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.336",
     date: "14 Oct 2026",
@@ -12979,6 +12996,7 @@ function selectCluster(key) {
   focusOnSystem(c.nodes[0].serialNumber);
   state.selectedTAMSerials = c.nodes.map(x => x.serialNumber);
   if (c.kind === 'cluster' && c.nodes[0].clusterName && c.nodes[0].clusterName !== c.nodes[0].serialNumber) { state.selectedSAMSystemSerial = 'CLUSTER:' + c.nodes[0].clusterName; state.selectedCSMSystemSerial = 'CLUSTER:' + c.nodes[0].clusterName; }
+  else if (c.kind === 'grid' && c.nodeCount > 1) { state.selectedSAMSystemSerial = 'GRID:' + c.name; state.selectedCSMSystemSerial = 'GRID:' + c.name; }
   switchTab('tam');
 }
 function toggleClusterOpen(key) { state.clusterOpen = state.clusterOpen || {}; state.clusterOpen[key] = !state.clusterOpen[key]; renderOverviewTable(); }
@@ -14225,7 +14243,7 @@ function renderOverviewTable() {
     tr.onclick = () => multi ? toggleClusterOpen(tr.getAttribute('data-ckey')) : selectCluster(tr.getAttribute('data-ckey'));
     const openN = _openCaseCount(c.supportCases);
     const cases = openN > 0 ? ` <span class="badge warning" style="font-size: 0.65rem; padding: 2px 4px; vertical-align: middle; margin-left: 4px; background-color: var(--status-info); color: var(--on-info); border-color: rgba(0, 230, 118, 0.2); cursor: pointer;" data-ckey="${esc2(c.key)}" onclick="navigateToSupportCases('CLUSTER', this.dataset.ckey, event)" data-tooltip="Click to view the open support cases for this cluster">✉ ${openN} Open</span>` : '';
-    const flag = c.nodeIssues.length ? ` <span style="color:var(--hx-fbbf24);cursor:help;font-size:0.72rem;" title="${esc2(c.nodeIssues.map(x => x.text).join('\n'))}">⚑ node-specific</span>` : '';
+    const flag = c.nodeIssues.length ? ` <span style="color:var(--hx-fbbf24);cursor:help;white-space:nowrap;font-size:0.72rem;" title="${esc2(c.nodeIssues.map(x => x.text).join('\n'))}">⚑ node-specific</span>` : '';
     const risks = (c.counts.critical || c.counts.high) ? `${c.counts.critical ? `<span style="color:var(--status-critical);font-weight:600;">${c.counts.critical} critical</span>` : ''}${c.counts.critical && c.counts.high ? ' · ' : ''}${c.counts.high ? `<span style="color:var(--status-warning);">${c.counts.high} high</span>` : ''}` : '<span style="color:var(--text-muted);">none</span>';
     tr.innerHTML = `
       <td>${esc2(c.customer)}</td>
@@ -14376,7 +14394,12 @@ function populateSystemSelectors() {
         });
         samSelect.appendChild(grpClusters);
       }
-      
+      { const grids = new Map(); currentFiltered.forEach(x => { const u = _unitOf(x); if (u.kind === 'grid') grids.set(u.name, (grids.get(u.name) || 0) + 1); });
+        const multi = [...grids.entries()].filter(([, n]) => n > 1);
+        if (multi.length) { const gg = document.createElement("optgroup"); gg.label = "StorageGRID grids (all their nodes)";
+          multi.forEach(([gn, n]) => { const o = document.createElement("option"); o.value = `GRID:${gn}`; o.innerText = `Grid: ${gn} (${n} nodes)`; if (state.selectedSAMSystemSerial === `GRID:${gn}`) o.selected = true; gg.appendChild(o); });
+          samSelect.appendChild(gg); } }
+
       const grpNodes = document.createElement("optgroup");
       grpNodes.label = "Nodes and standalone systems";
       currentFiltered.forEach(sys => {
@@ -14390,7 +14413,7 @@ function populateSystemSelectors() {
     }
     samSelect.onchange = (e) => {
       const val = e.target.value;
-      if (val !== "ALL" && !val.startsWith("CLUSTER:")) {
+      if (val !== "ALL" && !val.startsWith("CLUSTER:") && !val.startsWith("GRID:")) {
         const serial = val.startsWith("NODE:") ? val.substring(5) : val;
         focusOnSystem(serial); // carries this system's focus to the other tabs too
       } else {
@@ -14428,7 +14451,12 @@ function populateSystemSelectors() {
         });
         csmSelect.appendChild(grpClusters);
       }
-      
+      { const grids = new Map(); currentFiltered.forEach(x => { const u = _unitOf(x); if (u.kind === 'grid') grids.set(u.name, (grids.get(u.name) || 0) + 1); });
+        const multi = [...grids.entries()].filter(([, n]) => n > 1);
+        if (multi.length) { const gg = document.createElement("optgroup"); gg.label = "StorageGRID grids (all their nodes)";
+          multi.forEach(([gn, n]) => { const o = document.createElement("option"); o.value = `GRID:${gn}`; o.innerText = `Grid: ${gn} (${n} nodes)`; if (state.selectedCSMSystemSerial === `GRID:${gn}`) o.selected = true; gg.appendChild(o); });
+          csmSelect.appendChild(gg); } }
+
       const grpNodes = document.createElement("optgroup");
       grpNodes.label = "Nodes and standalone systems";
       currentFiltered.forEach(sys => {
@@ -14442,7 +14470,7 @@ function populateSystemSelectors() {
     }
     csmSelect.onchange = (e) => {
       const val = e.target.value;
-      if (val !== "ALL" && !val.startsWith("CLUSTER:")) {
+      if (val !== "ALL" && !val.startsWith("CLUSTER:") && !val.startsWith("GRID:")) {
         const serial = val.startsWith("NODE:") ? val.substring(5) : val;
         focusOnSystem(serial); // carries this system's focus to the other tabs too
       } else {
@@ -17445,6 +17473,9 @@ function renderSAMTab() {
   } else if (state.selectedSAMSystemSerial.startsWith("CLUSTER:")) {
     const cluster = state.selectedSAMSystemSerial.substring(8);
     targetSAMSystems.push(...currentFiltered.filter(s => s.clusterName === cluster));
+  } else if (state.selectedSAMSystemSerial.startsWith("GRID:")) {
+    const grid = state.selectedSAMSystemSerial.substring(5);
+    targetSAMSystems.push(...currentFiltered.filter(s => { const u = _unitOf(s); return u.kind === 'grid' && u.name === grid; }));
   } else {
     const serial = state.selectedSAMSystemSerial.startsWith("NODE:") ? state.selectedSAMSystemSerial.substring(5) : state.selectedSAMSystemSerial;
     const found = currentFiltered.find(s => s.serialNumber === serial);
@@ -18382,6 +18413,9 @@ function renderCSMTab() {
   } else if (state.selectedCSMSystemSerial.startsWith("CLUSTER:")) {
     const cluster = state.selectedCSMSystemSerial.substring(8);
     targetCSMSystems.push(...currentFiltered.filter(s => s.clusterName === cluster));
+  } else if (state.selectedCSMSystemSerial.startsWith("GRID:")) {
+    const grid = state.selectedCSMSystemSerial.substring(5);
+    targetCSMSystems.push(...currentFiltered.filter(s => { const u = _unitOf(s); return u.kind === 'grid' && u.name === grid; }));
   } else {
     const serial = state.selectedCSMSystemSerial.startsWith("NODE:") ? state.selectedCSMSystemSerial.substring(5) : state.selectedCSMSystemSerial;
     const found = currentFiltered.find(s => s.serialNumber === serial);
@@ -22460,6 +22494,66 @@ function _dfUnownedText(systems, heading) {
   o += `**Finding:** ${_uN(rows.map(x => x.kind), rows.length)} report unowned drives or partitions${counted.length ? (counted.length === rows.length ? ` (${counted.reduce((n, x) => n + x.count, 0)} drives or partitions in all)` : ` (${counted.reduce((n, x) => n + x.count, 0)} in the ${counted.length} where Active IQ gives the count)`) : ''}. Unowned drives cannot serve as spares or hold data. Active IQ does not say which drives; run \`${_UNOWNED_CMD}\` on the cluster and assign them with \`storage disk assign\`.\n\n`;
   o += '| System | Nodes affected | Serials | Customer | Site | Model | Release | Unowned | Severity | First seen | Last seen | Open for (days) | Support | Last AutoSupport | Health | Note |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n'
     + rows.map(x => `| ${cell(x.name)} | ${x.nodes} of ${x.nodeCount} | ${cell(x.serials.join(' '))} | ${cell(x.customer)} | ${cell(x.site)} | ${cell(x.model)} | ${cell(x.release)} | ${x.count == null ? 'not reported' : x.count} | ${cell(x.severity)} | ${cell(x.first)} | ${cell(x.last)} | ${x.days == null ? '-' : x.days} | ${cell(x.support)} | ${cell(x.asup)} | ${cell(x.health)} | ${x.ds460 ? 'DS460 ownership rule broken; ' : ''}${x.ack ? 'acknowledged' : ''} |`).join('\n') + '\n\n';
+  return o;
+}
+// SnapMirror health. Active IQ's API exposes only the number of relationships per cluster (no source, destination, policy or lag), so the health of
+// the replication comes from the wellness findings Active IQ raises about it. Each class below is a family of those findings.
+const _SM_CLASSES = [
+  { id: 'failing', label: 'Updates failing', rank: 0, rx: /snap ?mirror update failure|snapmirror.*(fail|lag|stalled|broken)/i, action: 'Check the relationship state and last transfer error (snapmirror show -fields state,status,last-transfer-error), then resume or resync it.' },
+  { id: 'dest', label: 'Destination disrupted', rank: 1, rx: /snap ?mirror destination|consistency group or flexgroup snap/i, action: 'Confirm the destination cluster finished its upgrade and that the relationships are healthy again.' },
+  { id: 'mc', label: 'MetroCluster', rank: 2, rx: /metrocluster|\bMC-(core|stor|net)|mediator|tiebreaker|syncmirror|checksum errors may be reported on remote disks/i, action: 'Run metrocluster check run and metrocluster check show; fix any component that is not ok.' },
+  { id: 'peer', label: 'Cluster peering and intercluster network', rank: 3, rx: /intercluster|cluster peer|peering/i, action: 'Give each node two intercluster LIFs, list every remote node address in the peer, and enable peering encryption.' }
+];
+const _smClassOf = r => { const t = String((r && (r.description || r.title)) || '') + ' ' + String((r && r.shortName) || ''); return _SM_CLASSES.find(c => c.rx.test(t)) || null; };
+function _snapMirrorHealth(systems) {
+  const units = getClusters(systems), rows = []; let withRel = 0, totalRel = 0, noRel = 0;
+  units.forEach(c => {
+    if (c.kind !== 'cluster') return;   // SnapMirror is an ONTAP feature
+    const rel = Math.max(0, ...c.nodes.map(n => (n.snapmirror && n.snapmirror.totalCount) || n.snapMirrorCount || 0));
+    if (rel > 0) { withRel++; totalRel += rel; } else noRel++;
+    const found = c.risks.map(x => ({ x, cls: _smClassOf(x.risk) })).filter(y => y.cls);
+    if (!found.length) return;
+    const byCls = new Map(); found.forEach(y => { if (!byCls.has(y.cls.id)) byCls.set(y.cls.id, { cls: y.cls, items: [] }); byCls.get(y.cls.id).items.push(y.x); });
+    const classes = [...byCls.values()].sort((a, b) => a.cls.rank - b.cls.rank);
+    const all = found.map(y => y.x.risk), firstT = Math.min(...classes[0].items.map(x => Date.parse(x.risk.firstSeen || '')).filter(t => !isNaN(t)).concat([Infinity]));   // how long the most serious class has been open
+    const sevRank = { critical: 0, high: 1, medium: 2, low: 3, best_practice: 4 }, worst = all.slice().sort((a, b) => (sevRank[a.severity] ?? 9) - (sevRank[b.severity] ?? 9))[0];
+    rows.push({ ckey: c.key, name: c.name, customer: c.customer, nodes: c.nodeCount, release: c.release, relationships: rel, classes, severity: worst ? String(worst.severity || '').replace(/_/g, ' ') : '', sevRank: sevRank[worst && worst.severity] ?? 9,
+      days: isFinite(firstT) ? Math.max(0, Math.floor((Date.now() - firstT) / 86400000)) : null,
+      acked: found.every(y => y.x.risk.ack), detail: classes[0].items[0].risk.riskDetail || classes[0].items[0].risk.description || '',
+      nodeNote: found.some(y => y.x.nodeSpecific) ? 'some on only some nodes' : '' });
+  });
+  rows.sort((a, b) => a.classes[0].cls.rank - b.classes[0].cls.rank || a.sevRank - b.sevRank || (b.days || 0) - (a.days || 0));
+  const count = id => rows.filter(r => r.classes.some(k => k.cls.id === id)).length;
+  return { rows, withRel, totalRel, noRel, failing: count('failing'), dest: count('dest'), mc: count('mc'), peer: count('peer') };
+}
+function renderSnapMirrorCard() {
+  const card = document.getElementById('overviewSnapMirrorCard'); if (!card) return;
+  const systems = getFilteredSystems(true) || [], v = _snapMirrorHealth(systems);
+  if (!v.withRel && !v.rows.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const esc2 = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);white-space:nowrap;', td = 'padding:6px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.74rem;';
+  const open = !!state.smOpen, shown = open ? v.rows : v.rows.slice(0, 10);
+  let h = `<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;"><div class="section-title" style="margin:0;">SnapMirror health</div><div style="font-size:0.74rem;color:var(--text-muted);">${v.withRel} cluster${v.withRel !== 1 ? 's' : ''} with relationships (${v.totalRel.toLocaleString()} in all) &middot; ${v.noRel} with none</div></div>`
+    + `<div style="font-size:0.8rem;margin:8px 0 6px;">${v.rows.length ? `<b>${v.rows.length}</b> cluster${v.rows.length !== 1 ? 's' : ''} with a finding about replication: ${[v.failing ? `<b style="color:var(--status-critical);">${v.failing} with updates failing</b>` : '', v.dest ? `${v.dest} with a disrupted destination` : '', v.mc ? `${v.mc} MetroCluster` : '', v.peer ? `${v.peer} with peering or intercluster network gaps` : ''].filter(Boolean).join(' &middot; ')}.` : 'No replication finding on any cluster in scope.'} Active IQ reports the number of relationships but not their source, destination, policy or lag, so health here comes from the findings it raises; the exact state is on the array (<code>snapmirror show</code>).</div>`;
+  if (v.rows.length) {
+    h += `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>` + ['Cluster', 'Customer', 'Relationships', 'Findings', 'Severity', 'Open for', 'What Active IQ says', 'Next step'].map(c => `<th style="${th}">${c}</th>`).join('') + `</tr></thead><tbody>`
+      + shown.map(r => `<tr><td style="${td}"><a href="#" data-ckey="${esc2(r.ckey)}" onclick="selectCluster(this.dataset.ckey);return false;">${esc2(r.name)}</a><div style="color:var(--text-muted);font-size:0.68rem;">${r.nodes} node${r.nodes !== 1 ? 's' : ''} &middot; ${esc2(r.release)}</div></td><td style="${td}">${esc2(r.customer)}</td>`
+        + `<td style="${td}">${r.relationships || '<span style="color:var(--text-muted);">none</span>'}</td>`
+        + `<td style="${td}">${r.classes.map(k => `${esc2(k.cls.label)}${k.items.length > 1 ? ' (' + k.items.length + ')' : ''}`).join('<br>')}${r.nodeNote ? `<div style="color:var(--hx-fbbf24);font-size:0.68rem;">&#9873; ${esc2(r.nodeNote)}</div>` : ''}</td>`
+        + `<td style="${td}">${esc2(r.severity)}</td><td style="${td}">${r.days == null ? '-' : r.days + ' day' + (r.days !== 1 ? 's' : '')}${r.acked ? '<div style="color:var(--text-muted);font-size:0.68rem;">acknowledged</div>' : ''}</td>`
+        + `<td style="${td}max-width:320px;overflow-wrap:anywhere;">${esc2(String(r.detail).slice(0, 220))}</td><td style="${td}max-width:300px;">${esc2(r.classes[0].cls.action)}</td></tr>`).join('') + `</tbody></table></div>`;
+    if (v.rows.length > 10) h += `<div style="margin-top:8px;font-size:0.76rem;"><a href="#" onclick="state.smOpen=!state.smOpen;renderSnapMirrorCard();return false;">${open ? 'Show the first 10 only' : 'Show all ' + v.rows.length + ' clusters'}</a></div>`;
+  }
+  card.innerHTML = h;
+  _ovFoldCard(card, v.rows.length ? `${v.rows.length} cluster${v.rows.length !== 1 ? 's' : ''} with a replication finding${v.failing ? `, ${v.failing} with updates failing` : ''}` : `${v.withRel} clusters replicate, no finding`);
+}
+function _dfSnapMirrorText(systems, heading) {
+  const v = _snapMirrorHealth(systems), cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  let o = `\n${heading || '## SnapMirror Health'}\n\n`;
+  if (!v.withRel && !v.rows.length) return o + '**Finding:** no cluster in scope reports SnapMirror relationships and no replication finding is open.\n\n';
+  o += `**Finding:** ${v.withRel} cluster${v.withRel !== 1 ? 's' : ''} report SnapMirror relationships (${v.totalRel.toLocaleString()} in all); ${v.noRel} report none. ${v.rows.length ? `${v.rows.length} cluster${v.rows.length !== 1 ? 's have' : ' has'} an open finding about replication${v.failing ? `, ${v.failing} with updates failing` : ''}.` : 'No replication finding is open.'} Active IQ gives the number of relationships but not their source, destination, policy or lag, so this section rests on the findings it raises; confirm the exact state with \`snapmirror show\`.\n\n`;
+  if (v.rows.length) o += '| Cluster | Customer | Relationships | Findings | Severity | Open for (days) | What Active IQ says | Next step |\n|---|---|---|---|---|---|---|---|\n' + v.rows.map(r => `| ${cell(r.name)}${r.nodes > 1 ? ' (' + r.nodes + ' nodes)' : ''} | ${cell(r.customer)} | ${r.relationships || 'none'} | ${cell(r.classes.map(k => k.cls.label + (k.items.length > 1 ? ' (' + k.items.length + ')' : '')).join('; '))}${r.nodeNote ? ' (' + r.nodeNote + ')' : ''} | ${cell(r.severity)} | ${r.days == null ? '-' : r.days} | ${cell(String(r.detail).slice(0, 200))} | ${cell(r.classes[0].cls.action)} |`).join('\n') + '\n\n';
   return o;
 }
 function _dfCveIndex(systems) {
@@ -32080,6 +32174,7 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   securityBrief += _dfHardeningText(targetSystems, '## Hardening Scorecard');
   securityBrief += _dfKevExposureText(targetSystems, '## Known Exploited Vulnerabilities (CISA KEV)');
   securityBrief += _dfUnownedText(targetSystems, '## Unowned Drives');
+  securityBrief += _dfSnapMirrorText(targetSystems, '## SnapMirror Health');
   // Portfolio Exposure: counts only, never names other customers -- see the comment
   // on the MSP report above.
 
@@ -37407,7 +37502,9 @@ function _wdCust(scopeTitle) { return String(scopeTitle || '').replace(/_/g, ' '
 // cases that are still open. Replaces a conversion of the case cards, which became one repeated Metric/Value table per case.
 function compileCasesWordMd(systems, scopeTitle) {
   const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0];
-  const all = []; (systems || []).forEach(s => (s.supportCases || []).forEach(sc => all.push({ systemName: s.systemName, customerName: s.customerName, serialNumber: s.serialNumber, clusterName: s.clusterName, ...sc })));
+  const all = [], _seenCase = new Map();   // a case on both nodes of a cluster is one case, naming the nodes
+  (systems || []).forEach(s => { const u = _unitOf(s), nm = _dfNodeTag(s); (s.supportCases || []).forEach(sc => { const k = u.key + '|' + sc.id, e = _seenCase.get(k); if (e) { if (!e.nodeNames.includes(nm)) e.nodeNames.push(nm); return; } const row = { customerName: s.customerName, serialNumber: s.serialNumber, clusterName: s.clusterName, ...sc, systemName: u.name, unitKey: u.key, nodeNames: [nm] }; _seenCase.set(k, row); all.push(row); }); });
+  const _caseSys = c => { const fu = _fleetUnit(c.unitKey); return c.systemName + (fu && fu.nodeCount > 1 ? ` (${c.nodeNames.join(', ')})` : ''); };
   let o = `# ${cust} -- Support Cases\n\nPrepared ${today} from the NetApp support cases Active IQ holds for the systems in scope.\n\n`;
   if (!all.length) return o + `No support cases were found for the systems in scope.\n`;
   filterActiveCases(all);
@@ -37415,13 +37512,13 @@ function compileCasesWordMd(systems, scopeTitle) {
   const day = d => d ? String(d).split('T')[0] : '';
   o += `## 1. Summary\n\n` + _wdTable(['Open (active)', 'Processing', 'Closed', 'Total'], [[act.length, proc.length, closed.length, all.length]]);
   o += `## 2. All cases\n\nOpen cases first, then processing, then closed; each group by severity.\n\n`;
-  o += _wdTable(['Case', 'Status', 'Severity', 'System', 'Title', 'Opened', 'Last updated'], all.map(c => [c.id, c._isClosed ? 'Closed' : (c._isActive ? 'Open' : 'Processing'), c.severity, c.systemName || '', c.title || '', day(c.createdDate), day(c.lastUpdated)]));
+  o += _wdTable(['Case', 'Status', 'Severity', 'System', 'Title', 'Opened', 'Last updated'], all.map(c => [c.id, c._isClosed ? 'Closed' : (c._isActive ? 'Open' : 'Processing'), c.severity, _caseSys(c), c.title || '', day(c.createdDate), day(c.lastUpdated)]));
   const detail = all.filter(c => !c._isClosed);
   if (detail.length) {
     o += `## 3. Open case detail\n\n`;
     detail.forEach(c => {
       o += `### ${c.id}: ${String(c.title || '').length > 100 ? String(c.title).slice(0, 97) + '...' : (c.title || 'Case')}\n\n`;
-      o += `**Severity:** ${c.severity || 'n/a'}  |  **Status:** ${c.status || 'n/a'}  |  **System:** ${c.systemName || 'n/a'}${c.serialNumber ? ` (S/N ${c.serialNumber})` : ''}${c.clusterName ? `  |  **Cluster:** ${c.clusterName}` : ''}\n\n`;
+      o += `**Severity:** ${c.severity || 'n/a'}  |  **Status:** ${c.status || 'n/a'}  |  **System:** ${_caseSys(c) || 'n/a'}${c.serialNumber ? ` (S/N ${c.serialNumber})` : ''}\n\n`;
       if (c.description) o += `**Description:** ${c.description}\n\n`;
       const cat = (c.criticality || '') + (c.subCategory ? ' / ' + c.subCategory : ''); if (cat.trim()) o += `**Category:** ${cat}${c.caseType ? `  |  **Type:** ${c.caseType}` : ''}\n\n`;
       if (c.reporter) o += `**Reported by:** ${c.reporter}\n\n`;
@@ -39293,7 +39390,8 @@ function downloadAsBuiltXlsx() {
     'System FW (SP/BMC)', 'Motherboard FW', 'Shelf Module FW', 'Drive FW (current/behind/unknown)',
     'Sales Rep', 'Technical Account Mgr', 'Support Account Mgr',
     'Growth Rate (GB/day)', 'Days to Limit', 'Projected Limit Date',
-    'Open Risks'];
+    'Open Risks', 'Cluster / Grid / Array', 'Unit Type', 'Nodes in Unit'];
+  const _asbNodes = new Map(); targetSystems.forEach(x => { const k = _unitOf(x).key; _asbNodes.set(k, (_asbNodes.get(k) || 0) + 1); });
   const sysRows = targetSystems.map(sys => {
     const eff = sys.efficiency || {}, proj = sys.projections || {};
     const shelfFwSummary = Object.values(_resolveShelfModules(sys)).map(m => `${m.modName}: ${m.currentFw || 'unknown'}`).join('; ');
@@ -39316,7 +39414,7 @@ function downloadAsBuiltXlsx() {
       _v(sys.systemFirmware && sys.systemFirmware.currentVersion), _v(sys.motherboardFirmware && sys.motherboardFirmware.currentVersion), _v(shelfFwSummary), _v(driveFwSummary),
       _v(sys.salesRepName), _v(sys.csmName), _v(sys.samName),
       _num(proj.growthRateGBPerDay), _num(proj.daysToLimit), _v(proj.limitDate),
-      (sys.risks || []).length,
+      (sys.risks || []).length, _unitOf(sys).name, _UNIT_WORD[_unitOf(sys).kind], _asbNodes.get(_unitOf(sys).key) || 1,
     ];
   });
 
@@ -43676,6 +43774,7 @@ function switchTab(tabId) {
     renderChangesCard();
     renderKevCard();
     renderUnownedCard();
+    renderSnapMirrorCard();
     renderOverviewTable();
     renderCharts();
     renderRiskTrendChart();
@@ -43752,8 +43851,9 @@ function switchTab(tabId) {
 
 function exportCSV() {
   let csvContent = "data:text/csv;charset=utf-8,";
-  csvContent += "System Name,Serial Number,Cluster Name,Customer Name,Model,Platform Type,Status,ONTAP Version,Efficiency Ratio,Support Contract Expiry,Risks Count,Delivery Address,Primary Contact,Case Health,Daily Growth (GB),Days to Limit\n";
+  csvContent += "System Name,Serial Number,Cluster Name,Customer Name,Model,Platform Type,Status,ONTAP Version,Efficiency Ratio,Support Contract Expiry,Risks Count,Delivery Address,Primary Contact,Case Health,Daily Growth (GB),Days to Limit,Cluster / Grid / Array,Unit Type,Nodes in Unit\n";
 
+  const _csvNodes = new Map(); state.systems.forEach(x => { const k = _unitOf(x).key; _csvNodes.set(k, (_csvNodes.get(k) || 0) + 1); });
   state.systems.forEach(s => {
     const risksCount = s.risks.length;
     const l = s.logistics || { deliveryAddress: "Not Set" };
@@ -43777,7 +43877,10 @@ function exportCSV() {
       c.name,
       h.sentimentScore,
       p.growthRateGBPerDay,
-      p.daysToLimit
+      p.daysToLimit,
+      _unitOf(s).name,
+      _UNIT_WORD[_unitOf(s).kind],
+      _csvNodes.get(_unitOf(s).key) || 1
     ].map(v => `"${v != null ? v : ''}"`).join(",");
     csvContent += row + "\n";
   });
@@ -44984,7 +45087,7 @@ function _dfNodeStrip(systems) {
       e.group = 'StorageGRID: ' + (s.storagegridTopology.gridName || s.systemName); e.order = e.group + '\u0001';
     } else if (fam === 'storagegrid') {
       e.badge = 'StorageGRID node'; e.unverified = unlisted.has(s); // only unverifiable when its grid has a roster that omits it
-    } else if (fam === 'eseries') e.badge = 'E-Series';
+    } else if (fam === 'eseries') { e.badge = 'E-Series'; if (e.group && !/^(E-Series|StorageGRID)/.test(e.group)) e.group = 'E-Series array: ' + e.group; }   // an array is not a cluster
     else if (fam === 'element') e.badge = 'Element OS';
     out.push(e);
   });
@@ -45626,10 +45729,12 @@ function compileFirmwareWordMd(systems, scopeTitle) {
   const status = m => m === true ? 'Current' : m === false ? 'Update available' : 'Not reported';
   const pct = (c, t) => t ? Math.round(c / t * 100) + '%' : '—';
   let o = `# ${cust} -- Firmware Currency\n\nPrepared ${new Date().toISOString().split('T')[0]} from NetApp Active IQ telemetry compared with NetApp's recommended firmware baselines.\n\n`;
+  const _byNm = new Map(); (systems || []).forEach(x => _byNm.set(x.systemName || x.serialNumber, x));
+  const _uOf = r => { const x = _byNm.get(r.name); return x ? _unitOf(x) : { key: 'x|' + r.name, name: r.name, kind: 'cluster' }; };
   const sys = rows.length, withData = rows.filter(r => r.sp.m != null || r.mb.m != null || r.dqp.m != null || r.drv.total || r.shelf.count);
   const noData = rows.filter(r => !withData.includes(r));
   const behindSys = rows.filter(r => r.sp.m === false || r.mb.m === false || r.dqp.m === false || r.drv.behind || r.shelf.behind);
-  o += `## 1. Summary\n\n- **Systems in scope:** ${sys} (${st.totalShelves || 0} shelves, ${st.totalDrives || 0} drives).\n- **Systems with at least one component behind its recommended firmware:** ${behindSys.length}.\n- **Systems reporting no firmware data to Active IQ:** ${noData.length}.\n\n`;
+  o += `## 1. Summary\n\n- **In scope:** ${_dfScopeCountText(systems)} (${st.totalShelves || 0} shelves, ${st.totalDrives || 0} drives).\n- **Clusters, grids and arrays with at least one component behind its recommended firmware:** ${new Set(behindSys.map(r => _uOf(r).key)).size} (${behindSys.length} node${behindSys.length !== 1 ? 's' : ''}).\n- **Reporting no firmware data to Active IQ:** ${new Set(noData.map(r => _uOf(r).key)).size}.\n\n`;
   const t = (cur, bh, un) => cur + bh + un;
   o += md(['Component', 'Current', 'Update available', 'Not reported', 'Total', '% current'], [
     ['SP / BMC firmware (systems)', st.spCurrent, st.spBehind, st.spUnknown, t(st.spCurrent, st.spBehind, st.spUnknown), pct(st.spCurrent, t(st.spCurrent, st.spBehind, st.spUnknown))],
@@ -45639,26 +45744,36 @@ function compileFirmwareWordMd(systems, scopeTitle) {
     ['Shelf module firmware (modules)', st.shelfFwCurrent, st.shelfFwBehind, st.shelfFwUnknown, t(st.shelfFwCurrent, st.shelfFwBehind, st.shelfFwUnknown), pct(st.shelfFwCurrent, t(st.shelfFwCurrent, st.shelfFwBehind, st.shelfFwUnknown))]
   ]);
   // 2. updates needed (one row per component per system)
-  const upd = [];
+  // one line per cluster, grid or array and component: the same update on every node is one line, on some nodes it names them
+  const _updRaw = [];
   rows.forEach(r => {
-    if (r.sp.m === false) upd.push([r.name, r.platform, r.sp.label, r.sp.cur, r.sp.rec]);
-    if (r.mb.m === false) upd.push([r.name, r.platform, 'Motherboard BIOS', r.mb.cur, r.mb.rec]);
-    if (r.dqp.m === false) upd.push([r.name, r.platform, 'Disk Qualification Package', r.dqp.cur, r.dqp.rec]);
-    r.shelfBehind.forEach(b => upd.push([r.name, r.platform, `Shelf module ${b.mod} (${b.count})`, b.cur, b.rec]));
+    const u = _uOf(r);
+    if (r.sp.m === false) _updRaw.push({ u, node: r.name, platform: r.platform, comp: r.sp.label, cur: r.sp.cur, rec: r.sp.rec });
+    if (r.mb.m === false) _updRaw.push({ u, node: r.name, platform: r.platform, comp: 'Motherboard BIOS', cur: r.mb.cur, rec: r.mb.rec });
+    if (r.dqp.m === false) _updRaw.push({ u, node: r.name, platform: r.platform, comp: 'Disk Qualification Package', cur: r.dqp.cur, rec: r.dqp.rec });
+    r.shelfBehind.forEach(b => _updRaw.push({ u, node: r.name, platform: r.platform, comp: `Shelf module ${b.mod} (${b.count})`, cur: b.cur, rec: b.rec }));
   });
+  const _updG = new Map(); _updRaw.forEach(x => { const k = [x.u.key, x.platform, x.comp, x.cur, x.rec].join('|'); let e = _updG.get(k); if (!e) { e = { ...x, nodes: [] }; _updG.set(k, e); } if (!e.nodes.includes(x.node)) e.nodes.push(x.node); });
+  const _nodesOfUnit = k => rows.filter(r => _uOf(r).key === k).length;
+  const upd = [..._updG.values()].map(e => [e.nodes.length >= _nodesOfUnit(e.u.key) ? e.u.name : `${e.u.name} (${e.nodes.join(', ')})`, e.platform, e.comp, e.cur, e.rec]);
   o += `## 2. Firmware updates recommended\n\n`;
-  o += upd.length ? md(['System', 'Platform', 'Component', 'Current', 'Recommended'], upd) : `No SP/BMC, BIOS, DQP or shelf module updates are outstanding for systems that report this data.\n\n`;
+  o += upd.length ? md(['Cluster / grid / array', 'Platform', 'Component', 'Current', 'Recommended'], upd) : `No SP/BMC, BIOS, DQP or shelf module updates are outstanding for systems that report this data.\n\n`;
   // 3. drive firmware fleet table
   const dm = {};
-  rows.forEach(r => r.drives.forEach(d => { if (d.rec && d.fw !== 'Unknown' && d.fw !== d.rec) { const k = `${d.model}|${d.fw}|${d.rec}`; const e = dm[k] = dm[k] || { model: d.model, fw: d.fw, rec: d.rec, drives: 0, systems: new Set() }; e.drives += d.count; e.systems.add(r.name); } }));
+  { const byU = new Map(); rows.forEach(r => { const k = _uOf(r).key; if (!byU.has(k)) byU.set(k, []); byU.get(k).push(r); });
+    byU.forEach(rs => { const sig = r => JSON.stringify((r.drives || []).map(d => [d.model, d.fw, d.rec, d.count]).sort()), same = new Set(rs.map(sig)).size === 1, use = same ? [rs[0]] : rs;   // identical on every node: the cluster's own inventory, counted once
+      use.forEach(r => r.drives.forEach(d => { if (d.rec && d.fw !== 'Unknown' && d.fw !== d.rec) { const k = `${d.model}|${d.fw}|${d.rec}`; const e = dm[k] = dm[k] || { model: d.model, fw: d.fw, rec: d.rec, drives: 0, systems: new Set() }; e.drives += d.count; e.systems.add(_uOf(r).key); } })); }); }
   const dr = Object.values(dm).sort((a, b) => b.drives - a.drives);
   o += `## 3. Drive firmware behind recommended\n\n`;
-  o += dr.length ? `Grouped by drive model and firmware revision across all systems in scope.\n\n` + md(['Drive model', 'Current firmware', 'Recommended', 'Drives', 'Systems affected'], dr.map(e => [e.model, e.fw, e.rec, e.drives, e.systems.size])) : `No drives are behind the recommended firmware for models that have a baseline.\n\n`;
+  o += dr.length ? `Grouped by drive model and firmware revision across all systems in scope.\n\n` + md(['Drive model', 'Current firmware', 'Recommended', 'Drives', 'Clusters, grids or arrays affected'], dr.map(e => [e.model, e.fw, e.rec, e.drives, e.systems.size])) : `No drives are behind the recommended firmware for models that have a baseline.\n\n`;
   // 4. per-system status
-  o += `## 4. Firmware status by system\n\nSystems that report firmware data; one row per system.\n\n`;
-  o += md(['System', 'Platform', 'SP/BMC', 'BIOS', 'DQP', 'Drive FW', 'Shelf FW', 'Shelves', 'Drives'],
-    withData.map(r => [r.name, r.platform, status(r.sp.m), status(r.mb.m), status(r.dqp.m), status(r.drv.m), status(r.shelf.m), r.shelf.count, r.drv.total]));
-  if (noData.length) o += `**Systems reporting no firmware data (${noData.length}):** ${noData.slice(0, 60).map(r => r.name).join(', ')}${noData.length > 60 ? `, and ${noData.length - 60} more` : ''}. These are typically StorageGRID, E-Series and similar systems whose firmware Active IQ does not report through this channel.\n\n`;
+  o += `## 4. Firmware status by cluster, grid or array\n\nThose that report firmware data; one row each. A component is 'Update available' when any node needs it (the nodes are named in section 2), 'Current' when every node is, and 'Not reported' otherwise.\n\n`;
+  { const byU = new Map(); withData.forEach(r => { const u = _uOf(r); if (!byU.has(u.key)) byU.set(u.key, { u, rs: [] }); byU.get(u.key).rs.push(r); });
+    const agg = (rs, f) => rs.some(r => f(r) === false) ? false : (rs.every(r => f(r) === true) ? true : null);
+    const cnt = (rs, f) => { const v = rs.map(f), same = new Set(v).size === 1; return same ? v[0] : v.reduce((a, x) => a + (x || 0), 0); };   // the same on every node is the cluster's own figure
+    o += md(['Cluster / grid / array', 'Nodes', 'Platform', 'SP/BMC', 'BIOS', 'DQP', 'Drive FW', 'Shelf FW', 'Shelves', 'Drives'],
+      [...byU.values()].map(({ u, rs }) => [u.name, rs.length, [...new Set(rs.map(r => r.platform))].join(', '), status(agg(rs, r => r.sp.m)), status(agg(rs, r => r.mb.m)), status(agg(rs, r => r.dqp.m)), status(agg(rs, r => r.drv.m)), status(agg(rs, r => r.shelf.m)), cnt(rs, r => r.shelf.count), cnt(rs, r => r.drv.total)])); }
+  if (noData.length) o += `**Reporting no firmware data (${new Set(noData.map(r => _uOf(r).key)).size}):** ${[...new Set(noData.map(r => _uOf(r).name))].slice(0, 60).join(', ')}${new Set(noData.map(r => _uOf(r).key)).size > 60 ? `, and ${new Set(noData.map(r => _uOf(r).key)).size - 60} more` : ''}. These are typically StorageGRID, E-Series and similar systems whose firmware Active IQ does not report through this channel.\n\n`;
   o += _dfNonOntapFirmwareMd(_dfNonOntapFirmware(origSystems));
   o += _dfCardFwMd(origSystems);
   o += `## About this report\n\nCurrent versions come from AutoSupport; recommended versions come from NetApp's firmware baselines${st.blDate ? ` (baselines updated ${String(st.blDate).slice(0, 10)})` : ''}. Active IQ reports shelf module firmware only as an outdated count, so a shelf module's installed version may show as not reported. "Not reported" means Active IQ returned no value, not that the component is current.\n`;
