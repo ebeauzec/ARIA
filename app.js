@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.334";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.335";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.335",
+    date: "14 Oct 2026",
+    title: "Runway sort and raw capacity correction",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Sorting the Capacity Breakdown table by Runway (or Growth/day) was wrong: it compared only the number in the text, so '1.3 Yrs' sorted next to '1.3 days' and '21.8 Yrs' came after '36 days' in the wrong place. Each cell now carries its own sort value in days: an over-limit system sorts first, '> 10 Yrs' last of the known runways, and 'Not available' always at the end, in both directions.",
+          "Correction to 5.6.334: raw capacity is NOT filed per HA pair. Checked against Active IQ's own cluster total (a 12-node cluster reports 3,071.18 TB, and its nodes' raw figures add up to exactly 3,071.18 TB; used capacity matches the same way), so the nodes' figures are added up. The pair rule introduced in 5.6.334 halved raw capacity in the Capacity Breakdown table and in the platform-headroom and power-per-TB figures of the deliverables; it is removed and those figures are back to the sum of the nodes. The fleet-wide capacity totals were never changed and were right.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.334",
     date: "14 Oct 2026",
@@ -12886,13 +12902,10 @@ function _clusterBuild(c) {
 }
 // the whole fleet's units by key, for questions about a unit that a narrower scope cannot answer (how many nodes it has)
 // one node per cluster, grid or array (the one in the worst state) for figures that belong to the unit, such as DR and feature coverage
-// A unit's raw capacity from its nodes' raw figures. Active IQ files raw capacity per HA pair, so both nodes of a pair report the same figure: for an ONTAP
-// cluster each distinct figure counts once per pair of nodes reporting it. A StorageGRID grid's nodes and an E-Series array each own their capacity: added up.
+// A unit's raw capacity from its nodes' raw figures: the nodes' figures are added up. Checked against Active IQ's own cluster total (a 12-node cluster
+// reports 3,071.18 TB and its nodes add up to 3,071.18 TB); two nodes of a pair report the same figure only because their hardware is the same.
 function _dfRawFromNodes(values, kind) {
-  const v = (values || []).filter(x => x > 0);
-  if (kind !== 'cluster') return v.reduce((a, x) => a + x, 0);
-  const cnt = new Map(); v.forEach(x => cnt.set(x, (cnt.get(x) || 0) + 1));
-  let t = 0; cnt.forEach((c, x) => { t += x * Math.ceil(c / 2); }); return t;
+  return (values || []).filter(x => x > 0).reduce((a, x) => a + x, 0);
 }
 function _dfUnitReps(systems) {
   const rank = { critical: 0, warning: 1, normal: 2 }, best = new Map();
@@ -19910,7 +19923,7 @@ function renderNodeBreakdownTable(systems) {
     return 0;
   }
 
-  // One row per cluster, grid or array (raw capacity: see _dfRawFromNodes). Utilisation is the worst node's, the runway the shortest, growth added up.
+  // One row per cluster, grid or array (raw capacity: the nodes' figures added up, see _dfRawFromNodes). Utilisation is the worst node's, the runway the shortest, growth added up.
   const sorted = getClusters(systems).map(c => {
     const nodes = c.nodes, raws = nodes.map(getRawTB), uniqRaw = [...new Set(raws.filter(v => v > 0))];
     const raw = _dfRawFromNodes(raws, c.kind);
@@ -19960,8 +19973,8 @@ function renderNodeBreakdownTable(systems) {
           <span style="font-size:0.78rem;color:${barColor};font-weight:600;min-width:38px;">${util > 0 ? util.toFixed(1) + '%' : '<span style="color:var(--text-muted)">—</span>'}</span>
         </div>
       </td>
-      <td style="padding:9px 10px;text-align:right;font-size:0.82rem;">${growthGBd > 0 ? '+' + growthGBd.toFixed(1) + ' GB' : '—'}</td>
-      <td style="padding:9px 10px;text-align:right;font-weight:700;color:${runwayColor};">${runway}</td>
+      <td data-sort="${growthGBd > 0 ? growthGBd : ''}" style="padding:9px 10px;text-align:right;font-size:0.82rem;">${growthGBd > 0 ? '+' + growthGBd.toFixed(1) + ' GB' : '—'}</td>
+      <td data-sort="${days == null ? '' : days === 0 ? -1 : days}" style="padding:9px 10px;text-align:right;font-weight:700;color:${runwayColor};">${runway}</td>
       <td style="padding:9px 10px;font-size:0.75rem;color:var(--text-muted);">${src}</td>
     </tr>`;
   }).join('');
@@ -32224,6 +32237,15 @@ function sortTamTable(th) {
     let aVal = (aCell.textContent || '').trim();
     let bVal = (bCell.textContent || '').trim();
     
+    // A cell can carry its own sort value (a runway of '1.3 Yrs' must sort after '168 days'); a cell with an empty one always sorts last
+    const aSv = aCell.getAttribute('data-sort'), bSv = bCell.getAttribute('data-sort');
+    if (aSv !== null || bSv !== null) {
+      const an = aSv === null || aSv === '' ? NaN : parseFloat(aSv), bn = bSv === null || bSv === '' ? NaN : parseFloat(bSv);
+      if (isNaN(an) && isNaN(bn)) return 0;
+      if (isNaN(an)) return 1;
+      if (isNaN(bn)) return -1;
+      return newDir === 'asc' ? an - bn : bn - an;
+    }
     // Try numeric sort first (strip %, d, y, :1 suffixes)
     const aNum = parseFloat(aVal.replace(/[%dyx:,]/g, ''));
     const bNum = parseFloat(bVal.replace(/[%dyx:,]/g, ''));

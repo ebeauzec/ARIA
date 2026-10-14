@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.335 (2026-10-14)
+
+### Fixed
+- Sorting the Capacity Breakdown table by Runway (or Growth/day) was wrong: it compared only the number in the text, so '1.3 Yrs' sorted next to '1.3 days' and '21.8 Yrs' came after '36 days' in the wrong place. Each cell now carries its own sort value in days: an over-limit system sorts first, '> 10 Yrs' last of the known runways, and 'Not available' always at the end, in both directions.
+- Correction to 5.6.334: raw capacity is NOT filed per HA pair. Checked against Active IQ's own cluster total (a 12-node cluster reports 3,071.18 TB, and its nodes' raw figures add up to exactly 3,071.18 TB; used capacity matches the same way), so the nodes' figures are added up. The pair rule introduced in 5.6.334 halved raw capacity in the Capacity Breakdown table and in the platform-headroom and power-per-TB figures of the deliverables; it is removed and those figures are back to the sum of the nodes. The fleet-wide capacity totals were never changed and were right.
+
 ## 5.6.334 (2026-10-14)
 
 ### Fixed

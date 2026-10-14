@@ -1,8 +1,8 @@
 {
-  "version": "5.6.334",
+  "version": "5.6.335",
   "major": 5,
   "minor": 6,
-  "patch": 334,
+  "patch": 335,
   "date": "2026-10-11",
-  "notes": "Capacity runway no longer shows > 10 Yrs without data or when over the limit; table per cluster, grid or array"
+  "notes": "Runway column sorts correctly; raw capacity is the sum of the nodes again"
 }
