@@ -1,8 +1,8 @@
 {
-  "version": "5.6.333",
+  "version": "5.6.334",
   "major": 5,
   "minor": 6,
-  "patch": 333,
+  "patch": 334,
   "date": "2026-10-11",
-  "notes": "StorageGRID tenant, node and ILM tables fold and scroll on large grids"
+  "notes": "Capacity runway no longer shows > 10 Yrs without data or when over the limit; table per cluster, grid or array"
 }

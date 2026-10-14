@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.333";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.334";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.334",
+    date: "14 Oct 2026",
+    title: "Capacity runway fix",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "The Capacity Breakdown table showed '> 10 Yrs' in green for systems that were at or over 90% full. Two causes: a system with no measured capacity history (no projection at all) was treated as having a runway of 9999 days, and a system already past the 90% threshold (0 days left) was also turned into 9999 days because 0 counted as 'no value'. The runway now reads 'Not available' (grey, source '-') when Active IQ reports no capacity history, 'Over 90% limit' or 'At 90% limit' when there is no room left, and '> 10 Yrs' only when growth was measured and the limit is more than ten years away.",
+          "The same table now has one row per cluster, grid or array, titled 'Capacity Breakdown by Cluster, Grid or Array': used capacity and growth are added up over the nodes, utilisation is the worst node's, the runway the shortest. Raw capacity is counted once per HA pair (Active IQ files it per pair, so both nodes of a pair report the same figure; a 12-node cluster showed 3,071 TB where its six pairs add up to 1,536 TB), while a StorageGRID grid's nodes and an E-Series array are added up. The platform-capacity headroom and power-per-TB figures in the deliverables use the same rule.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.333",
     date: "13 Oct 2026",
@@ -12870,6 +12886,14 @@ function _clusterBuild(c) {
 }
 // the whole fleet's units by key, for questions about a unit that a narrower scope cannot answer (how many nodes it has)
 // one node per cluster, grid or array (the one in the worst state) for figures that belong to the unit, such as DR and feature coverage
+// A unit's raw capacity from its nodes' raw figures. Active IQ files raw capacity per HA pair, so both nodes of a pair report the same figure: for an ONTAP
+// cluster each distinct figure counts once per pair of nodes reporting it. A StorageGRID grid's nodes and an E-Series array each own their capacity: added up.
+function _dfRawFromNodes(values, kind) {
+  const v = (values || []).filter(x => x > 0);
+  if (kind !== 'cluster') return v.reduce((a, x) => a + x, 0);
+  const cnt = new Map(); v.forEach(x => cnt.set(x, (cnt.get(x) || 0) + 1));
+  let t = 0; cnt.forEach((c, x) => { t += x * Math.ceil(c / 2); }); return t;
+}
 function _dfUnitReps(systems) {
   const rank = { critical: 0, warning: 1, normal: 2 }, best = new Map();
   (systems || []).forEach(x => { const k = _unitOf(x).key, b = best.get(k); if (!b || (rank[x.status] ?? 3) < (rank[b.status] ?? 3)) best.set(k, x); });
@@ -19886,8 +19910,19 @@ function renderNodeBreakdownTable(systems) {
     return 0;
   }
 
-  // Sort descending by effective used TB
-  const sorted = [...systems].sort((a, b) => getUsedTB(b) - getUsedTB(a));
+  // One row per cluster, grid or array (raw capacity: see _dfRawFromNodes). Utilisation is the worst node's, the runway the shortest, growth added up.
+  const sorted = getClusters(systems).map(c => {
+    const nodes = c.nodes, raws = nodes.map(getRawTB), uniqRaw = [...new Set(raws.filter(v => v > 0))];
+    const raw = _dfRawFromNodes(raws, c.kind);
+    const used = nodes.reduce((a, x) => a + getUsedTB(x), 0);
+    const utils = nodes.map(x => x.clusterCapacityUtilPct).filter(v => v > 0), utilApi = utils.length ? Math.max(...utils) : 0;
+    const withProj = nodes.filter(x => x.projections && x.projections.daysToLimit != null && x.projections.growthSource !== 'unavailable');
+    const days = withProj.length ? Math.min(...withProj.map(x => x.projections.daysToLimit)) : null;
+    const growth = nodes.reduce((a, x) => a + ((x.projections || {}).growthRateGBPerDay || 0), 0);
+    const worstP = withProj.length ? withProj.slice().sort((a, b) => a.projections.daysToLimit - b.projections.daysToLimit)[0].projections : null;
+    return { systemName: c.name + (c.nodeCount > 1 ? ' (' + c.nodeCount + ' nodes)' : '') + (_UNIT_BADGE[c.kind] ? ' [' + _UNIT_BADGE[c.kind] + ']' : ''), customerName: c.customer, model: c.platform, clusterRawCapacityTB: raw, clusterPhysicalUsedTB: used,
+      clusterCapacityUtilPct: utilApi, _nodeCount: c.nodeCount, projections: worstP ? { growthRateGBPerDay: growth, daysToLimit: days, growthSource: worstP.growthSource } : { growthSource: 'unavailable', growthRateGBPerDay: growth } };
+  }).sort((a, b) => getUsedTB(b) - getUsedTB(a));
 
   tbody.innerHTML = sorted.map(s => {
     const rawTB  = getRawTB(s);
@@ -19895,15 +19930,17 @@ function renderNodeBreakdownTable(systems) {
     const util   = getUtilPct(s, usedTB, rawTB);
     const proj   = s.projections || {};
     const growthGBd = proj.growthRateGBPerDay || 0;
-    const days   = proj.daysToLimit || 9999;
-    const runway = days >= 9999 ? '> 10 Yrs' : days >= 365 ? `${(days/365).toFixed(1)} Yrs` : `${days} days`;
-    const src    = srcMap[proj.growthSource || 'estimated'] || 'Est.';
+    // No projection at all (no measured capacity history) is "not available", never "more than 10 years"; 0 days means the system is already at the 90% threshold
+    const noProj = proj.daysToLimit == null || proj.growthSource === 'unavailable';
+    const days   = noProj ? null : proj.daysToLimit;
+    const runway = noProj ? 'Not available' : days === 0 ? (util >= 90 ? 'Over 90% limit' : 'At 90% limit') : days >= 9999 ? '> 10 Yrs' : days >= 365 ? `${(days/365).toFixed(1)} Yrs` : `${days} days`;
+    const src    = noProj ? '—' : (srcMap[proj.growthSource || 'estimated'] || 'Est.');
     const model  = s.model || s.platform || '-';
 
     // Color thresholds
     const barColor    = util >= 85 ? '#ef4444' : util >= 70 ? '#f59e0b' : '#22d3ee';
     const rowBg       = util >= 85 ? 'background:rgba(239,68,68,0.04);' : '';
-    const runwayColor = days <= 60 ? 'var(--status-critical)' : days <= 365 ? 'var(--status-warning)' : 'var(--status-normal)';
+    const runwayColor = days == null ? 'var(--text-muted)' : days <= 60 ? 'var(--status-critical)' : days <= 365 ? 'var(--status-warning)' : 'var(--status-normal)';
 
     // Raw TB display — show '—' when not available from API (cluster-aggregate systems)
     const rawDisplay  = rawTB > 0 ? rawTB.toFixed(1) : '<span style="color:var(--text-muted);font-size:0.75rem;">N/A</span>';
@@ -19941,7 +19978,7 @@ function renderNodeBreakdownTable(systems) {
   _footerRow.className = 'tam-total-row';
   _footerRow.style.cssText = 'border-top:2px solid var(--border-color);font-weight:700;background:var(--wa-30);';
   _footerRow.innerHTML = `
-    <td style="padding:9px 10px;" colspan="3">TOTAL (${sorted.length} nodes)</td>
+    <td style="padding:9px 10px;" colspan="3">TOTAL (${sorted.length} system${sorted.length !== 1 ? 's' : ''}, ${sorted.reduce((a, x) => a + (x._nodeCount || 1), 0)} nodes)</td>
     <td style="padding:9px 10px;text-align:right;">${totalRaw > 0 ? totalRaw.toFixed(1) : '<span style="color:var(--text-muted);font-weight:400;font-size:0.75rem;">N/A</span>'}</td>
     <td style="padding:9px 10px;text-align:right;">${totalUsed.toFixed(1)}</td>
     <td style="padding:9px 10px;">
@@ -19953,7 +19990,7 @@ function renderNodeBreakdownTable(systems) {
       </div>
     </td>
     <td style="padding:9px 10px;text-align:right;">+${totalGrow.toFixed(0)} GB</td>
-    <td colspan="2" style="padding:9px 10px;color:var(--text-muted);font-size:0.78rem;">Aggregate across all nodes</td>
+    <td colspan="2" style="padding:9px 10px;color:var(--text-muted);font-size:0.78rem;">Aggregate across all clusters, grids and arrays</td>
   `;
   tbody.appendChild(_footerRow);
 }
@@ -22017,10 +22054,10 @@ function _dfPlatformInsights(systems) {
   const _byUk = rows => { const m = new Map(); rows.forEach(r => { if (!m.has(r.uk)) m.set(r.uk, []); m.get(r.uk).push(r); }); return m; };
   const _onlyNodes = (un, nodes, total) => nodes.length < total ? `${un} (${nodes.join(', ')} only)` : un;
   { // hardware headroom: raw capacity shared by the nodes counts once, different figures are added
-    const out = []; _byUk(hwRows).forEach(rs => { const caps = [...new Set(rs.map(r => r.capTB))], capTB = caps.length === 1 ? caps[0] : +caps.reduce((a, b) => a + b, 0).toFixed(1), maxTB = Math.max(...rs.map(r => r.maxTB)); out.push({ ...rs[0], system: rs[0].un, capTB, maxTB, pct: +(capTB / maxTB * 100).toFixed(1) }); });
+    const out = []; _byUk(hwRows).forEach(rs => { const caps = [...new Set(rs.map(r => r.capTB))], capTB = +_dfRawFromNodes(rs.map(r => r.capTB), _kindOfKey(rs[0].uk)).toFixed(1), maxTB = Math.max(...rs.map(r => r.maxTB)); out.push({ ...rs[0], system: rs[0].un, capTB, maxTB, pct: +(capTB / maxTB * 100).toFixed(1) }); });
     hwRows.length = 0; out.forEach(r => hwRows.push(r)); }
   { // power and heat: node figures are added; the watts per TB use the unit's capacity
-    const out = []; _byUk(energyRows).forEach(rs => { const caps = [...new Set(rs.map(r => r.capTB))], capTB = caps.length === 1 ? caps[0] : caps.reduce((a, b) => a + b, 0), sm = k => rs.reduce((a, r) => a + (r[k] || 0), 0);
+    const out = []; _byUk(energyRows).forEach(rs => { const caps = [...new Set(rs.map(r => r.capTB))], capTB = _dfRawFromNodes(rs.map(r => r.capTB), _kindOfKey(rs[0].uk)), sm = k => rs.reduce((a, r) => a + (r[k] || 0), 0);
       const w = sm('powerW'); out.push({ ...rs[0], system: rs[0].un, nodes: rs.length, powerW: w, heatBTU: sm('heatBTU'), worstW: rs.some(r => r.worstW) ? sm('worstW') : null, kwhYear: sm('kwhYear'), wPerTB: capTB > 0 ? +(w / capTB).toFixed(1) : null, basis: [...new Set(rs.map(r => r.basis))].join('/') }); });
     energyRows.length = 0; out.forEach(r => energyRows.push(r)); }
   { // drive inventory: identical on every node = the cluster's own, shown once; otherwise the nodes' drives are added up by model and firmware

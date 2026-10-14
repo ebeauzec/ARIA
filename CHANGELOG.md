@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.334 (2026-10-14)
+
+### Fixed
+- The Capacity Breakdown table showed '> 10 Yrs' in green for systems that were at or over 90% full. Two causes: a system with no measured capacity history (no projection at all) was treated as having a runway of 9999 days, and a system already past the 90% threshold (0 days left) was also turned into 9999 days because 0 counted as 'no value'. The runway now reads 'Not available' (grey, source '-') when Active IQ reports no capacity history, 'Over 90% limit' or 'At 90% limit' when there is no room left, and '> 10 Yrs' only when growth was measured and the limit is more than ten years away.
+- The same table now has one row per cluster, grid or array, titled 'Capacity Breakdown by Cluster, Grid or Array': used capacity and growth are added up over the nodes, utilisation is the worst node's, the runway the shortest. Raw capacity is counted once per HA pair (Active IQ files it per pair, so both nodes of a pair report the same figure; a 12-node cluster showed 3,071 TB where its six pairs add up to 1,536 TB), while a StorageGRID grid's nodes and an E-Series array are added up. The platform-capacity headroom and power-per-TB figures in the deliverables use the same rule.
+
 ## 5.6.333 (2026-10-13)
 
 ### Fixed

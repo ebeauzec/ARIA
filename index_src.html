@@ -42,11 +42,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=5.6.333-1">
+  <link rel="stylesheet" href="styles.css?v=5.6.334-1">
   
   <!-- Load Chart.js locally -->
-  <script src="chart.js?v=5.6.333-1"></script>
-  <script src="pptxgen.bundle.js?v=5.6.333-1"></script>
+  <script src="chart.js?v=5.6.334-1"></script>
+  <script src="pptxgen.bundle.js?v=5.6.334-1"></script>
 <script>
   /* theme: 'dark' (default), 'light' or 'system'; applied before the page paints */
   (function () { var m = 'dark'; try { m = localStorage.getItem('aria_theme') || 'dark'; } catch (e) {}
@@ -685,12 +685,12 @@
           </div>
           <!-- Per-Node Breakdown Table (hidden by default, shown in Per Node view) -->
           <div id="csmNodeBreakdown" style="margin-top:20px; display:none;">
-            <div style="font-size:0.75rem;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:10px;letter-spacing:0.05em;">Capacity Breakdown by Node</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:10px;letter-spacing:0.05em;">Capacity Breakdown by Cluster, Grid or Array</div>
             <div style="overflow-x:auto;">
               <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
                 <thead>
                   <tr style="border-bottom:2px solid var(--border-color);color:var(--text-muted);text-align:left;">
-                    <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Node / System <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Cluster / Grid / Array <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
                     <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Customer <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
                     <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Model <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
                     <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Raw TB <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
@@ -1631,9 +1631,9 @@
   <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleJSONImport(event)">
 
   <!-- Javascript File -->
-  <script src="aria-api.js?v=5.6.333-1"></script>
-  <script src="data/reference_library.js?v=5.6.333-1"></script>
-  <script src="app.js?v=5.6.333-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
+  <script src="aria-api.js?v=5.6.334-1"></script>
+  <script src="data/reference_library.js?v=5.6.334-1"></script>
+  <script src="app.js?v=5.6.334-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
   <script>
     // Verify app.js parsed OK — if APP_VERSION is undefined, the file had a parse error
     if (typeof APP_VERSION === 'undefined') {
