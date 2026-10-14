@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.336 (2026-10-14)
+
+### Fixed
+- Capacity is now shown the same way everywhere. One formatter (TB below 1,000, PB from 1,000 up, with thousands separators; PB is TB divided by 1,000, so a number never changes meaning from one screen to another) now drives the Overview donut, bar and capacity charts and their tooltips, the Value and ROI tiles, the Customer Success capacity cards and tables, the per-system capacity tables, the StorageGRID and E-Series capacity text, the StorageGRID licence capacity, every document (capacity, savings, growth, headroom, LUN and volume sizes) and the customer PowerPoint. The Value tile that showed '9.92 PiB' next to '10154.7 TB' now shows '10.15 PB' with the TB figure beneath it, and the StorageGRID and E-Series figures that said TiB now say TB or PB like the rest.
+- Figures held in the data are KiB divided by 1024 cubed, which is strictly TiB; ARIA has always labelled them TB, and keeps doing so, so the PB figure is the TB figure divided by 1,000. Text that Active IQ itself writes (for example a risk saying a site is 84% full (3442.79 of 4077.3 TB)) is shown as Active IQ wrote it.
+
 ## 5.6.335 (2026-10-14)
 
 ### Fixed

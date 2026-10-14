@@ -1,8 +1,8 @@
 {
-  "version": "5.6.335",
+  "version": "5.6.336",
   "major": 5,
   "minor": 6,
-  "patch": 335,
+  "patch": 336,
   "date": "2026-10-11",
-  "notes": "Runway column sorts correctly; raw capacity is the sum of the nodes again"
+  "notes": "Capacity shown as TB or PB everywhere, one formatter"
 }

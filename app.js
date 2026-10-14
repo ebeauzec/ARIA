@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.335";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.336";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.336",
+    date: "14 Oct 2026",
+    title: "Consistent capacity units",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Capacity is now shown the same way everywhere. One formatter (TB below 1,000, PB from 1,000 up, with thousands separators; PB is TB divided by 1,000, so a number never changes meaning from one screen to another) now drives the Overview donut, bar and capacity charts and their tooltips, the Value and ROI tiles, the Customer Success capacity cards and tables, the per-system capacity tables, the StorageGRID and E-Series capacity text, the StorageGRID licence capacity, every document (capacity, savings, growth, headroom, LUN and volume sizes) and the customer PowerPoint. The Value tile that showed '9.92 PiB' next to '10154.7 TB' now shows '10.15 PB' with the TB figure beneath it, and the StorageGRID and E-Series figures that said TiB now say TB or PB like the rest.",
+          "Figures held in the data are KiB divided by 1024 cubed, which is strictly TiB; ARIA has always labelled them TB, and keeps doing so, so the PB figure is the TB figure divided by 1,000. Text that Active IQ itself writes (for example a risk saying a site is 84% full (3442.79 of 4077.3 TB)) is shown as Active IQ wrote it.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.335",
     date: "14 Oct 2026",
@@ -12577,16 +12593,16 @@ function renderCharts() {
   const avgDRR    = avgDRRNum > 1.05 ? avgDRRNum.toFixed(1) : null;
 
   // Format helper — e.g. 225.3 → "225.3" or 1024.7 → "1,024.7"
-  const fmtTB = v => parseFloat(v).toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:1});
+  const fmtTB = v => _fmtCap(v);
 
   // Build chart data — labels include actual TB values
-  const donutLabels = [`Used — ${fmtTB(physicalSum)} TB`, `Free — ${fmtTB(availableSum)} TB`];
+  const donutLabels = [`Used — ${fmtTB(physicalSum)}`, `Free — ${fmtTB(availableSum)}`];
   const donutData   = [parseFloat(physicalSum.toFixed(1)), parseFloat(Math.max(0, availableSum).toFixed(1))];
   const donutBg     = ['rgba(56, 189, 248, 0.8)',  'rgba(52, 211, 153, 0.55)'];
   const donutBorder = ['#38bdf8',                   '#34d399'];
 
   if (dedupCompressSum > 0.05) {
-    donutLabels.push(`Dedupe + Compression — ${fmtTB(dedupCompressSum)} TB`);
+    donutLabels.push(`Dedupe + Compression — ${fmtTB(dedupCompressSum)}`);
     donutData.push(parseFloat(dedupCompressSum.toFixed(1)));
     donutBg.push('rgba(168, 85, 247, 0.7)');
     donutBorder.push('#a855f7');
@@ -12640,7 +12656,7 @@ function renderCharts() {
           c.fillStyle = _cAccent2();
           c.textAlign = 'center';
           c.textBaseline = 'middle';
-          c.fillText(`${fmtTB(dedupCompressSum)} TB`, width / 2, height / 2 - 8);
+          c.fillText(`${fmtTB(dedupCompressSum)}`, width / 2, height / 2 - 8);
           c.font = `${Math.round(height / 14)}px Inter, sans-serif`;
           c.fillStyle = _cTick();
           c.fillText('saved', width / 2, height / 2 + Math.round(height / 10));
@@ -12655,7 +12671,7 @@ function renderCharts() {
   if (snapNoteEl) {
     if (snapshotSavings > 0.5) {
       snapNoteEl.style.display = 'block';
-      snapNoteEl.innerHTML = `📸 <strong style="color:var(--accent-cyan);">${fmtTB(snapshotSavings)} TB</strong> additional savings from <strong>Snapshot space sharing</strong> (not shown in chart — snapshots inflate the efficiency ratio and are not a true measure of data reduction)`;
+      snapNoteEl.innerHTML = `📸 <strong style="color:var(--accent-cyan);">${fmtTB(snapshotSavings)}</strong> additional savings from <strong>Snapshot space sharing</strong> (not shown in chart — snapshots inflate the efficiency ratio and are not a true measure of data reduction)`;
     } else {
       snapNoteEl.style.display = 'none';
     }
@@ -12736,8 +12752,8 @@ function renderCharts() {
               const total = barUsed[i] + barAvail[i];
               const utilPct = total > 0 ? ((barUsed[i] / total) * 100).toFixed(0) : 0;
               return ctx.datasetIndex === 0
-                ? `Used: ${ctx.parsed.y.toFixed(1)} TB  (${utilPct}% utilised)`
-                : `Available: ${ctx.parsed.y.toFixed(1)} TB`;
+                ? `Used: ${_fmtCap(ctx.parsed.y, 1)}  (${utilPct}% utilised)`
+                : `Available: ${_fmtCap(ctx.parsed.y, 1)}`;
             }
           }
         }
@@ -12866,6 +12882,15 @@ function _uN(kinds, n) {
 }
 const _UNIT_BADGE = { grid: 'StorageGRID', array: 'E-Series', node: 'StorageGRID node' };
 const _UNIT_WORD = { cluster: 'Cluster', grid: 'Grid', array: 'Array', node: 'StorageGRID node' };
+// Capacity, everywhere: the figures are held in TB; from 1,000 TB up they are shown in PB (TB divided by 1,000, so a number never changes meaning from one
+// screen to another), with thousands separators. d = decimals when shown in TB (PB always shows two). _fmtCapBoth gives both for a headline figure.
+function _fmtCap(tb, d) {
+  const v = Number(tb); if (tb == null || tb === '' || !isFinite(v)) return '\u2014';
+  const dd = d == null ? 1 : d;
+  if (Math.abs(Number(v.toFixed(dd))) >= 1000) return (v / 1000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' PB';
+  return v.toLocaleString(undefined, { minimumFractionDigits: dd, maximumFractionDigits: dd }) + ' TB';
+}
+function _fmtCapBoth(tb) { const v = Number(tb); return Math.abs(v) >= 1000 ? `${_fmtCap(v)} (${v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} TB)` : _fmtCap(v); }
 const _riskKeyOf = r => [String(r.description || r.title || '').trim().toLowerCase(), r.advisoryId || '', (r.cveDetails || []).map(c => c && c.id).filter(Boolean).sort().join(',')].join('|');
 const _SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3, best_practice: 4 };
 function _clusterBuild(c) {
@@ -18456,7 +18481,6 @@ function renderCSMTab() {
         .concat((s.risks || []).flatMap(r => (r.cveDetails || []).map(c => c && c.id).filter(Boolean)))
       )
     );
-    const _viSavedPiB = _mCap.savedTB / 1024;
     const _viHealthLabel = healthScore >= 90 ? 'Health is excellent'
       : healthScore >= 80 ? 'Health is good'
       : healthScore >= 65 ? 'Health is manageable but improvements recommended'
@@ -18551,7 +18575,7 @@ function renderCSMTab() {
         <div style="font-size: 0.85rem; font-weight: 700; margin: 18px 0 10px;">NetApp-delivered savings and stability&hellip;</div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px;">
           <div style="background: var(--bk-150); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;">
-            <div style="font-size: 1.4rem; font-weight: 800; color: var(--status-normal);">${_mTbSaved.toFixed(1)} TB</div>
+            <div style="font-size: 1.4rem; font-weight: 800; color: var(--status-normal);">${_fmtCap(_mTbSaved, 1)}</div>
             <div style="font-size: 0.78rem; color: var(--text-secondary);">Saved by data reduction</div>
           </div>
           <div style="background: var(--bk-150); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;" title="Active IQ's monthly uptime PERCENTAGE field is never returned by the API for this tenant (confirmed by inspecting every query field list) -- this shows real downtime EVENTS instead of a fabricated percentage.">
@@ -18569,9 +18593,9 @@ function renderCSMTab() {
             <div style="font-size: 0.68rem; color: var(--text-muted); font-style: italic; margin-top: 2px;">CVEs vulnerabilities, detected and matched to this fleet</div>
           </div>
           <div style="background: var(--bk-150); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px 14px;">
-            <div style="font-size: 1.4rem; font-weight: 800; color: var(--status-normal);">${_viSavedPiB.toFixed(2)} PiB</div>
+            <div style="font-size: 1.4rem; font-weight: 800; color: var(--status-normal);">${_fmtCap(_mCap.savedTB)}</div>
             <div style="font-size: 0.78rem; color: var(--text-secondary);">Projected savings from efficiencies</div>
-            <div style="font-size: 0.68rem; color: var(--text-muted); font-style: italic; margin-top: 2px;">${_mCap.savedTB.toFixed(1)} TB, fleet-wide (logical minus physical used)</div>
+            <div style="font-size: 0.68rem; color: var(--text-muted); font-style: italic; margin-top: 2px;">${_mCap.savedTB.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} TB, fleet-wide (logical minus physical used)</div>
           </div>
         </div>
 
@@ -18584,7 +18608,7 @@ function renderCSMTab() {
             </div>
             <div style="margin-bottom: 10px;">
               <div style="color: var(--accent-cyan); font-weight: 700; text-transform: uppercase; font-size: 0.7rem; margin-bottom: 3px;">NetApp-Delivered Savings &amp; Stability</div>
-              <div>${_mAvgDR ? `Data reduction ${_mAvgDR}:1, ` : ''}${_mTbSaved.toFixed(1)} TB saved &middot; ${_mUptime.systemsWithEvents > 0 ? `${_mUptime.totalOutageMinutes} outage min across ${_mUptime.systemsWithEvents} system${_mUptime.systemsWithEvents !== 1 ? 's' : ''}` : 'No downtime events recorded'}</div>
+              <div>${_mAvgDR ? `Data reduction ${_mAvgDR}:1, ` : ''}${_fmtCap(_mTbSaved, 1)} saved &middot; ${_mUptime.systemsWithEvents > 0 ? `${_mUptime.totalOutageMinutes} outage min across ${_mUptime.systemsWithEvents} system${_mUptime.systemsWithEvents !== 1 ? 's' : ''}` : 'No downtime events recorded'}</div>
             </div>
             <div style="margin-bottom: 10px;">
               <div style="color: var(--accent-cyan); font-weight: 700; text-transform: uppercase; font-size: 0.7rem; margin-bottom: 3px;">Security &amp; Future Planning</div>
@@ -18647,16 +18671,16 @@ function renderCSMTab() {
         <div style="border-top: 1px solid var(--border-color); padding-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
           <div>
             <span style="font-size: 0.75rem; color: var(--text-muted);">Logical (Dedup Savings)</span>
-            <div style="font-weight: 600;">${totalLogical.toFixed(1)} TB</div>
+            <div style="font-weight: 600;">${_fmtCap(totalLogical, 1)}</div>
           </div>
           <div>
             <span style="font-size: 0.75rem; color: var(--text-muted);">Physical Space Used</span>
-            <div style="font-weight: 600;">${totalPhysical.toFixed(1)} TB</div>
+            <div style="font-weight: 600;">${_fmtCap(totalPhysical, 1)}</div>
           </div>
         </div>
         <div style="background-color: rgba(0, 230, 118, 0.08); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(0, 230, 118, 0.2);">
           <div style="font-size: 0.75rem; color: var(--status-normal); font-weight: 700; text-transform: uppercase; margin-bottom: 2px;">Data Reduction Saved</div>
-          <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-strong);">${totalSaved.toFixed(1)} TB</div>
+          <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-strong);">${_fmtCap(totalSaved, 1)}</div>
           <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">Dedupe + compaction savings only</div>
         </div>
       </div>
@@ -19197,7 +19221,7 @@ function renderCSMTab() {
     const _gt = _g.totalTB || 0;
     const _gp = (v) => _gt > 0 ? Math.max(0, Math.min(100, (v / _gt) * 100)) : 0;
     const _dataPct = _gp(_g.usedDataTB), _metaPct = _gp((_g.usedMetadataTB || 0) + (_g.reservedMetadataTB || 0)), _remPct = _gp(_g.remainingTB);
-    const _gf = (v) => (v || 0).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' TiB';
+    const _gf = (v) => _fmtCap(v || 0, 1);
     const _usedPct = _g.usedPct != null ? _g.usedPct : (100 - _remPct);
     const _gc = _usedPct >= 90 ? '#ef4444' : _usedPct >= 75 ? '#f59e0b' : '#a855f7';
     const _gAsOf = _g.reportedOn ? String(_g.reportedOn).substring(0, 10) : 'unknown';
@@ -19231,7 +19255,7 @@ function renderCSMTab() {
     const _tot = _ec.totalTB || 0;
     const _pct = (v) => _tot > 0 ? Math.max(0, Math.min(100, (v / _tot) * 100)) : 0;
     const _allocPct = _pct(_ec.allocatedTB), _freePct = _pct(_ec.freeTB), _unPct = _pct(_ec.unconfiguredTB);
-    const _fmt = (v) => (v || 0).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' TiB';
+    const _fmt = (v) => _fmtCap(v || 0, 1);
     const _asOf = _ec.updatedOn ? String(_ec.updatedOn).substring(0, 10) : 'unknown';
     document.getElementById("csmSavingsCard").innerHTML = `
       <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -19288,16 +19312,16 @@ function renderCSMTab() {
       <div style="border-top: 1px solid var(--border-color); padding-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
         <div>
           <span style="font-size: 0.75rem; color: var(--text-muted);">Logical (Dedup Savings)</span>
-          <div style="font-weight: 600;">${(sys.efficiency.logicalUsedTB || 0).toFixed(1)} TB</div>
+          <div style="font-weight: 600;">${_fmtCap((sys.efficiency.logicalUsedTB || 0), 1)}</div>
         </div>
         <div>
           <span style="font-size: 0.75rem; color: var(--text-muted);">Physical Space Used</span>
-          <div style="font-weight: 600;">${(sys.efficiency.physicalUsedTB || 0).toFixed(1)} TB</div>
+          <div style="font-weight: 600;">${_fmtCap((sys.efficiency.physicalUsedTB || 0), 1)}</div>
         </div>
       </div>
       <div style="background-color: rgba(0, 230, 118, 0.08); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(0, 230, 118, 0.2);">
         <div style="font-size: 0.75rem; color: var(--status-normal); font-weight: 700; text-transform: uppercase; margin-bottom: 2px;">Data Reduction Saved</div>
-        <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-strong);">${(sys.efficiency.spaceSavedTB || 0).toFixed(1)} TB</div>
+        <div style="font-size: 1.2rem; font-weight: 700; color: var(--text-strong);">${_fmtCap((sys.efficiency.spaceSavedTB || 0), 1)}</div>
         <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">Dedupe + compaction savings only</div>
       </div>
       ${sys.efficiency.physicalUsedTB === 0 && sys.efficiency.platformNote ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-style: italic;">${sys.efficiency.platformNote}</div>` : ''}
@@ -19406,10 +19430,10 @@ function renderCSMTab() {
         const _h = _capacityHeadroomPct(sys);
         if (_h == null) return 'Capacity data not reported by Active IQ for this system';
         const g = sys.storagegridCapacity, e = sys.eseriesCapacity;
-        if (g && g.totalTB > 0) return `${g.usedPct}% of ${g.totalTB.toFixed(1)} TiB grid used \u2014 ${g.remainingTB.toFixed(1)} TiB remaining (${Math.round(_h)}%)`;
-        if (e && e.totalTB > 0) return `${(e.freeTB + (e.unconfiguredTB || 0)).toFixed(1)} TiB free or unconfigured of ${e.totalTB.toFixed(1)} TiB raw \u2014 ${Math.round(_h)}% headroom`;
+        if (g && g.totalTB > 0) return `${g.usedPct}% of ${_fmtCap(g.totalTB, 1)} grid used \u2014 ${_fmtCap(g.remainingTB, 1)} remaining (${Math.round(_h)}%)`;
+        if (e && e.totalTB > 0) return `${_fmtCap((e.freeTB + (e.unconfiguredTB || 0)), 1)} free or unconfigured of ${_fmtCap(e.totalTB, 1)} raw \u2014 ${Math.round(_h)}% headroom`;
         const _u = sys.efficiency.usableCapacityTB, _p = sys.efficiency.physicalUsedTB || 0;
-        return `${_p.toFixed(1)} TB used / ${_u.toFixed(1)} TB usable \u2014 ${Math.round(_h)}% headroom`;
+        return `${_fmtCap(_p, 1)} used / ${_fmtCap(_u, 1)} usable \u2014 ${Math.round(_h)}% headroom`;
       })()
     },
     { name: 'HA Pair Configured (No Single Point of Failure)',
@@ -19718,7 +19742,7 @@ function renderProjectionsChart(proj, systemName) {
   const showCeiling = ceiling90 > 0 && dataMax > 0 && ceiling90 / dataMax < 2.5;
   if (showCeiling) {
     datasets.push({
-      label: `Usable Capacity @ 90% (${ceiling90.toLocaleString()} TB)`,
+      label: `Usable Capacity @ 90% (${_fmtCap(ceiling90, 0)})`,
       data: Array(9).fill(ceiling90),
       borderColor: 'rgba(239, 68, 68, 0.5)',
       borderDash: [8, 4],
@@ -19765,7 +19789,7 @@ function renderProjectionsChart(proj, systemName) {
           ticks: {
             color: _cTick(),
             font: { size: 10 },
-            callback: v => `${v.toLocaleString()} TB`
+            callback: v => _fmtCap(v, 0)
           },
           grid: { color: _cGrid() }
         }
@@ -19777,7 +19801,7 @@ function renderProjectionsChart(proj, systemName) {
         },
         tooltip: {
           callbacks: {
-            label: ctx => `${ctx.dataset.label}: ${parseFloat(ctx.raw).toLocaleString(undefined, {minimumFractionDigits:1, maximumFractionDigits:1})} TB`
+            label: ctx => `${ctx.dataset.label}: ${_fmtCap(parseFloat(ctx.raw), 1)}`
           }
         }
       }
@@ -19876,7 +19900,7 @@ function renderNodeCapacityChart(systems) {
       maintainAspectRatio: false,
       scales: {
         x: { ticks: { color: _cTick(), font: { size: 9 } }, grid: { color: _cGrid() } },
-        y: { ticks: { color: _cTick(), font: { size: 10 }, callback: v => v.toFixed(0) + ' TB' }, grid: { color: _cGrid() } }
+        y: { ticks: { color: _cTick(), font: { size: 10 }, callback: v => _fmtCap(v, 0) }, grid: { color: _cGrid() } }
       },
       plugins: {
         legend: {
@@ -19956,8 +19980,8 @@ function renderNodeBreakdownTable(systems) {
     const runwayColor = days == null ? 'var(--text-muted)' : days <= 60 ? 'var(--status-critical)' : days <= 365 ? 'var(--status-warning)' : 'var(--status-normal)';
 
     // Raw TB display — show '—' when not available from API (cluster-aggregate systems)
-    const rawDisplay  = rawTB > 0 ? rawTB.toFixed(1) : '<span style="color:var(--text-muted);font-size:0.75rem;">N/A</span>';
-    const usedDisplay = usedTB > 0 ? usedTB.toFixed(1) : '0.0';
+    const rawDisplay  = rawTB > 0 ? rawTB.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '<span style="color:var(--text-muted);font-size:0.75rem;">N/A</span>';
+    const usedDisplay = usedTB > 0 ? usedTB.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '0.0';
 
     return `<tr style="border-bottom:1px solid var(--wa-50);${rowBg}">
       <td style="padding:9px 10px;font-weight:600;">${s.systemName || '-'}</td>
@@ -22045,8 +22069,8 @@ function _dfPlatformInsights(systems) {
     if (x.hwLimits && x.hwLimits.maxCapacityTB > 0 && capTB > 0) {
       const pct = +(capTB / x.hwLimits.maxCapacityTB * 100).toFixed(1);
       hwRows.push({ uk: _uk, un: _un, system: name, customer: cust, family: fam, capTB: +capTB.toFixed(1), maxTB: x.hwLimits.maxCapacityTB, pct });
-      if (pct >= 95) add('high', 'At platform capacity limit', `${capTB.toFixed(1)} TB raw of a ${x.hwLimits.maxCapacityTB} TB platform maximum (${pct}%); further growth needs a controller upgrade or new cluster.`);
-      else if (pct >= 85) add('medium', 'Approaching platform capacity limit', `${capTB.toFixed(1)} TB raw of a ${x.hwLimits.maxCapacityTB} TB platform maximum (${pct}%).`);
+      if (pct >= 95) add('high', 'At platform capacity limit', `${_fmtCap(capTB, 1)} raw of a ${x.hwLimits.maxCapacityTB} TB platform maximum (${pct}%); further growth needs a controller upgrade or new cluster.`);
+      else if (pct >= 85) add('medium', 'Approaching platform capacity limit', `${_fmtCap(capTB, 1)} raw of a ${x.hwLimits.maxCapacityTB} TB platform maximum (${pct}%).`);
     }
     // E-Series NVSRAM
     if (x.nvsram && x.nvsram.cur && x.nvsram.rec && x.nvsram.cur !== x.nvsram.rec) add('medium', 'NVSRAM behind recommended', `${x.nvsram.cur} -> ${x.nvsram.rec} recommended.`);
@@ -27460,9 +27484,9 @@ ${_dfPlatformInsightsText(v, null, { limit: 10 })}`; })()}
 ${compileSvmLifSummaryText(targetSystems)}
 
 * WORKLOAD EFFICIENCY HYGIENE:
-${_effOntapN === 0 ? '  - Storage efficiency (dedupe/compression): N/A -- ONTAP-only metric, no ONTAP systems in scope' : `  - Total Physical Used Capacity${_effOntapN < systemCount ? ' (ONTAP systems)' : ''}: ${totalCapTB.toFixed(1)} TB
-  - Total Logical Capacity Represented: ${logicalCapTB.toFixed(1)} TB
-  - Storage Efficiency Ratio: ${spaceSavedRatio}:1 (Saved ${totalSavedTB.toFixed(1)} TB via Deduplication/Compression)`}
+${_effOntapN === 0 ? '  - Storage efficiency (dedupe/compression): N/A -- ONTAP-only metric, no ONTAP systems in scope' : `  - Total Physical Used Capacity${_effOntapN < systemCount ? ' (ONTAP systems)' : ''}: ${_fmtCap(totalCapTB, 1)}
+  - Total Logical Capacity Represented: ${_fmtCap(logicalCapTB, 1)}
+  - Storage Efficiency Ratio: ${spaceSavedRatio}:1 (Saved ${_fmtCap(totalSavedTB, 1)} via Deduplication/Compression)`}
   - Average Capacity Runway: ${avgRunwayDays != null ? avgRunwayDays + ' days to 90% (average of systems projected to fill within 10 years)' : 'not available (no growth projection reported by Active IQ)'}
 ${(() => { const cap = computeFleetCapacityForecast(targetSystems); return `
   CAPACITY FORECAST:
@@ -27470,11 +27494,11 @@ ${(() => { const cap = computeFleetCapacityForecast(targetSystems); return `
   - Red Zone (>85%):        ${cap.redCount} system${cap.redCount !== 1 ? 's' : ''}
   - Amber Zone (70-85%):    ${cap.amberCount} system${cap.amberCount !== 1 ? 's' : ''}
   - <60-day Runway Systems: ${cap.atRisk.length > 0 ? cap.atRisk.map(a => a.name + ' (' + (a.runway === 0 ? 'at threshold' : a.runway + 'd') + ')').join(', ') : 'None'}
-  - Est. 12-Month Growth:   ${cap.totalGrowthTBMo > 0 ? (cap.totalGrowthTBMo * 12).toFixed(1) + ' TB' : 'N/A'}`; })()}
+  - Est. 12-Month Growth:   ${cap.totalGrowthTBMo > 0 ? _fmtCap(cap.totalGrowthTBMo * 12, 1) : 'N/A'}`; })()}
 
 * SAN/NAS STORAGE & SNAPSHOT HEALTH:
-${(() => { const sn = _sanNasStorageSummary(targetSystems); if (!sn) return '  N/A -- no LUN/volume inventory reported for this scope.'; const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0; return `  - LUNs:                   ${_dfPlural(sn.lunCount, 'LUN')}, ${sn.lunProvisionedTB.toFixed(1)} TB provisioned size, across ${_dfPlural(sn.systemsCovered, 'system')}
-  - Volumes:                ${_dfPlural(sn.volumeCount, 'volume')}, ${sn.volumeProvisionedTB.toFixed(1)} TB configured size (LUNs live inside volumes, so the two sizes overlap)
+${(() => { const sn = _sanNasStorageSummary(targetSystems); if (!sn) return '  N/A -- no LUN/volume inventory reported for this scope.'; const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0; return `  - LUNs:                   ${_dfPlural(sn.lunCount, 'LUN')}, ${_fmtCap(sn.lunProvisionedTB, 1)} provisioned size, across ${_dfPlural(sn.systemsCovered, 'system')}
+  - Volumes:                ${_dfPlural(sn.volumeCount, 'volume')}, ${_fmtCap(sn.volumeProvisionedTB, 1)} configured size (LUNs live inside volumes, so the two sizes overlap)
   - Thin Provisioning:      ${sn.dataVolumeCount ? thinPct + '%' : 'N/A'} of volumes
   - Note:                   ${_dfSanNasNote()}
   - Snapshot Reserve Overflow: ${_dfPlural(sn.volumeSnapshotReserveOverflowCount, 'volume')}
@@ -27565,7 +27589,7 @@ ${_dfNonCveFindingsText(targetSystems)}
 ${formatCostOfInactionText(targetSystems)}
 
 ${compilePerformanceText(targetSystems)}* FINANCIAL IMPACT & ROI SUMMARY [METRICS + OWNERSHIP]
-  Space Reclaimed via Data Reduction:  ${totalSavedTB.toFixed(1)} TB
+  Space Reclaimed via Data Reduction:  ${_fmtCap(totalSavedTB, 1)}
   Warranty Coverage Gap Risk:          ${computeFleetWarrantyStatus(targetSystems).warrantyExpired} systems past hardware warranty end date
 
 --------------------------------------------------------------------------------
@@ -27835,10 +27859,10 @@ function compileQBRPack(targetSystems, allRisks, allUpgrades, expiringContracts,
     sustainSection = `  Sustainability Score (Active IQ): ${latest.scorePercentage}%${latest.n > 1 ? ' (average of ' + latest.n + ' systems)' : ''}${latest.percentageChange != null ? '\n  Change since previous score:  ' + wowChange + '%' : ''}
 
   Storage Efficiency:
-    Total Physical Used:  ${physTotal.toFixed(1)} TB
-    Logical Represented:  ${logTotal.toFixed(1)} TB
+    Total Physical Used:  ${_fmtCap(physTotal, 1)}
+    Logical Represented:  ${_fmtCap(logTotal, 1)}
     Data Reduction Ratio: ${drr}:1
-    Space Saved:          ${savedTotal.toFixed(1)} TB\n`;
+    Space Saved:          ${_fmtCap(savedTotal, 1)}\n`;
   }
   sustainSection += (() => { const sn = _sanNasStorageSummary(targetSystems); if (!sn) return ''; const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0; return `\n  SAN/NAS Storage: ${_dfSanNasSentence(sn)} ${sn.findings.length ? sn.findings[0] : 'No SAN/NAS best-practice concerns identified.'}\n`; })();
 
@@ -28137,7 +28161,7 @@ ${(() => { const cap = computeFleetCapacityForecast(targetSystems); return `  Fl
   Red Zone (>85%):       ${cap.redCount} system${cap.redCount !== 1 ? 's' : ''}
   Amber Zone (70-85%):   ${cap.amberCount} system${cap.amberCount !== 1 ? 's' : ''}
   At-Risk (<60d runway): ${cap.atRisk.length > 0 ? cap.atRisk.map(a => a.name + ' (' + (a.runway === 0 ? 'at threshold' : a.runway + 'd') + ')').join(', ') : 'None'}
-  Est. Growth (12-mo):   ${cap.totalGrowthTBMo > 0 ? (cap.totalGrowthTBMo * 12).toFixed(1) + ' TB' : 'N/A'}`; })()}
+  Est. Growth (12-mo):   ${cap.totalGrowthTBMo > 0 ? _fmtCap(cap.totalGrowthTBMo * 12, 1) : 'N/A'}`; })()}
 
 --------------------------------------------------------------------------------
 9. RECOMMENDATIONS (Active IQ) [REMEDIATION PLAN]
@@ -28448,10 +28472,10 @@ ${compileSvmLifSummaryText(targetSystems)}
 --------------------------------------------------------------------------------
 9. CAPACITY & EFFICIENCY [RISK EXPOSURE]
 --------------------------------------------------------------------------------
-  Total Physical Capacity Used: ${physTotal.toFixed(1)} TB
-  Total Logical Capacity:       ${logTotal.toFixed(1)} TB
+  Total Physical Capacity Used: ${_fmtCap(physTotal, 1)}
+  Total Logical Capacity:       ${_fmtCap(logTotal, 1)}
   Data Reduction Ratio:         ${drr}:1
-  Space Saved via Efficiency:   ${savedTotal.toFixed(1)} TB
+  Space Saved via Efficiency:   ${_fmtCap(savedTotal, 1)}
 ${(() => { const cap = computeFleetCapacityForecast(targetSystems); return `
   CAPACITY FORECAST:
   Fleet Avg Utilization:  ${cap.avgUtilPct}%  |  Growth: ${cap.avgGrowthPctMo}%/mo
@@ -28460,7 +28484,7 @@ ${(() => { const cap = computeFleetCapacityForecast(targetSystems); return `
   <60-day Runway Systems: ${cap.atRisk.length > 0 ? cap.atRisk.map(a => a.name + ' (' + (a.runway === 0 ? 'at threshold' : a.runway + 'd') + ')').join(', ') : 'None'}`; })()}
 ${(() => { const sn = _sanNasStorageSummary(targetSystems); if (!sn) return ''; const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0; return `
   SAN/NAS STORAGE:
-  LUNs and volumes:       ${_dfPlural(sn.lunCount, 'LUN')} (${sn.lunProvisionedTB.toFixed(1)} TB provisioned size), ${_dfPlural(sn.volumeCount, 'volume')} (${sn.volumeProvisionedTB.toFixed(1)} TB configured size) across ${_dfPlural(sn.systemsCovered, 'system')}
+  LUNs and volumes:       ${_dfPlural(sn.lunCount, 'LUN')} (${_fmtCap(sn.lunProvisionedTB, 1)} provisioned size), ${_dfPlural(sn.volumeCount, 'volume')} (${_fmtCap(sn.volumeProvisionedTB, 1)} configured size) across ${_dfPlural(sn.systemsCovered, 'system')}
   Thin Provisioning:      ${sn.dataVolumeCount ? thinPct + '%' : 'N/A'} of volumes
   How to read this:       ${_dfSanNasNote()}
   Snapshot Reserve Overflow: ${_dfPlural(sn.volumeSnapshotReserveOverflowCount, 'volume')}
@@ -28483,7 +28507,7 @@ ${unprotectedArp > 0 ? `  □ Enable ARP on ${unprotectedArp} system${unprotecte
 --------------------------------------------------------------------------------
 12. PARTNER VALUE STATEMENT
 --------------------------------------------------------------------------------
-  Total Data Managed:       ${logTotal.toFixed(1)} TB
+  Total Data Managed:       ${_fmtCap(logTotal, 1)}
   Critical Risks Open:      ${critCount}
   Next Quarter Focus:       ${[targetSystems.some(s => _platformFamily(s) === 'ontap') && _dfArpFacts(targetSystems).disabled > 0 ? 'enable ARP on the ' + _dfArpFacts(targetSystems).disabled + ' ONTAP system' + (_dfArpFacts(targetSystems).disabled !== 1 ? 's' : '') + ' where it is disabled' : '', ages.filter(a => a > 5).length > 0 ? 'plan tech refresh for ' + ages.filter(a => a > 5).length + ' system' + (ages.filter(a => a > 5).length !== 1 ? 's' : '') + ' older than 5 years' : ''].filter(Boolean).join('; ') || 'maintain current posture'}.
 ================================================================================`;
@@ -28659,7 +28683,7 @@ function compileRiskRemediationBrief(targetSystems, allRisks, expiringContracts,
   METRICS (Quantifiable Value Delivered)
   ─────────────────────────────────────────────────────────────────────────────
     Data Reduction Ratio:     ${drr}:1 (dedupe + compression, excl. snapshots)
-    Space Saved:              ${savedTotal.toFixed(1)} TB
+    Space Saved:              ${_fmtCap(savedTotal, 1)}
     Capacity Runway:          ${runway === '—' ? 'not available' : runway + ' days to 90% (average of systems projected to fill within 10 years)'}
     Sustainability Score:     ${avgSustLabel}
     Operational Compliance:   ASUP ${asupPct}% | ARP ${_ontapN > 0 ? arpPct + '%' : 'N/A'} | FW Current ${fwPct}%
@@ -29464,17 +29488,17 @@ function compileSustainabilityReport(targetSystems, allRisks, expiringContracts,
 
   2. EFFICIENCY & DATA REDUCTION IMPACT
   ────────────────────────────────────────────────────────────────────────────
-    Total Physical Capacity:       ${totalPhysical.toFixed(1)} TB
-    Total Logical Data:            ${totalLogical.toFixed(1)} TB
+    Total Physical Capacity:       ${_fmtCap(totalPhysical, 1)}
+    Total Logical Data:            ${_fmtCap(totalLogical, 1)}
     Data Reduction Ratio:          ${totalDrRatio}:1 (dedupe + compression)
-    Space Saved:                   ${spaceSaved.toFixed(1)} TB (equivalent shelves/racks not needed)
+    Space Saved:                   ${_fmtCap(spaceSaved, 1)} (equivalent shelves/racks not needed)
     Hardware Firmware Health:      ${(fw || {}).overallFwScore || 'N/A'}% — current firmware extends hardware operational lifespan
 
     Power and carbon: Active IQ reports scores, not measured power or CO2. No
     power or carbon figures are estimated here; for ESG reporting use your
     metered power data and regional grid carbon intensity.
 ${(() => { const sn = _sanNasStorageSummary(targetSystems); if (!sn) return ''; const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0; return `
-    SAN/NAS space efficiency: ${_dfPlural(sn.volumeCount, 'volume')} with ${sn.volumeProvisionedTB.toFixed(1)} TB configured size (not space used), ${sn.dataVolumeCount ? thinPct + '%' : 'N/A'} thin-provisioned. Thin provisioning and data-reduction (dedupe/compression) both lower the physical footprint per TB served.${sn.volumeNoEfficiencyCount > 0 ? ` ${_dfPlural(sn.volumeNoEfficiencyCount, 'volume')} show 0% data reduction savings -- confirming efficiency policies are enabled would extend the fleet's effective capacity without adding physical media.` : ''}`; })()}
+    SAN/NAS space efficiency: ${_dfPlural(sn.volumeCount, 'volume')} with ${_fmtCap(sn.volumeProvisionedTB, 1)} configured size (not space used), ${sn.dataVolumeCount ? thinPct + '%' : 'N/A'} thin-provisioned. Thin provisioning and data-reduction (dedupe/compression) both lower the physical footprint per TB served.${sn.volumeNoEfficiencyCount > 0 ? ` ${_dfPlural(sn.volumeNoEfficiencyCount, 'volume')} show 0% data reduction savings -- confirming efficiency policies are enabled would extend the fleet's effective capacity without adding physical media.` : ''}`; })()}
 
   3. PER-SYSTEM SUSTAINABILITY SCORES
   ────────────────────────────────────────────────────────────────────────────
@@ -29494,7 +29518,7 @@ ${recLines}
 ${(() => { const cap = computeFleetCapacityForecast(targetSystems); return `    Fleet Avg Utilization: ${cap.avgUtilPct}%  |  Growth: ${cap.avgGrowthPctMo}%/mo
     Systems in RED zone (>85%): ${cap.redCount}/${count}
     <60-day runway systems: ${cap.atRisk.length > 0 ? cap.atRisk.map(a => a.name + ' (' + (a.runway === 0 ? 'at threshold' : a.runway + 'd') + ')').join(', ') : 'None'}
-    Estimated New Capacity Needed: ${cap.totalGrowthTBMo > 0 ? (cap.totalGrowthTBMo * 12).toFixed(1) + ' TB/year' : 'N/A'}`; })()}
+    Estimated New Capacity Needed: ${cap.totalGrowthTBMo > 0 ? _fmtCap(cap.totalGrowthTBMo * 12, 1) + '/year' : 'N/A'}`; })()}
 
   6. CARBON REDUCTION ROADMAP
   ────────────────────────────────────────────────────────────────────────────
@@ -30449,7 +30473,7 @@ function _dfSanNasNote() {
 }
 function _dfSanNasSentence(sn, naWord) {
   const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : null;
-  return `${_dfPlural(sn.lunCount, 'LUN')} with ${sn.lunProvisionedTB.toFixed(1)} TB provisioned size, and ${_dfPlural(sn.volumeCount, 'volume')} with ${sn.volumeProvisionedTB.toFixed(1)} TB configured size (LUNs live inside volumes, so the sizes overlap; neither is space used), across ${_dfPlural(sn.systemsCovered, 'system')}; ${thinPct != null ? thinPct + '%' : (naWord || 'N/A')} of volumes are thin-provisioned.`;
+  return `${_dfPlural(sn.lunCount, 'LUN')} with ${_fmtCap(sn.lunProvisionedTB, 1)} provisioned size, and ${_dfPlural(sn.volumeCount, 'volume')} with ${_fmtCap(sn.volumeProvisionedTB, 1)} configured size (LUNs live inside volumes, so the sizes overlap; neither is space used), across ${_dfPlural(sn.systemsCovered, 'system')}; ${thinPct != null ? thinPct + '%' : (naWord || 'N/A')} of volumes are thin-provisioned.`;
 }
 function _sanNasStorageSummary(systems) {
   const withData = (systems || []).filter(s => s.lunVolumeSummary);
@@ -30618,8 +30642,8 @@ function compileValueReport(targetSystems, allRisks, openCases, scopeTitle) {
   const ph = ont.reduce((a, s) => a + (s.efficiency.physicalUsedTB || 0), 0), lg = ont.reduce((a, s) => a + (s.efficiency.logicalUsedTB || 0), 0);
   const plan = _dfActionPlan(targetSystems, allRisks, openCases);
   let o = `# ${cust} -- Customer Value Report\n\n_Prepared ${new Date().toISOString().split('T')[0]} from NetApp Active IQ telemetry. One heading per slide._\n\n`;
-  o += `## Slide 1 -- Executive summary\n\n- **Account health index:** ${hs}/100 (grade ${grade}) -- a composite of AutoSupport, ARP, OS currency, firmware, contracts, risks and capacity.\n- **Estate:** ${targetSystems.length} system${targetSystems.length !== 1 ? 's' : ''}.\n- **Support:** ${cf.active.length} active${cf.expired.length ? `, ${cf.expired.length} lapsed` : ''}${cf.expiring90.length ? `, ${cf.expiring90.length} expiring within 90 days` : ''}.\n- **Storage efficiency (ONTAP):** ${ph > 0 ? `${(lg / ph).toFixed(1)}:1, ${(lg - ph).toFixed(1)} TB saved` : 'not reported'}.\n- **Availability:** ${up.systemsWithEvents > 0 ? `${up.totalOutageMinutes} minutes of downtime across ${up.systemsWithEvents} system${up.systemsWithEvents !== 1 ? 's' : ''}` : 'no downtime events recorded'}.\n${sus.scorePercentage != null ? `- **Sustainability score (Active IQ):** ${sus.scorePercentage}%.\n` : ''}\n`;
-  o += `## Slide 2 -- Value delivered\n\n${(() => { const _pv = _dfPlatformInsights(targetSystems); return _pv.energy.n ? `- Power and cooling: ${_dfPlatformInsightsSummaryLine(_pv).split(';')[0]}.\n` : ''; })()}- Data reduction on ONTAP systems: ${ph > 0 ? `${lg.toFixed(1)} TB of logical data in ${ph.toFixed(1)} TB physical (${(lg / ph).toFixed(1)}:1).` : 'not reported by Active IQ.'}\n- Capacity: ${cap.utilPct}% fleet utilisation; ${cap.redCount} system${cap.redCount !== 1 ? 's' : ''} within 60 days of the capacity threshold.\n- Monitoring: ${targetSystems.filter(s => { const a = s.autosupport || {}; return a.enabled === true && (a.lastReceivedDays == null || a.lastReceivedDays <= 7); }).length} of ${targetSystems.length} systems send AutoSupport data to Active IQ.\n${(() => { const sn = _sanNasStorageSummary(targetSystems); if (!sn) return ''; const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0; return `- SAN/NAS storage: ${_dfPlural(sn.lunCount, 'LUN')} and ${_dfPlural(sn.volumeCount, 'NAS volume')} totaling ${(sn.lunUsableTB + sn.volumeTotalTB).toFixed(1)} TB provisioned, ${sn.dataVolumeCount ? thinPct + '%' : 'N/A'} thin-provisioned.\n`; })()}\n`;
+  o += `## Slide 1 -- Executive summary\n\n- **Account health index:** ${hs}/100 (grade ${grade}) -- a composite of AutoSupport, ARP, OS currency, firmware, contracts, risks and capacity.\n- **Estate:** ${targetSystems.length} system${targetSystems.length !== 1 ? 's' : ''}.\n- **Support:** ${cf.active.length} active${cf.expired.length ? `, ${cf.expired.length} lapsed` : ''}${cf.expiring90.length ? `, ${cf.expiring90.length} expiring within 90 days` : ''}.\n- **Storage efficiency (ONTAP):** ${ph > 0 ? `${(lg / ph).toFixed(1)}:1, ${_fmtCap((lg - ph), 1)} saved` : 'not reported'}.\n- **Availability:** ${up.systemsWithEvents > 0 ? `${up.totalOutageMinutes} minutes of downtime across ${up.systemsWithEvents} system${up.systemsWithEvents !== 1 ? 's' : ''}` : 'no downtime events recorded'}.\n${sus.scorePercentage != null ? `- **Sustainability score (Active IQ):** ${sus.scorePercentage}%.\n` : ''}\n`;
+  o += `## Slide 2 -- Value delivered\n\n${(() => { const _pv = _dfPlatformInsights(targetSystems); return _pv.energy.n ? `- Power and cooling: ${_dfPlatformInsightsSummaryLine(_pv).split(';')[0]}.\n` : ''; })()}- Data reduction on ONTAP systems: ${ph > 0 ? `${_fmtCap(lg, 1)} of logical data in ${_fmtCap(ph, 1)} physical (${(lg / ph).toFixed(1)}:1).` : 'not reported by Active IQ.'}\n- Capacity: ${cap.utilPct}% fleet utilisation; ${cap.redCount} system${cap.redCount !== 1 ? 's' : ''} within 60 days of the capacity threshold.\n- Monitoring: ${targetSystems.filter(s => { const a = s.autosupport || {}; return a.enabled === true && (a.lastReceivedDays == null || a.lastReceivedDays <= 7); }).length} of ${targetSystems.length} systems send AutoSupport data to Active IQ.\n${(() => { const sn = _sanNasStorageSummary(targetSystems); if (!sn) return ''; const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0; return `- SAN/NAS storage: ${_dfPlural(sn.lunCount, 'LUN')} and ${_dfPlural(sn.volumeCount, 'NAS volume')} totaling ${_fmtCap((sn.lunUsableTB + sn.volumeTotalTB), 1)} provisioned, ${sn.dataVolumeCount ? thinPct + '%' : 'N/A'} thin-provisioned.\n`; })()}\n`;
   o += `## Slide 3 -- Security and planning\n\n- **Risks detected by Active IQ on your systems:** ${rk('critical')} critical, ${rk('high')} high, ${rk('medium')} medium.\n- **Published vulnerabilities (CVEs) for the software versions you run:** ${cves.length} (${cves.filter(c => c.sev === 'critical').length} critical, ${cves.filter(c => c.sev === 'high').length} high). These are counted separately from the risks above.\n- **Hardware end-of-support within 24 months:** ${_dfRefreshPlan(targetSystems).filter(r => r.days <= 730).map(r => `${r.model} (${_dfPlural(r.n, 'system')}, ${_dfDate(r.eos)})`).join('; ') || 'none reported'}.\n\n`;
   const uf = _dfCollapseFindings((allRisks || []).filter(r => ['critical', 'high'].includes(String(r.severity).toLowerCase()) && !/best.?practice/i.test(r.category || '')).map(r => ({ description: r.description, severity: r.severity, systemName: r.systemName || r.serialNumber })));
   uf.sort((a, b) => (a.severity === 'critical' ? 0 : 1) - (b.severity === 'critical' ? 0 : 1) || b.systems.size - a.systems.size);
@@ -30766,9 +30790,9 @@ function compileCustomerReport(targetSystems, allRisks, expiringContracts, openC
   o += `## 6. Capacity & Efficiency\n\n`;
   const ont = targetSystems.filter(s => _platformFamily(s) === 'ontap' && s.efficiency);
   const ph = ont.reduce((a, s) => a + (s.efficiency.physicalUsedTB || 0), 0), lg = ont.reduce((a, s) => a + (s.efficiency.logicalUsedTB || 0), 0);
-  if (ph > 0) o += `ONTAP systems store ${lg.toFixed(1)} TB of logical data in ${ph.toFixed(1)} TB of physical capacity (${(lg / ph).toFixed(1)}:1 efficiency, ${(lg - ph).toFixed(1)} TB saved).\n\n`;
+  if (ph > 0) o += `ONTAP systems store ${_fmtCap(lg, 1)} of logical data in ${_fmtCap(ph, 1)} of physical capacity (${(lg / ph).toFixed(1)}:1 efficiency, ${_fmtCap((lg - ph), 1)} saved).\n\n`;
   { const non = targetSystems.filter(s => _platformFamily(s) !== 'ontap' && s.efficiency && (s.efficiency.usableCapacityTB || 0) > 0);
-    if (non.length) { const u = non.reduce((a, s) => a + (s.efficiency.physicalUsedTB || 0), 0), t = non.reduce((a, s) => a + (s.efficiency.usableCapacityTB || 0), 0); o += `${[...new Set(non.map(s => famLabel[_platformFamily(s)]))].join(' / ')} capacity: ${u.toFixed(1)} TB allocated of ${t.toFixed(1)} TB (${Math.round(u / t * 100)}% used). E-Series and StorageGRID have no dedupe/compression ratio.\n\n`; } }
+    if (non.length) { const u = non.reduce((a, s) => a + (s.efficiency.physicalUsedTB || 0), 0), t = non.reduce((a, s) => a + (s.efficiency.usableCapacityTB || 0), 0); o += `${[...new Set(non.map(s => famLabel[_platformFamily(s)]))].join(' / ')} capacity: ${_fmtCap(u, 1)} allocated of ${_fmtCap(t, 1)} (${Math.round(u / t * 100)}% used). E-Series and StorageGRID have no dedupe/compression ratio.\n\n`; } }
   const near = targetSystems.filter(s => s.projections && Number.isFinite(s.projections.daysToLimit) && s.projections.daysToLimit >= 0 && s.projections.daysToLimit <= 365).sort((a, b) => a.projections.daysToLimit - b.projections.daysToLimit);
   o += near.length ? `Projected to reach (or already at) the capacity threshold within 12 months: ${near.map(s => `${nameOf(s)} (${s.projections.daysToLimit === 0 ? 'already at the threshold' : _dfRunwayText(s.projections.daysToLimit)})`).join(', ')}.\n\n` : `No system is projected to reach its capacity threshold within 12 months.\n\n`;
   { const sn = _sanNasStorageSummary(targetSystems); if (sn) { const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0;
@@ -30865,10 +30889,10 @@ function compileCustomerReport(targetSystems, allRisks, expiringContracts, openC
   // 12 Capacity trend
   const _ct = _dfCapacityTrend(targetSystems);
   if (_ct) {
-    o += `## 12. Capacity Trend\n\nAcross ${_dfPlural(_ct.clusters, 'ONTAP cluster')}, used capacity (over up to ${_ct.months} months of history) went from ${_ct.first.toFixed(0)} TB to ${_ct.last.toFixed(0)} TB: ${_ct.delta >= 0 ? '+' : ''}${_ct.delta.toFixed(0)} TB (${_ct.pct >= 0 ? '+' : ''}${_ct.pct.toFixed(0)}%), about ${_ct.perMonth.toFixed(1)} TB per month.\n\n`;
+    o += `## 12. Capacity Trend\n\nAcross ${_dfPlural(_ct.clusters, 'ONTAP cluster')}, used capacity (over up to ${_ct.months} months of history) went from ${_fmtCap(_ct.first, 0)} to ${_fmtCap(_ct.last, 0)}: ${_ct.delta >= 0 ? '+' : ''}${_fmtCap(_ct.delta, 0)} (${_ct.pct >= 0 ? '+' : ''}${_ct.pct.toFixed(0)}%), about ${_fmtCap(_ct.perMonth, 1)} per month.\n\n`;
     if (_ct.drained.length) o += `${_dfPlural(_ct.drained.length, 'cluster')} lost more than half of their used capacity over this period (${_ct.drained.join(', ')}), which is consistent with data being migrated off them ahead of decommissioning. The estate total falls for that reason, not because usage is shrinking; confirm the plan before renewing support on those clusters.\n\n`;
-    if (_ct.peaks.length) o += `Growth was not steady: ${_ct.peaks.map(x => `${x.name} peaked at ${x.peak.toFixed(0)} TB in ${x.month} before ending at ${x.last.toFixed(0)} TB`).join('; ')}. A spike like this usually means a temporary copy or migration; confirm before planning capacity from the trend.\n\n`;
-    if (_ct.top.length && _ct.top[0].d > 0) o += `Fastest-growing clusters: ${_ct.top.filter(x => x.d > 0).map(x => `${x.name} (+${x.d.toFixed(0)} TB over ${x.m} months)`).join('; ')}.\n\n`;
+    if (_ct.peaks.length) o += `Growth was not steady: ${_ct.peaks.map(x => `${x.name} peaked at ${_fmtCap(x.peak, 0)} in ${x.month} before ending at ${_fmtCap(x.last, 0)}`).join('; ')}. A spike like this usually means a temporary copy or migration; confirm before planning capacity from the trend.\n\n`;
+    if (_ct.top.length && _ct.top[0].d > 0) o += `Fastest-growing clusters: ${_ct.top.filter(x => x.d > 0).map(x => `${x.name} (+${_fmtCap(x.d, 0)} over ${x.m} months)`).join('; ')}.\n\n`;
   }
   return o;
 }
@@ -31121,12 +31145,12 @@ DATA PROTECTION POSTURE
   Unprotected:        ${dr.ontapCount === 0 ? 'N/A' : dr.unprotectedText}${dr.lagWarnings.length > 0 ? '\n  RPO Risks:          ' + dr.lagWarnings.map(w => w.system + ' → ' + w.dest + ' lag: ' + w.lag).join('; ') : ''}
 
 CAPACITY RISK
-  Utilisation:        ${cap.utilPct}% fleet-wide (${cap.totalPhysTB.toFixed(1)} / ${cap.totalAvailTB.toFixed(1)} TB)
+  Utilisation:        ${cap.utilPct}% fleet-wide (${_fmtCap(cap.totalPhysTB, 1)} / ${_fmtCap(cap.totalAvailTB, 1)})
   RAG Distribution:   ${cap.greenCount} Green / ${cap.amberCount} Amber / ${cap.redCount} Red
   Growth Rate:        ${cap.fleetGrowthGBDay.toFixed(1)} GB/day fleet-wide${cap.atRisk.length > 0 ? '\n  At Risk (≤60d):     ' + cap.atRisk.map(a => a.name + ' (' + (a.runway === 0 ? 'at threshold' : a.runway + 'd') + ')').join(', ') : ''}
 ${(() => { const sn = _sanNasStorageSummary(targetSystems); if (!sn) return ''; const thinPct = sn.dataVolumeCount ? Math.round(sn.volumeThinProvisionedCount / sn.dataVolumeCount * 100) : 0; return `
 SAN/NAS STORAGE RISK
-  Inventory:          ${_dfPlural(sn.lunCount, 'LUN')} (${sn.lunProvisionedTB.toFixed(1)} TB provisioned size), ${_dfPlural(sn.volumeCount, 'volume')} (${sn.volumeProvisionedTB.toFixed(1)} TB configured size) across ${_dfPlural(sn.systemsCovered, 'system')}
+  Inventory:          ${_dfPlural(sn.lunCount, 'LUN')} (${_fmtCap(sn.lunProvisionedTB, 1)} provisioned size), ${_dfPlural(sn.volumeCount, 'volume')} (${_fmtCap(sn.volumeProvisionedTB, 1)} configured size) across ${_dfPlural(sn.systemsCovered, 'system')}
   Thin Provisioning:  ${sn.dataVolumeCount ? thinPct + '%' : 'N/A'} of volumes
   How to read this:   ${_dfSanNasNote()}
   Snapshot Reserve Overflow: ${_dfPlural(sn.volumeSnapshotReserveOverflowCount, 'volume')}${sn.findings.length ? '\n' + sn.findings.map(f => '  - ' + f).join('\n') : ''}`; })()}
@@ -32006,7 +32030,7 @@ ${fm.perSystem.filter(s => s.pct < 60).map(s => { const gaps = []; if (!s.arp) g
   Estate:                      ${sysCount} systems (${Object.entries(targetSystems.reduce((a, s) => { const f = _platformFamily(s); a[f] = (a[f] || 0) + 1; return a; }, {})).map(([f, c]) => c + ' ' + ({ ontap: 'ONTAP', eseries: 'E-Series', storagegrid: 'StorageGRID', element: 'Element OS (HCI)' }[f] || f)).join(', ')})${(() => { const _v = _dfStorageGridView(targetSystems); return _v.nodeTotal ? `; the StorageGRID grid${_v.grids.length !== 1 ? 's have' : ' has'} ${_v.nodeTotal} node${_v.nodeTotal !== 1 ? 's' : ''} in all` : ''; })()}
   Support entitlement:         ${_contractFactsSales.active.length} active${_contractFactsSales.expired.length ? ', ' + _contractFactsSales.expired.length + ' lapsed' : ''}${_contractFactsSales.expiring90.length ? ', ' + _contractFactsSales.expiring90.length + ' expiring within 90 days' : ''}
   Hardware support ending within 24 months (or already ended): ${_hwWindow.length ? _hwWindow.length + ' system' + (_hwWindow.length !== 1 ? 's' : '') + ' (' + _hwModels.join(', ') + ')' : 'none reported'}
-  Data reduction (ONTAP):      ${avgDRRatio === 'N/A' ? 'ratio not reported by Active IQ' : avgDRRatio + ':1, ' + savedTotalTB.toFixed(1) + ' TB saved'}
+  Data reduction (ONTAP):      ${avgDRRatio === 'N/A' ? 'ratio not reported by Active IQ' : avgDRRatio + ':1, ' + _fmtCap(savedTotalTB, 1) + ' saved'}
   Pricing:                     Quotations for renewals, refresh and consumption (Keystone) options are provided by your NetApp account team.
 `;
 
@@ -33948,12 +33972,12 @@ function _renderSanNasStorageSection(systems) {
       <td style="${tdStyle}">${r.systemName || ''}</td>
       <td style="${tdStyle}">${r.customerName || ''}</td>
       <td style="${tdStyle}">${r.lunCount || 0}</td>
-      <td style="${tdStyle}">${r.lunTB.toFixed(1)} TB</td>
+      <td style="${tdStyle}">${_fmtCap(r.lunTB, 1)}</td>
       <td style="${tdStyle}">${r.volumeCount || 0}</td>
-      <td style="${tdStyle}">${r.volumeTB.toFixed(1)} TB</td>
+      <td style="${tdStyle}">${_fmtCap(r.volumeTB, 1)}</td>
       <td style="${tdStyle}">${r.thinPct != null ? r.thinPct.toFixed(0) + '%' : '<span title="No data volumes reported for this system, so there is no thin-provisioning share">—</span>'}</td>
       <td style="${tdStyle}${r.snapshotReserveOverflowCount > 0 ? ';color:var(--hx-f59e0b);font-weight:600;' : ''}">${r.snapshotReserveOverflowCount || 0}</td>
-      <td style="${tdStyle}${r.usedPct != null && r.usedPct >= 80 ? ';color:var(--hx-f59e0b);font-weight:600;' : ''}">${r.usedPct != null ? r.usedPct.toFixed(0) + '% of ' + r.usableTB.toFixed(1) + ' TB usable' : (r.capacityUnclear ? '<span title="Active IQ reports a usable capacity below this system\'s used capacity, so no percentage is shown">n/a</span>' : '\u2014')}</td>
+      <td style="${tdStyle}${r.usedPct != null && r.usedPct >= 80 ? ';color:var(--hx-f59e0b);font-weight:600;' : ''}">${r.usedPct != null ? r.usedPct.toFixed(0) + '% of ' + _fmtCap(r.usableTB, 1) + ' usable' : (r.capacityUnclear ? '<span title="Active IQ reports a usable capacity below this system\'s used capacity, so no percentage is shown">n/a</span>' : '\u2014')}</td>
       <td style="${tdStyle}${r.overcommit != null && r.overcommit > 1 ? (r.usedPct != null && r.usedPct >= 80 ? ';color:var(--hx-ef4444);font-weight:600;' : ';color:var(--text-secondary);') : ''}">${r.overcommit != null ? r.overcommit.toFixed(1) + 'x' : (r.capacityUnclear ? 'n/a' : '\u2014')}</td>
     </tr>`).join('');
 
@@ -33964,9 +33988,9 @@ function _renderSanNasStorageSection(systems) {
     </div>
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">
       ${kpi('LUNs', summary.lunCount.toLocaleString())}
-      ${kpi('LUN provisioned size', summary.lunProvisionedTB.toFixed(1) + ' TB')}
+      ${kpi('LUN provisioned size', _fmtCap(summary.lunProvisionedTB, 1))}
       ${kpi('Volumes', summary.volumeCount.toLocaleString())}
-      ${kpi('Volume configured size', summary.volumeProvisionedTB.toFixed(1) + ' TB')}
+      ${kpi('Volume configured size', _fmtCap(summary.volumeProvisionedTB, 1))}
       ${kpi('Data volumes thin (rest thick)', summary.dataVolumeCount ? Math.round(summary.volumeThinProvisionedCount / summary.dataVolumeCount * 100) + '%' : '—')}
       ${kpi('Systems: LUN size above usable', summary.overcommittedCount + ' of ' + summary.bySystem.filter(r => r.lunCount).length)}
       ${kpi('...and 80%+ full', summary.overcommitHotCount)}
@@ -34687,8 +34711,8 @@ function _renderAsBuiltSection(systems) {
         if (p.includes('snapmirror') && !p.includes('sync')) return (sysObj.snapMirrorCount || 0) > 0;
         return null;
     };
-    const _fmtTB = (v) => (v !== undefined && v !== null && v !== '') ? parseFloat(v).toFixed(2) + ' TB' : emptyDash;
-    const _fmtKBTB = (v) => (v !== undefined && v !== null && v !== '') ? (parseFloat(v) / (1024**3)).toFixed(2) + ' TB' : emptyDash;
+    const _fmtTB = (v) => (v !== undefined && v !== null && v !== '') ? _fmtCap(parseFloat(v), 2) : emptyDash;
+    const _fmtKBTB = (v) => (v !== undefined && v !== null && v !== '') ? _fmtCap(parseFloat(v) / (1024**3), 2) : emptyDash;
     const _fmtPct = (v) => (v !== undefined && v !== null && v !== '') ? parseFloat(v).toFixed(1) + '%' : emptyDash;
 
     // ── Fleet Summary ──────────────────────────────────────────────────────────
@@ -34747,7 +34771,7 @@ function _renderAsBuiltSection(systems) {
         </div>
         <div style="flex:1; min-width: 180px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
             <div style="font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Total Fleet Capacity</div>
-            <div style="font-size:1.8rem; font-weight:bold;">${totalCapTB.toFixed(1)} TB</div>
+            <div style="font-size:1.8rem; font-weight:bold;">${_fmtCap(totalCapTB, 1)}</div>
             <div style="font-size:0.78rem; color:var(--text-secondary);">Usable / Allocated</div>
         </div>
         <div style="flex:1; min-width: 180px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
@@ -34902,7 +34926,7 @@ function _renderAsBuiltSection(systems) {
                 monthlyCapHtml = (!hasAnyUsed ? '<div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:6px;">Active IQ reports raw/marketing capacity history for this cluster but has not returned monthly used-capacity — Used (TB) column omitted.</div>' : '')
                     + '<table style="' + tblStyle + '"><tr><th style="' + thStyle + '">Month</th>' + (hasAnyUsed ? '<th style="' + thStyle + '">Used (TB)</th>' : '') + '<th style="' + thStyle + '">Raw (TB)</th>' + (hasAnyUtil ? '<th style="' + thStyle + '">Utilization</th>' : '') + '</tr>'
                     + meaningfulMonths.map((c, i) => {
-                        const usedStr = monthUsed[i] > 0 ? parseFloat(monthUsed[i]).toFixed(2) + ' TB' : emptyDash;
+                        const usedStr = monthUsed[i] > 0 ? _fmtCap(parseFloat(monthUsed[i]), 2) : emptyDash;
                         const utilStr = c.utilPct ? parseFloat(c.utilPct).toFixed(1) + '%' : emptyDash;
                         return '<tr><td style="' + tdStyle + '">' + valOrDash(c.month) + '</td>' + (hasAnyUsed ? '<td style="' + tdStyle + '">' + usedStr + '</td>' : '') + '<td style="' + tdStyle + '">' + _fmtTB(c.rawTB) + '</td>' + (hasAnyUtil ? '<td style="' + tdStyle + '">' + utilStr + '</td>' : '') + '</tr>';
                     }).join('')
@@ -35687,9 +35711,9 @@ function _renderAsBuiltSection(systems) {
             let _oc = _ucTB > 0 && lunTB > 0 ? lunTB / _ucTB : null, _usedPct = s.clusterCapacityUtilPct > 0 ? s.clusterCapacityUtilPct : (_ucTB > 0 ? _puTB / _ucTB * 100 : null);
             if (!(s.clusterCapacityUtilPct > 0) && _usedPct != null && _usedPct > 105) { _usedPct = null; _oc = null; }   // no trustworthy percentage
             const lvHtml = '<table style="' + tblStyle + '">'
-                + '<tr><th style="' + thStyle + '">LUNs (SAN)</th><td style="' + tdStyle + '">' + lv.lunCount + ' &middot; ' + lunTB.toFixed(1) + ' TB provisioned size</td>'
-                + '<th style="' + thStyle + '">Volumes</th><td style="' + tdStyle + '">' + lv.volumeCount + ' &middot; ' + volTB.toFixed(1) + ' TB configured size</td></tr>'
-                + (_oc != null ? '<tr><th style="' + thStyle + '">Physical used</th><td style="' + tdStyle + '">' + (_usedPct != null ? _usedPct.toFixed(0) + '% of ' + _ucTB.toFixed(1) + ' TB usable' : emptyDash) + '</td>'
+                + '<tr><th style="' + thStyle + '">LUNs (SAN)</th><td style="' + tdStyle + '">' + lv.lunCount + ' &middot; ' + _fmtCap(lunTB, 1) + ' provisioned size</td>'
+                + '<th style="' + thStyle + '">Volumes</th><td style="' + tdStyle + '">' + lv.volumeCount + ' &middot; ' + _fmtCap(volTB, 1) + ' configured size</td></tr>'
+                + (_oc != null ? '<tr><th style="' + thStyle + '">Physical used</th><td style="' + tdStyle + '">' + (_usedPct != null ? _usedPct.toFixed(0) + '% of ' + _fmtCap(_ucTB, 1) + ' usable' : emptyDash) + '</td>'
                 + '<th style="' + thStyle + '">LUN size / usable</th><td style="' + tdStyle + (_oc > 1 && _usedPct != null && _usedPct >= 80 ? ';color:var(--hx-ef4444);font-weight:600;' : '') + '">' + _oc.toFixed(1) + 'x' + (_oc > 1 ? (_usedPct != null && _usedPct >= 80 ? ' &middot; overcommitted and nearly full' : ' &middot; thin-provisioned, physical space not under pressure') : '') + '</td></tr>' : '')
                 + '<tr><th style="' + thStyle + '" title="Share of data volumes whose space guarantee is none (thin). Thick volumes reserve their full size in the aggregate; both are valid. Root volumes are excluded.">Thin data volumes</th><td style="' + tdStyle + '">' + (thinPct != null ? thinPct + '%' : emptyDash) + '</td>'
                 + '<th style="' + thStyle + '">Protocols</th><td style="' + tdStyle + '">' + valOrDash((lv.volumeProtocols || []).join(', ')) + '</td></tr>'
@@ -38042,8 +38066,8 @@ ${recs.length === 0 ? "✓ No recommendations available. Run a data refresh to l
     const sep = '═'.repeat(80);
     const sepThin = '─'.repeat(80);
     const _v = (val) => (val !== undefined && val !== null && val !== '') ? String(val) : '—';
-    const _fmtKBtoTB = (v) => (v !== undefined && v !== null && v !== '') ? (parseFloat(v) / (1024**3)).toFixed(2) + ' TB' : '—';
-    const _fmtTBv = (v) => (v !== undefined && v !== null && v !== '') ? parseFloat(v).toFixed(2) + ' TB' : '—';
+    const _fmtKBtoTB = (v) => (v !== undefined && v !== null && v !== '') ? _fmtCap(parseFloat(v) / (1024**3), 2) : '—';
+    const _fmtTBv = (v) => (v !== undefined && v !== null && v !== '') ? _fmtCap(parseFloat(v), 2) : '—';
     const _fmtPctv = (v) => (v !== undefined && v !== null && v !== '') ? parseFloat(v).toFixed(1) + '%' : '—';
 
     let body = `NETAPP AS-BUILT CONFIGURATION DOCUMENT
@@ -38405,7 +38429,7 @@ function _cvrAddExecSummarySlide(pptx, targetSystems, health, uptime, cap) {
   const healthColor = health.score >= 80 ? CVR_BRAND.green : health.score >= 65 ? CVR_BRAND.amber : CVR_BRAND.red;
   const kpis = [
     { label: 'Account Health', value: `${health.score}/100`, sub: `Grade ${health.grade}`, color: healthColor },
-    { label: 'Data Reduction Savings', value: `${cap.savedTB.toFixed(1)} TB`, sub: cap.savedTB > 0 ? 'Active IQ efficiency data' : 'No efficiency data', color: CVR_BRAND.cyan },
+    { label: 'Data Reduction Savings', value: `${_fmtCap(cap.savedTB, 1)}`, sub: cap.savedTB > 0 ? 'Active IQ efficiency data' : 'No efficiency data', color: CVR_BRAND.cyan },
     { label: 'Fleet Stability', value: uptime.systemsWithEvents > 0 ? `${uptime.totalOutageMinutes} min` : '0 min', sub: uptime.systemsWithEvents > 0 ? `${uptime.systemsWithEvents} system(s) affected` : 'No downtime events', color: CVR_BRAND.green }
   ];
   kpis.forEach((k, i) => {
@@ -38425,7 +38449,7 @@ function _cvrAddValueInsightsSlide(pptx, health, uptime, cap, feat, security) {
   const rows = [
     ['Category', 'Finding'],
     ['Overall Health', `${health.score}/100 (Grade ${health.grade})`],
-    ['NetApp-Delivered Savings & Stability', `${cap.savedTB.toFixed(1)} TB saved; ${uptime.systemsWithEvents > 0 ? `${uptime.totalOutageMinutes} outage min across ${uptime.systemsWithEvents} system(s)` : 'no downtime events recorded'}`],
+    ['NetApp-Delivered Savings & Stability', `${_fmtCap(cap.savedTB, 1)} saved; ${uptime.systemsWithEvents > 0 ? `${uptime.totalOutageMinutes} outage min across ${uptime.systemsWithEvents} system(s)` : 'no downtime events recorded'}`],
     ['Security & Future Planning', `${security.cveCount} unique CVE(s) apply (all severities); ${security.eosCount} system(s) approaching end-of-support; ${security.expiring90} support contract(s) expiring <90 days${security.lapsed ? '; ' + security.lapsed + ' already lapsed' : ''}`],
     ['Maximize Infrastructure Value', `Feature adoption ${feat.fleetAvgScore}% fleet average (ARP, SnapMirror, HA)`]
   ];
@@ -45576,7 +45600,7 @@ function compileStorageGridReport(targetSystems, scopeTitle) {
   o += `## 3. Grid detail\n\n`;
   v.grids.forEach((g, gi) => {
     o += `### 3.${gi + 1} ${g.gridName}${g.customerName ? ' (' + g.customerName + ')' : ''}\n\n`;
-    o += `${_dfPlural(g.nodeTotal, 'node')}${g.rolesText ? ' (' + g.rolesText + ')' : ''}; ${g.formsText || 'form factor not reported'}. Version ${g.version || 'not reported'}${g.licenseCapacity ? `; licence ${g.licenseCapacity} TB (${g.licenseType || 'type not reported'})` : ''}${g.supportEnd ? `; software support term ends ${g.supportEnd}` : ''}. Primary admin: ${g.primaryAdmin || 'not reported'}${g.primaryAdminSite ? ' (' + g.primaryAdminSite + ')' : ''}.\n\n`;
+    o += `${_dfPlural(g.nodeTotal, 'node')}${g.rolesText ? ' (' + g.rolesText + ')' : ''}; ${g.formsText || 'form factor not reported'}. Version ${g.version || 'not reported'}${g.licenseCapacity ? `; licence ${isFinite(parseFloat(g.licenseCapacity)) ? _fmtCap(parseFloat(g.licenseCapacity), 0) : g.licenseCapacity + ' TB'} (${g.licenseType || 'type not reported'})` : ''}${g.supportEnd ? `; software support term ends ${g.supportEnd}` : ''}. Primary admin: ${g.primaryAdmin || 'not reported'}${g.primaryAdminSite ? ' (' + g.primaryAdminSite + ')' : ''}.\n\n`;
     const grp = {}; g.nodes.forEach(n => { const k = (n.storageNodeType || 'Unknown role') + '|' + _dfSgForm(n).label; grp[k] = (grp[k] || 0) + 1; });
     const roleRows = Object.keys(grp).map(k => { const [r, f] = k.split('|'); return [r, f, grp[k]]; }); if (g.nodesNoDetail) roleRows.push(['Role not reported', 'Form factor not reported', g.nodesNoDetail]);
     if (roleRows.length) o += `**Nodes by role and form factor**\n\n` + md(['Role', 'Form factor', 'Nodes'], roleRows);
@@ -45674,7 +45698,7 @@ function _storageGridHtml(view) {
     stat('Tenants / buckets', t.tenants + ' / ' + t.buckets, 'var(--accent-cyan)') + stat('ILM rules', t.rules, 'var(--accent-cyan)') +
     stat('Findings', hi + ' high / ' + md + ' med', hi ? 'var(--status-critical)' : md ? 'var(--status-warning)' : 'var(--status-normal)') + `</div>`;
   view.grids.forEach(g => {
-    html += `<details open style="margin-bottom:12px;border:1px solid var(--wa-80);border-radius:var(--radius-sm);padding:10px 12px;"><summary style="cursor:pointer;font-weight:600;">${esc(g.gridName)} <span style="color:var(--text-muted);font-weight:400;font-size:0.75rem;">${esc(g.customerName)} &middot; ${g.sites.length} site${g.sites.length !== 1 ? 's' : ''} &middot; ${g.nodeTotal || 0} node${g.nodeTotal !== 1 ? 's' : ''}${g.rolesText ? ' (' + esc(g.rolesText) + ')' : ''}${g.formsText ? ' &middot; ' + esc(g.formsText) : ''} &middot; ${esc(g.version)}${g.licenseCapacity ? ' &middot; licence ' + esc(g.licenseCapacity) + ' TB (' + esc(g.licenseType || '') + ')' : ''}</span></summary>`;
+    html += `<details open style="margin-bottom:12px;border:1px solid var(--wa-80);border-radius:var(--radius-sm);padding:10px 12px;"><summary style="cursor:pointer;font-weight:600;">${esc(g.gridName)} <span style="color:var(--text-muted);font-weight:400;font-size:0.75rem;">${esc(g.customerName)} &middot; ${g.sites.length} site${g.sites.length !== 1 ? 's' : ''} &middot; ${g.nodeTotal || 0} node${g.nodeTotal !== 1 ? 's' : ''}${g.rolesText ? ' (' + esc(g.rolesText) + ')' : ''}${g.formsText ? ' &middot; ' + esc(g.formsText) : ''} &middot; ${esc(g.version)}${g.licenseCapacity ? ' &middot; licence ' + (isFinite(parseFloat(g.licenseCapacity)) ? _fmtCap(parseFloat(g.licenseCapacity), 0) : esc(g.licenseCapacity) + ' TB') + ' (' + esc(g.licenseType || '') + ')' : ''}</span></summary>`;
     if (g.nodes.length) {
       html += `<div style="overflow:auto;${g.nodes.length > 12 ? 'max-height:340px;' : ''}margin-top:10px;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}">Site</th><th style="${th}">Node</th><th style="${th}">Role</th><th style="${th}">Appliance</th><th style="${th}">Reports to Active IQ</th><th style="${th}">Crit/High risks</th><th style="${th}">Last ASUP</th><th style="${th}">RAID</th><th style="${th}">Drives</th><th style="${th}">Version</th></tr></thead><tbody>` +
         g.nodes.map(n => `<tr><td style="${td}">${esc(n.site)}</td><td style="${td}">${esc(n.hostName)}${g.primaryAdmin && n.hostName === g.primaryAdmin ? ' <span style="color:var(--accent-cyan);font-size:0.68rem;">primary</span>' : ''}</td><td style="${td}">${esc(n.storageNodeType || '—')}</td><td style="${td}">${esc(_dfSgForm(n).label)}</td><td style="${td}color:${n.reporting ? 'var(--status-normal)' : 'var(--status-warning)'};">${n.reporting ? 'Yes' : 'No'}</td><td style="${td}">${n.health ? n.health.crit + '/' + n.health.high : '—'}</td><td style="${td}">${n.health && n.health.asupDays != null ? n.health.asupDays + 'd' : '—'}</td><td style="${td}">${esc(n.raidMode || '—')}</td><td style="${td}">${n.driveType ? esc(n.driveType) + (n.driveSizeGB ? ' ' + n.driveSizeGB + ' GB' : '') : '—'}</td><td style="${td}">${esc(n.osVersion || '—')}</td></tr>`).join('') + `</tbody></table></div>`;
