@@ -812,7 +812,7 @@ def _run_db_schema_setup(db):
         );
     """)
     # Outcome evidence: the systems the plan covered when it was adopted, and the final result recorded when it is closed
-    for _col in ("baseline_serials TEXT DEFAULT ''", "closed_at TEXT DEFAULT ''", "final_json TEXT DEFAULT ''"):
+    for _col in ("baseline_serials TEXT DEFAULT ''", "closed_at TEXT DEFAULT ''", "final_json TEXT DEFAULT ''", "spec_json TEXT DEFAULT ''"):
         try:
             db.execute("ALTER TABLE success_plan_progress ADD COLUMN " + _col)
         except Exception:
@@ -11655,12 +11655,12 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             db = _init_db()
             try:
                 rows = db.execute("""
-                    SELECT plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at, baseline_serials, closed_at, final_json
+                    SELECT plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at, baseline_serials, closed_at, final_json, spec_json
                     FROM success_plan_progress
                 """).fetchall()
             finally:
                 db.close()
-            cols = ["planId", "nagpId", "templateKey", "metricLabel", "baselineValue", "targetDirection", "createdAt", "baselineSerials", "closedAt", "finalJson"]
+            cols = ["planId", "nagpId", "templateKey", "metricLabel", "baselineValue", "targetDirection", "createdAt", "baselineSerials", "closedAt", "finalJson", "specJson"]
             items = [dict(zip(cols, r)) for r in rows]
             for it in items:
                 try:
@@ -11671,6 +11671,10 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     it["final"] = json.loads(it.pop("finalJson")) if it.get("finalJson") else None
                 except Exception:
                     it["final"] = None
+                try:   # the plan's milestones, their ids and the rule that completes each (see _spSpecRecord in app.js)
+                    it["spec"] = json.loads(it.pop("specJson")) if it.get("specJson") else None
+                except Exception:
+                    it["spec"] = None
             self._json_response(200, {"ok": True, "items": items})
         except Exception as e:
             print(f"  [PLAN-PROGRESS] List error: {e}", flush=True)
@@ -11693,15 +11697,18 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             db = _init_db()
             try:
                 serials = body.get("affectedSerials")
+                _prev = db.execute("SELECT spec_json FROM success_plan_progress WHERE plan_id = ?", (plan_id,)).fetchone()
+                _spec = json.dumps(body["spec"]) if isinstance(body.get("spec"), dict) else (_prev[0] if _prev and _prev[0] else "")   # a re-post without the spec (closing, evidence) keeps the stored one
                 db.execute("""
                     INSERT OR REPLACE INTO success_plan_progress
-                        (plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at, baseline_serials, closed_at, final_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (plan_id, nagp_id, template_key, metric_label, baseline_value, target_direction, created_at, baseline_serials, closed_at, final_json, spec_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (plan_id, body.get("nagpId", ""), body.get("templateKey", ""),
                       body.get("metricLabel", ""), body.get("baselineValue"),
                       body.get("targetDirection", "down"), body.get("createdAt") or now,
                       json.dumps([str(x) for x in serials]) if isinstance(serials, list) else "",
-                      body.get("closedAt") or "", json.dumps(body["final"]) if isinstance(body.get("final"), dict) else ""))
+                      body.get("closedAt") or "", json.dumps(body["final"]) if isinstance(body.get("final"), dict) else "",
+                      _spec))
                 db.commit()
             finally:
                 db.close()

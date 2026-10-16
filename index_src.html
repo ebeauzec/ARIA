@@ -42,11 +42,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=5.6.338-1">
+  <link rel="stylesheet" href="styles.css?v=5.6.339-1">
   
   <!-- Load Chart.js locally -->
-  <script src="chart.js?v=5.6.338-1"></script>
-  <script src="pptxgen.bundle.js?v=5.6.338-1"></script>
+  <script src="chart.js?v=5.6.339-1"></script>
+  <script src="pptxgen.bundle.js?v=5.6.339-1"></script>
 <script>
   /* theme: 'dark' (default), 'light' or 'system'; applied before the page paints */
   (function () { var m = 'dark'; try { m = localStorage.getItem('aria_theme') || 'dark'; } catch (e) {}
@@ -930,6 +930,8 @@
             <textarea id="successPlanNotes" class="form-input" style="min-height:70px;"></textarea>
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px;">
+            <button class="action-btn secondary" id="successPlanSyncBtn" style="display:none;" onclick="syncPlanToActiveIQ(this.dataset.id)" title="Writes ARIA's measurement to Active IQ: the plan's health, the status of each milestone and a dated progress note.">Update Active IQ from ARIA's measurement</button>
+            <button class="action-btn secondary" id="successPlanCompleteBtn" style="display:none;" onclick="completePlanStructure(this.dataset.id)" title="Creates the milestones and actions Active IQ did not accept when the plan was created.">Complete missing items</button>
             <button class="action-btn secondary" id="successPlanDeleteBtn" style="display:none; border-color:rgba(239,68,68,0.4); color:var(--hx-ef4444);" onclick="closeSuccessPlanFromModal()">Close Plan</button>
             <div style="display:flex; gap:10px; margin-left:auto;">
               <button class="action-btn secondary" onclick="closeSuccessPlanModal()">Cancel</button>
@@ -1641,9 +1643,9 @@
   <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleJSONImport(event)">
 
   <!-- Javascript File -->
-  <script src="aria-api.js?v=5.6.338-1"></script>
-  <script src="data/reference_library.js?v=5.6.338-1"></script>
-  <script src="app.js?v=5.6.338-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
+  <script src="aria-api.js?v=5.6.339-1"></script>
+  <script src="data/reference_library.js?v=5.6.339-1"></script>
+  <script src="app.js?v=5.6.339-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
   <script>
     // Verify app.js parsed OK — if APP_VERSION is undefined, the file had a parse error
     if (typeof APP_VERSION === 'undefined') {

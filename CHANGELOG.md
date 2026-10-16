@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.339 (2026-10-16)
+
+### Added
+- Success Plans are now drafted the way a well-shaped customer success plan reads, and written to Active IQ in full. Each plan has a one-line summary, challenges and goals (what was found, why it matters, the scope with every cluster and its nodes), the Essential or Elite tier, a lifecycle stage, up to three objectives named for the outcome, and a success measure with a baseline, interim targets and a final target with dates. ARIA sets the opening health from the findings (RED, YELLOW or GREEN).
+- The plan structure is created in Active IQ, not only the text: five milestones (confirm scope and baseline, first measurable result, halfway target, target reached, verified and handed over), each with its actions, owner, due date and status, written with the milestone and action mutations in that order. Key stakeholders and the internal team are listed, and the plan notes carry the full scope, the measure, the review cadence and a [template] marker so a plan is never created twice. If Active IQ rejects the objectives the plan is retried with Other plus a description; if it rejects the long text a shorter text is sent and the complete list goes into the notes; anything it still refuses is reported and kept for later.
+- The preview before adopting shows the complete plan as it will be written. After adoption ARIA keeps the plan's structure, and the plan window gains 'Update Active IQ from ARIA's measurement' (re-measures from the live data, sets each milestone and action status by its own rule, sets the plan's health from progress against time, and adds a dated progress note) and 'Complete missing items' (creates what Active IQ did not accept the first time). Both ask before writing to the customer's account.
+- Checked against Active IQ's own input definitions for all 17 templates (323 create and 3 update payloads, no problems); the writes have not yet been exercised against a live account.
+
 ## 5.6.338 (2026-10-16)
 
 ### Added

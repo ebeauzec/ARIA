@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.338";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.339";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.339",
+    date: "2026-10-16",
+    title: "Success Plans drafted and written to Active IQ in full",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Success Plans are now drafted the way a well-shaped customer success plan reads, and written to Active IQ in full. Each plan has a one-line summary, challenges and goals (what was found, why it matters, the scope with every cluster and its nodes), the Essential or Elite tier, a lifecycle stage, up to three objectives named for the outcome, and a success measure with a baseline, interim targets and a final target with dates. ARIA sets the opening health from the findings (RED, YELLOW or GREEN).",
+          "The plan structure is created in Active IQ, not only the text: five milestones (confirm scope and baseline, first measurable result, halfway target, target reached, verified and handed over), each with its actions, owner, due date and status, written with the milestone and action mutations in that order. Key stakeholders and the internal team are listed, and the plan notes carry the full scope, the measure, the review cadence and a [template] marker so a plan is never created twice. If Active IQ rejects the objectives the plan is retried with Other plus a description; if it rejects the long text a shorter text is sent and the complete list goes into the notes; anything it still refuses is reported and kept for later.",
+          "The preview before adopting shows the complete plan as it will be written. After adoption ARIA keeps the plan's structure, and the plan window gains 'Update Active IQ from ARIA's measurement' (re-measures from the live data, sets each milestone and action status by its own rule, sets the plan's health from progress against time, and adds a dated progress note) and 'Complete missing items' (creates what Active IQ did not accept the first time). Both ask before writing to the customer's account.",
+          "Checked against Active IQ's own input definitions for all 17 templates (323 create and 3 update payloads, no problems); the writes have not yet been exercised against a live account.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.338",
     date: "16 Oct 2026",
@@ -42043,43 +42061,6 @@ const SUCCESS_PLAN_STATUS_COLORS = { 'ACTIVE': '#22c55e', 'INACTIVE': '#94a3b8',
 const SUCCESS_PLAN_HEALTH_LABELS = { 'GREEN': 'On Track', 'YELLOW': 'At Risk', 'RED': 'Critical' };
 const SUCCESS_PLAN_HEALTH_COLORS = { 'GREEN': '#22c55e', 'YELLOW': '#f59e0b', 'RED': '#ef4444' };
 
-// ── Suggested Success Plan templates ────────────────────────────────────────
-// Each template's `evaluate()` looks ONLY at real, already-harvested fields
-// (s.risks, s.isARPEnabled, s.hwEndOfSupport, s.contracts.daysRemaining,
-// s.ageInYears, computeAccountHealthScore) -- there is no invented/estimated
-// trigger data. `stage` and `metrics` are real SuccessPlanLifecycleStage /
-// SuccessMetric enum values confirmed via live GraphQL introspection
-// (2026-09-17), so an adopted suggestion is indistinguishable from a plan a
-// TAM created by hand, just pre-populated from the account's real state.
-// Formats a list of {name, serial, detail} into a plain-text block for
-// tamNotes/customerChallengesAndGoals -- every value in `detail` must come
-// from a real harvested field on that specific system, never a generic
-// restatement, so an adopted plan is traceable back to the actual finding.
-// Complete list by default: a plan written to Active IQ must be self-contained, never 'see the tool for the rest'.
-function _fmtAffectedSystemsBlock(items, cap = Infinity) {
-  if (!items || items.length === 0) return '';
-  // One entry per system (a system with several findings is listed once, findings beneath it),
-  // and every finding text collapsed to a single line so embedded line breaks cannot spill out
-  // of the list.
-  const one = t => String(t == null ? '' : t).replace(/\s*[\r\n]+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
-  const groups = [], byKey = new Map();
-  items.forEach(it => {
-    const key = (it.serial || '') + '|' + (it.name || '');
-    let g = byKey.get(key);
-    if (!g) { g = { name: it.name, serial: it.serial, details: [] }; byKey.set(key, g); groups.push(g); }
-    const d = one(it.detail);
-    if (d && !g.details.includes(d)) g.details.push(d);
-  });
-  const shown = groups.slice(0, cap);
-  const lines = shown.map(g => {
-    const label = `${g.name || g.serial || 'Unknown system'}${g.serial ? ` (S/N ${g.serial})` : ''}`;
-    if (g.details.length <= 1) return `  - ${label}${g.details.length ? ': ' + g.details[0] : ''}`;
-    return `  - ${label} -- ${g.details.length} findings:\n` + g.details.map(d => `      * ${d}`).join('\n');
-  });
-  const more = groups.length > cap ? `\n  ...and ${groups.length - cap} more` : '';
-  return lines.join('\n') + more;
-}
-
 // Deduplicated, capped list of real remediation/recommendation strings
 // pulled from actual risk findings -- used as objectives/steps instead of
 // generic advice, so the plan carries THIS account's actual fix text.
@@ -42631,6 +42612,221 @@ const SUCCESS_PLAN_TEMPLATES = [
   },
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+// Success plan composer. A well-shaped customer success plan has a summary, objectives, measurable success metrics with a baseline, a target and
+// a date, milestones with dated actions and owners, named stakeholders and a team, and notes that say how progress will be measured. The shape
+// below is the one Active IQ stores (createSuccessPlan, createSuccessPlanMilestone, createSuccessPlanAction; checked against the live schema):
+//   plan      name, title, template (ESSENTIAL | ELITE), status, lifecycleStage, health (GREEN | YELLOW | RED), customerChallengesAndGoals,
+//             objectives (names), objectiveOther, successMetrics (enum list), keyStakeholders {name,email,role}, internalTeamMembers, notes
+//   milestone name, status, blockerNotes, lifecycleStage             (under the plan)
+//   action    name, actionOwner, actionStatus, dueDate, objective     (under a milestone; `objective` is one of the plan's objective names)
+// Nothing here is invented: baselines are the live Active IQ measurements the suggestion was built from, a target is a plain rule stated in the
+// plan, and ARIA re-measures the same metric on every harvest (computePlanOutcome) so the plan can report real progress (syncPlanToActiveIQ).
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+const SP_SPEC = {
+  critical_risk: { objective: 'Reduce operational risk', red: true, value: 'Open critical and high findings are the conditions Active IQ associates with outages and data loss. Clearing them lowers the chance of an unplanned event and of an escalated support case.', target: b => b <= 10 ? 0 : Math.ceil(b * 0.25), measure: 'Count of open critical and high risk findings (published CVE advisories excluded) in Active IQ' },
+  best_practice_config: { objective: 'Improve operational efficiency', value: 'Configuration and best-practice findings are individually small, but together they decide how resilient, efficient and supportable the environment is. Fixing the cause of recurring ones removes whole groups of findings at once.', target: b => Math.ceil(b * 0.5), measure: 'Count of open configuration and best-practice findings in Active IQ (CVEs and critical/high findings are in other plans)' },
+  security_hardening: { objective: 'Strengthen security and ransomware resilience', value: 'Anti-Ransomware Protection and a current security baseline are what limit the damage of a ransomware event; systems without them depend entirely on backups and on detecting the event by other means.', target: b => 0, measure: 'Count of ONTAP systems on which Anti-Ransomware Protection is not enabled, from Active IQ', horizon: 60 },
+  tech_refresh: { objective: 'Modernize the infrastructure', value: 'Hardware past end of support loses parts and fixes; planning the replacement 12 months ahead avoids a forced, rushed migration.', target: b => b, measure: 'Systems within 12 months of hardware end of support (Active IQ lifecycle data); the plan is on track when a refresh plan is approved for each, so the count is tracked, not expected to fall to zero in this period', horizon: 180, manual: true },
+  contract_renewal: { objective: 'Maintain support coverage', value: 'A lapsed contract removes break-fix, software updates and AutoSupport-based proactive support; renewals started early avoid a gap.', target: b => 0, measure: 'Count of systems whose support contract ends within 90 days (Active IQ contract data)', horizon: 60 },
+  operational_health: { objective: 'Improve operational efficiency', value: 'The account health score summarizes AutoSupport, ransomware protection, firmware, contracts, risks and capacity; raising it means fewer surprises.', target: b => Math.min(100, Math.max(80, b + 10)), measure: 'ARIA account health score, recomputed from Active IQ data at every harvest' },
+  onboarding: { objective: 'Onboard and implement successfully', value: 'New systems are easiest to get right in their first months: registered, on AutoSupport, with the recommended release, protection and monitoring.', target: b => b, measure: 'Systems shipped in the last six months, each taken through the onboarding checklist; completion is confirmed by the milestones, not by the count (which only falls as systems age)', manual: true },
+  storage_efficiency: { objective: 'Reduce cost per TB', value: 'Deduplication and compression left off on some aggregates means paying for capacity the same data would not need.', target: b => 0, measure: 'Count of systems with efficiency features disabled on some aggregates (Active IQ efficiency data)' },
+  dr_readiness: { objective: 'Improve data protection and recovery', value: 'A system with no SnapMirror, MetroCluster or SyncMirror protection has no second copy of its data if the site or the system is lost.', target: b => b <= 5 ? 0 : Math.ceil(b * 0.5), measure: 'Count of ONTAP systems with no replication configured (Active IQ), re-read at every harvest', horizon: 120 },
+  os_currency: { objective: 'Keep software current and supported', value: 'Releases below Active IQ\'s minimum recommendation miss fixes for known issues and move closer to the end of support.', target: b => b <= 5 ? 0 : Math.ceil(b * 0.25), measure: 'Count of systems below Active IQ\'s minimum recommended OS release for their line' },
+  support_escalation: { objective: 'Resolve issues faster', red: true, value: 'Severity 1 and 2 cases that stay open mean a business-impacting problem is not yet fixed; a review shows what is blocking each one.', target: b => 0, measure: 'Count of open Severity 1 and 2 support cases (Active IQ case data)', horizon: 30 },
+  capacity_planning: { objective: 'Keep capacity within limits', red: true, value: 'A system with 60 days or less of runway will reach its capacity threshold soon; expanding, tiering or moving data before then avoids an outage or an emergency purchase.', target: b => 0, measure: 'Count of systems with 60 days or less of capacity runway (Active IQ capacity history)', horizon: 90 },
+  expired_contract: { objective: 'Maintain support coverage', red: true, value: 'Systems without an active support contract have no break-fix, no software updates and no AutoSupport-based case handling.', target: b => 0, measure: 'Count of systems with no active support contract (Active IQ contract data)', horizon: 60 },
+  asup_silence: { objective: 'Restore telemetry and proactive support', red: true, value: 'A system that does not send AutoSupport is invisible to Active IQ: no risk findings, no proactive cases, no health score.', target: b => 0, measure: 'Count of systems with no AutoSupport received in the last 7 days (Active IQ)', horizon: 30 },
+  metrocluster_health: { objective: 'Improve data protection and recovery', red: true, value: 'A MetroCluster whose Mediator or automatic unplanned switchover is not healthy cannot be relied on to fail over without an operator.', target: b => 0, measure: 'Count of MetroCluster Mediator and AUSO findings open in Active IQ', horizon: 30 },
+  hw_firmware_currency: { objective: 'Keep software current and supported', value: 'SP/BMC and BIOS firmware carry fixes for known hardware issues and security advisories that an ONTAP upgrade does not replace.', target: b => 0, measure: 'Count of systems behind NetApp\'s recommended SP/BMC or BIOS firmware (Active IQ and firmware baselines)' },
+  coterm_opportunity: { objective: 'Simplify contract management', value: 'Contracts that end at different dates cost more to manage; aligning them to one date simplifies renewal and the budget conversation.', target: b => b, measure: 'Systems in the co-termination window; success is one agreed co-term date and one quote, confirmed by the milestones', manual: true, horizon: 90 },
+  license_utilization: { objective: 'Increase value from licensed features', value: 'Licensed features that are not enabled are entitlement the customer pays for and does not use.', target: b => Math.ceil(b * 0.5), measure: 'Count of systems licensed for Anti-Ransomware Protection or SnapMirror without it active (Active IQ)' },
+  sla_recovery: { objective: 'Resolve issues faster', value: 'The Remediation Tracker shows how well agreed fixes are being delivered; falling below 80% means findings are ageing without an owner.', target: b => 80, measure: 'Share of open Remediation Tracker items still within their due date or SLA policy, from this tool\'s tracker', horizon: 60 }
+};
+const SP_DEFAULT_SPEC = { objective: 'Reduce operational risk', horizon: 90, value: '', measure: 'Recomputed from Active IQ data by ARIA at every harvest', manual: false, red: false };
+const SP_MILESTONE_WORDS = { down: ['Reduce', 'to'], up: ['Raise', 'to'] };
+const _spSpec = key => Object.assign({}, SP_DEFAULT_SPEC, SP_SPEC[key] || {});
+const _spDay = days => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+const _spIso = days => _spDay(days) + 'T12:00:00Z';
+const _spClip = (t, n) => { t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t; };
+function _spTargetValue(s, spec) {
+  const b = Number(s.metricValue);
+  if (typeof spec.target === 'function') return spec.target(b);
+  return s.targetDirection === 'up' ? Math.min(100, Math.max(80, b)) : (b <= 10 ? 0 : Math.ceil(b * 0.25));
+}
+// the affected systems, one entry per cluster, grid or array with its nodes and the findings on it
+function _spUnits(affected) {
+  const bySerial = new Map((state.systems || []).map(x => [x.serialNumber, x])), units = new Map();
+  (affected || []).forEach(a => {
+    const x = bySerial.get(a.serial), u = x ? _unitOf(x) : { key: 'n|' + (a.name || a.serial), name: a.name || a.serial, kind: 'node' };
+    let e = units.get(u.key); if (!e) { e = { key: u.key, name: u.name, kind: u.kind, nodes: new Set(), details: [] }; units.set(u.key, e); }
+    e.nodes.add(a.name || a.serial); if (a.detail && !e.details.includes(a.detail)) e.details.push(a.detail);
+  });
+  return [...units.values()].map(e => ({ ...e, nodes: [...e.nodes] }));
+}
+function _spUnitLines(units, cap, brief) {
+  const dd = brief ? 2 : 3, dl = brief ? 120 : 400;
+  return units.slice(0, cap || units.length).map(u => `- ${u.name}${u.nodes.length > 1 || (u.nodes[0] && u.nodes[0] !== u.name) ? ` (${u.nodes.length} node${u.nodes.length !== 1 ? 's' : ''}: ${u.nodes.slice(0, 6).join(', ')}${u.nodes.length > 6 ? ', ...' : ''})` : ''}${u.details.length ? ': ' + u.details.slice(0, dd).map(d => _spClip(d, dl)).join('; ') + (u.details.length > dd ? `; +${u.details.length - dd} more` : '') : ''}`).join('\n');
+}
+function _spPeople(s) {
+  const sys = (state.systems || []).filter(x => x.nagpId === s.nagpId), seen = new Set(), stake = [], team = new Map();
+  sys.forEach(x => {
+    const c = x.contacts || {}, em = String(c.email || '').trim();
+    if (em.includes('@') && c.name && c.name !== 'N/A' && !seen.has(em.toLowerCase())) { seen.add(em.toLowerCase()); stake.push({ name: c.name, email: em, role: 'Site contact in Active IQ' }); }
+    [['csmName', 'Customer Success Manager'], ['samName', 'Support Account Manager'], ['salesRepName', 'Sales representative'], ['solutionEngineerName', 'Solutions Engineer']].forEach(([f, role]) => { const n = String(x[f] || '').trim(); if (n && !team.has(n)) team.set(n, role); });
+  });
+  return { stakeholders: stake.slice(0, 8), internalTeamMembers: [...team.entries()].slice(0, 8).map(([n, r]) => `${n} (${r})`).join('; ') };
+}
+// → the complete plan: everything Active IQ stores, plus the rules ARIA uses to measure it
+function _spComposePlan(s, over) {
+  over = over || {};
+  const spec = _spSpec(s.templateKey), dir = s.targetDirection, base = Number(s.metricValue), tgt = _spTargetValue(s, spec), horizon = over.horizon || spec.horizon, today = _spDay(0), end = _spDay(horizon);
+  const mid = dir === 'down' ? Math.ceil(tgt + (base - tgt) * 0.5) : Math.floor(base + (tgt - base) * 0.5);
+  const tgtText = dir === 'down' ? (tgt === 0 ? 'none (0)' : `${tgt} or fewer`) : `${tgt} or higher`;
+  const units = _spUnits(s.affectedSystems), nodesN = units.reduce((n, u) => n + u.nodes.length, 0);
+  const people = _spPeople(s), objective = spec.objective, objectives = [objective, 'Sustain the result with a regular review'];
+  const stepTexts = (s.remediationSteps && s.remediationSteps.length ? s.remediationSteps : s.objectives || []).map(t => _spClip(t, 190));
+  const split = Math.min(Math.max(2, Math.ceil(stepTexts.length / 2)), 4), early = stepTexts.slice(0, split), late = stepTexts.slice(split, split + 4);
+  const owner = { cust: 'Customer storage administrator', tam: 'NetApp TAM', sup: 'NetApp Support' };
+  const stage = s.stage, manual = !!spec.manual, verb = SP_MILESTONE_WORDS[dir] || SP_MILESTONE_WORDS.down;
+  const A = (name, ownerKey, days, status) => ({ name: _spClip(name, 190), owner: owner[ownerKey] || ownerKey, due: _spIso(days), dueDay: _spDay(days), status: status || 'NOT_STARTED' });
+  const unitNoun = _uN(units.map(u => u.kind), units.length);
+  const milestones = [
+    { key: 'scope', name: 'Confirm scope, owners and baseline', stage, status: 'IN_PROGRESS', due: 7, criterion: { type: 'baseline' }, actions: [
+      A(`Record the baseline: ${s.metricLabel} = ${base} (${today})`, 'tam', 0, 'COMPLETE'),
+      A(`Review the ${unitNoun} in scope with the customer and agree what is in and out`, 'tam', 7),
+      A('Name an owner for each workstream and agree the change windows', 'cust', 7)] },
+    { key: 'half', name: `${verb[0]} ${s.metricLabel} ${verb[1]} ${mid}${dir === 'up' ? '' : ' or fewer'}`, stage, status: 'NOT_STARTED', due: Math.round(horizon * 0.5), criterion: manual ? { type: 'manual' } : { type: 'metric', dir, value: mid },
+      actions: (early.length ? early : ['Work through the affected systems, most severe first']).map((t, i) => A(t, 'cust', Math.round(horizon * 0.5 * (i + 1) / Math.max(1, early.length || 1)))) },
+    { key: 'target', name: `Reach the target: ${s.metricLabel} ${tgtText}`, stage, status: 'NOT_STARTED', due: horizon, criterion: manual ? { type: 'manual' } : { type: 'metric', dir, value: tgt },
+      actions: (late.length ? late : []).map((t, i) => A(t, 'cust', Math.round(horizon * (0.5 + 0.5 * (i + 1) / Math.max(1, late.length))))).concat([
+        A('Group the remaining items by cluster, grid or array and close them in one change window each', 'cust', Math.round(horizon * 0.85)),
+        A('Open a support case for any item that cannot be fixed with the documented steps', 'tam', Math.round(horizon * 0.85))]) },
+    { key: 'verify', name: 'Verify in Active IQ and report the outcome', stage, status: 'NOT_STARTED', due: horizon + 7, criterion: manual ? { type: 'manual' } : { type: 'verify', dir, value: tgt },
+      actions: [A(`Confirm at the next Active IQ harvest that ${s.metricLabel} meets the target (${tgtText})`, 'tam', horizon + 3),
+        A('Share the result with the customer: what was fixed, what remains and why', 'tam', horizon + 7),
+        A('Close the plan, or agree the next one for what remains', 'tam', horizon + 7)] },
+    { key: 'sustain', name: 'Sustain: regular review', stage, status: 'NOT_STARTED', due: horizon + 30, criterion: { type: 'manual' },
+      actions: [A('Add this measure to the regular service review', 'tam', horizon + 14), A('Re-run ARIA monthly to catch any regression early', 'tam', horizon + 30)] }
+  ];
+  milestones.forEach(m => m.actions.sort((x, y) => x.dueDay.localeCompare(y.dueDay)));
+  const noun = s.targetDirection === 'down' ? 'reduce' : 'raise';
+  const summary = `${s.title} for ${s.nagpName}: ${noun} "${s.metricLabel}" from ${base} to ${tgtText} by ${end}, across ${unitNoun}${nodesN !== units.length ? ` (${nodesN} nodes)` : ''}.`;
+  const measures = [{ label: s.metricLabel, baseline: base, baselineDate: today, target: tgt, targetText: tgtText, interim: mid, due: end, direction: dir, measuredBy: spec.measure, how: manual ? 'Confirmed by the milestones; the count is tracked alongside' : 'ARIA recomputes this from the live Active IQ harvest and compares it with the baseline' }];
+  const goals = (s.objectives || []).map(t => _spClip(t, 220));
+  const text = [
+    'SUMMARY', summary, '',
+    'WHAT ACTIVE IQ SHOWS TODAY', s.challenges, '',
+    'WHY IT MATTERS', spec.value || 'See the summary.', '',
+    'GOALS', ...goals.map((g, i) => `${i + 1}. ${g}`), '',
+    'SUCCESS MEASURES (baseline, target, date, how it is measured)',
+    ...measures.map(m => `- ${m.label}: baseline ${m.baseline} on ${m.baselineDate}; interim ${m.interim} by ${_spDay(Math.round(horizon * 0.5))}; target ${m.targetText} by ${m.due}. Measured by: ${m.measuredBy}. ${m.how}.`), '',
+    'SCOPE', `${unitNoun}${nodesN !== units.length ? `, ${nodesN} nodes` : ''}, at ${today}.`, '@@SCOPE@@', '',
+    'OUT OF SCOPE AND ASSUMPTIONS',
+    '- Findings that need a hardware replacement, a purchase or a change to the customer\'s own applications are tracked here, but their delivery depends on the customer\'s decisions.',
+    '- Active IQ data is as of the last AutoSupport; a fix shows in the measure after the next harvest.', '',
+    'GOVERNANCE', `- Plan owner: the NetApp TAM. Review every two weeks until ${end}, then monthly.`, '- Progress is reported from Active IQ measurements, not from status updates.'
+  ].join('\n').replace(/\n{3,}/g, '\n\n');
+  // a plan text too long to read gives way to the notes, which carry the complete list
+  let cap = 40;
+  const scopeBlock = c => _spUnitLines(units, c, true) + (units.length > c ? `\n- and ${units.length - c} more (the complete list is in the plan notes)` : '');
+  let text2 = text.replace('@@SCOPE@@', scopeBlock(cap));
+  while (text2.length > 9000 && cap > 5) { cap = Math.floor(cap / 2); text2 = text.replace('@@SCOPE@@', scopeBlock(cap)); }
+  const tamNote = `Plan basis: drafted from live Active IQ data on ${today} (${s.metricLabel}: ${base}). [template:${s.templateKey}]`;
+  const notes = [tamNote,
+    `How progress is measured: ARIA recomputes "${s.metricLabel}" from each Active IQ harvest and compares it with the baseline of ${base}. Milestones 2 and 3 complete when the measure reaches ${mid} and ${tgt}; milestone 4 when the target still holds at the next harvest. ${manual ? 'This plan\'s measure is tracked, but its milestones are confirmed by hand.' : ''}`.trim(),
+    `Review cadence: every two weeks until ${end}, then monthly. Health: GREEN when the target is met or the plan is ahead of the straight line from baseline to target; YELLOW when it is improving but behind; RED when it is past a milestone date with no improvement.`,
+    'Assumptions and dependencies: change windows are agreed with the customer; findings that need a purchase or a hardware change follow the customer\'s own approval process.'];
+  const listText = units.length ? `Complete list of ${unitNoun} in scope at ${today}:\n${_spUnitLines(units)}` : '';
+  return { templateKey: s.templateKey, name: s.title, title: _spClip(`${s.title}: ${s.metricLabel} ${base} to ${tgtText} by ${end}`, 180), tier: over.tier || s._tier || 'ESSENTIAL', health: spec.red && base > 0 ? 'RED' : 'YELLOW', stage, status: 'ACTIVE',
+    objectives, objective, summary, challengesText: text2, metrics: s.metrics, measures, milestones, notes, listText, stakeholders: people.stakeholders, internalTeamMembers: people.internalTeamMembers,
+    horizon, startDay: today, endDay: end, unitsN: units.length, nodesN, target: tgt, interim: mid, direction: dir };
+}
+const _spAiqNotes = (model, extra) => model.notes.concat(extra || []).filter(Boolean).map(message => ({ message, date: new Date().toISOString() }));
+// the notes that carry the complete scope list when it is too long for the plan text
+function _spListNotes(model) {
+  if (!model.listText) return [];
+  const lines = model.listText.split('\n'), parts = []; let cur = [], len = 0;
+  lines.forEach(l => { if (len + l.length > 12000 && cur.length) { parts.push(cur.join('\n')); cur = []; len = 0; } cur.push(l); len += l.length + 1; });
+  if (cur.length) parts.push(cur.join('\n'));
+  return parts.map((p, i) => parts.length > 1 ? `Scope list (part ${i + 1} of ${parts.length}):\n${p}` : p);
+}
+function _spPlanInput(s, model, opts) {
+  opts = opts || {};
+  const input = { nagpId: s.nagpId, name: model.name, source: 'MANUAL', title: model.title, templateUsed: model.tier, planStatus: 'ACTIVE', lifecycleStage: model.stage, health: model.health,
+    customerChallengesAndGoals: opts.shortText ? model.challengesText.split('\n\nSCOPE')[0] + '\n\nSCOPE\nThe complete list is in the plan notes.' : model.challengesText,
+    objectives: opts.otherObjective ? ['Other'] : model.objectives, successMetrics: model.metrics, notes: _spAiqNotes(model, _spListNotes(model)), scope: { id: s.nagpId, name: s.nagpName } };
+  if (opts.otherObjective) input.objectiveOther = model.objectives.join('; ');
+  if (model.stakeholders.length) input.keyStakeholders = model.stakeholders;
+  if (model.internalTeamMembers) input.internalTeamMembers = model.internalTeamMembers;
+  return input;
+}
+function _spObjectiveForAction(model, opts) { return opts && opts.otherObjective ? 'Other' : model.objective; }
+const _spEsc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function _spPreviewHtml(s, model, idx) {
+  const hd = t => `<div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.4px;color:var(--text-muted);font-weight:700;margin:10px 0 4px;">${t}</div>`, box = 'font-size:0.76rem;color:var(--text-secondary);white-space:pre-wrap;background:var(--bk-200);border-radius:6px;padding:10px;';
+  const st = { COMPLETE: 'var(--status-normal)', IN_PROGRESS: 'var(--accent-cyan)', NOT_STARTED: 'var(--text-muted)' };
+  return `<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:0.76rem;margin-bottom:6px;"><span><b>Plan</b> ${_spEsc(model.name)}</span><span><b>Stage</b> ${_spEsc(SUCCESS_PLAN_STAGE_LABELS[model.stage] || model.stage)}</span><span><b>Health</b> ${model.health}</span><span><b>Status</b> ${model.status}</span>`
+    + `<span><b>Template</b> <select onchange="state._suggestedPlans[${idx}]._tier=this.value;" style="font-size:0.72rem;background:var(--bk-200);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;"><option value="ESSENTIAL"${model.tier === 'ESSENTIAL' ? ' selected' : ''}>Essential</option><option value="ELITE"${model.tier === 'ELITE' ? ' selected' : ''}>Elite</option></select></span></div>`
+    + `<div style="font-size:0.76rem;color:var(--text-secondary);"><b>Title</b> ${_spEsc(model.title)}</div>`
+    + hd('Summary and plan text (Customer Challenges &amp; Goals)') + `<div style="${box}max-height:280px;overflow:auto;">${_spEsc(model.challengesText)}</div>`
+    + hd('Objectives') + `<ul style="margin:0;padding-left:18px;font-size:0.78rem;color:var(--text-secondary);">${model.objectives.map(o => `<li>${_spEsc(o)}</li>`).join('')}</ul>`
+    + hd('Success metrics (Active IQ) and how ARIA measures them') + `<div style="font-size:0.76rem;color:var(--text-secondary);margin-bottom:4px;">${model.metrics.map(m => _spEsc(m.replace(/_/g, ' ').toLowerCase())).join(' &middot; ')}</div>`
+    + `<table style="width:100%;border-collapse:collapse;font-size:0.74rem;"><tr style="color:var(--text-muted);text-align:left;"><th style="padding:3px 6px;">Measure</th><th>Baseline</th><th>Interim</th><th>Target</th><th>By</th></tr>${model.measures.map(m => `<tr style="border-top:1px solid var(--wa-50);"><td style="padding:3px 6px;">${_spEsc(m.label)}</td><td>${m.baseline}</td><td>${model.interim}</td><td>${_spEsc(m.targetText)}</td><td>${m.due}</td></tr>`).join('')}</table>`
+    + hd(`Milestones and actions (${model.milestones.length} milestones, ${model.milestones.reduce((n, m) => n + m.actions.length, 0)} actions)`)
+    + model.milestones.map((m, i) => `<div style="margin-bottom:6px;"><div style="font-size:0.78rem;font-weight:600;">${i + 1}. ${_spEsc(m.name)} <span style="font-weight:400;color:${st[m.status] || 'inherit'};">${m.status.replace('_', ' ').toLowerCase()}</span> <span style="font-weight:400;color:var(--text-muted);">due ${_spDay(m.due)}</span></div>`
+      + `<ul style="margin:2px 0 0;padding-left:20px;font-size:0.74rem;color:var(--text-secondary);">${m.actions.map(a => `<li>${_spEsc(a.name)} <span style="color:var(--text-muted);">— ${_spEsc(a.owner)}, due ${a.dueDay}${a.status === 'COMPLETE' ? ', complete' : ''}</span></li>`).join('')}</ul></div>`).join('')
+    + hd('Key stakeholders and team') + `<div style="font-size:0.76rem;color:var(--text-secondary);">${model.stakeholders.length ? model.stakeholders.map(x => `${_spEsc(x.name)} &lt;${_spEsc(x.email)}&gt; (${_spEsc(x.role)})`).join('; ') : '<span style="color:var(--text-muted);">No customer contact with an e-mail address in Active IQ: add stakeholders in Active IQ after the plan is created.</span>'}<br>NetApp team: ${_spEsc(model.internalTeamMembers || 'not named in Active IQ')}</div>`
+    + hd('Notes written to the plan') + `<div style="${box}max-height:200px;overflow:auto;">${_spEsc(_spAiqNotes(model, _spListNotes(model)).map(n => n.message).join('\n\n'))}</div>`
+    + `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:8px;font-style:italic;">This is what will be written to Active IQ if adopted: the plan, then its milestones, then each milestone's actions. If Active IQ refuses a field, the plan is created with what it accepts and the preview of what is missing is listed afterwards.</div>`;
+}
+// writes one composed plan: the plan, its milestones, their actions; returns {planId, milestones:[{key,id,actions:[{name,id}]}], failed:[...]}
+async function _spPushPlan(s, model, log) {
+  log = log || (() => {});
+  const failed = [];
+  let planId = null, opts = {}, res;
+  const create = async o => { const data = await _callAIQMutation(aiqQuery('CreateCSP'), { accountPlan: _spPlanInput(s, model, o) }); const r = data.createSuccessPlan; if (!r || !r.success) throw new Error((r && r.errors && r.errors.join('; ')) || 'Active IQ reported the create did not succeed.'); return r; };
+  try { res = await create(opts); }
+  catch (e1) {
+    // Active IQ refused something: the long plan text first, then an objective name it does not know (objectives are chosen from a list; 'Other' plus the objectiveOther text is the documented way to state a free one)
+    const msg = String(e1 && e1.message || '');
+    const tries = /objective/i.test(msg) ? [{ otherObjective: true }, { otherObjective: true, shortText: true }] : [{ shortText: true }, { shortText: true, otherObjective: true }];
+    let lastErr = e1; res = null;
+    for (const o of tries) { try { res = await create(o); opts = o; log(`Active IQ accepted the plan after a change (${Object.keys(o).join(', ')}).`); break; } catch (e2) { lastErr = e2; } }
+    if (!res) throw lastErr;
+  }
+  planId = res.id;
+  const out = { planId, opts, milestones: [], failed };
+  for (const m of model.milestones) {
+    let mid = null;
+    try {
+      const data = await _callAIQMutation(aiqQuery('CreateCSPMilestone'), { milestones: { nagpId: s.nagpId, accountPlanId: planId, name: _spClip(m.name, 190), status: m.status, lifecycleStage: m.stage } });
+      const r = data.createSuccessPlanMilestone; if (!r || !r.success) throw new Error((r && r.errors && r.errors.join('; ')) || 'milestone not created');
+      mid = r.id;
+    } catch (e) { failed.push({ what: `milestone "${m.name}"`, error: String(e.message || e).slice(0, 200) }); }
+    const rec = { key: m.key, id: mid, actions: [] };
+    if (mid) {
+      for (const a of m.actions) {
+        try {
+          const data = await _callAIQMutation(aiqQuery('CreateCSPAction'), { actions: { nagpId: s.nagpId, accountPlanId: planId, accountPlanObjectiveId: mid, name: a.name, actionOwner: a.owner, actionStatus: a.status, dueDate: a.due, objective: _spObjectiveForAction(model, opts) } });
+          const r = data.createSuccessPlanAction; if (!r || !r.success) throw new Error((r && r.errors && r.errors.join('; ')) || 'action not created');
+          rec.actions.push({ name: a.name, id: r.id });
+        } catch (e) { failed.push({ what: `action "${_spClip(a.name, 60)}"`, error: String(e.message || e).slice(0, 200) }); }
+      }
+    }
+    out.milestones.push(rec);
+  }
+  return out;
+}
+// the structure ARIA keeps locally so it can report progress later: milestone ids, due dates and the rule that completes each
+function _spSpecRecord(model, pushed) {
+  const objName = _spObjectiveForAction(model, pushed.opts);
+  return { v: 1, horizon: model.horizon, start: model.startDay, end: model.endDay, tier: model.tier, objective: objName, target: model.target, interim: model.interim, direction: model.direction, measures: model.measures, stage: model.stage,
+    milestones: model.milestones.map((m, i) => { const pm = pushed.milestones[i] || {}; return { key: m.key, name: m.name, due: _spDay(m.due), status: m.status, criterion: m.criterion, id: pm.id || null,
+      actions: m.actions.map(a => ({ name: a.name, owner: a.owner, due: a.due, dueDay: a.dueDay, status: a.status, id: ((pm.actions || []).find(x => x.name === a.name) || {}).id || null })) }; }), failed: pushed.failed };
+}
+
 // Groups real harvested systems by nagpId (the same real customer-scoping
 // key already used by Active IQ's own Success Plans), evaluates every
 // template against each customer's real data, and skips any customer/
@@ -42677,32 +42873,6 @@ function computeSuggestedSuccessPlans() {
   return suggestions;
 }
 
-// Builds the exact real-content payload a suggestion will write to Active
-// IQ (challenges + affected-systems list, remediation objectives, TAM
-// notes) -- shared by the expandable preview and the actual adopt call, so
-// what a TAM reviews before adopting is guaranteed to match what gets
-// posted, not a separate approximation of it.
-function _buildSuccessPlanPayload(s, opts) {
-  opts = opts || {};
-  const affectedBlock = _fmtAffectedSystemsBlock(s.affectedSystems);
-  const challengesFull = affectedBlock
-    ? `${s.challenges}\n\nAffected systems:\n${affectedBlock}`
-    : s.challenges;
-  const objectives = (s.remediationSteps && s.remediationSteps.length > 0) ? s.remediationSteps : s.objectives;
-  const _nAff = (s.affectedSystems || []).length;
-  const tamNotes = `Auto-suggested from real fleet data at adoption time (${s.metricLabel}: ${s.metricValue}). [template:${s.templateKey}]`
-    + (_nAff ? `\n\nThe complete list of ${_nAff} affected system${_nAff !== 1 ? 's' : ''} at adoption time is in Customer Challenges & Goals.` : '');
-  if (opts.chunked && affectedBlock) {
-    // Fallback if Active IQ rejects a very large customerChallengesAndGoals: the SAME complete list, split across plan notes.
-    const lines = affectedBlock.split('\n'), parts = []; let cur = [], len = 0;
-    lines.forEach(l => { if (len + l.length > 15000 && cur.length) { parts.push(cur.join('\n')); cur = []; len = 0; } cur.push(l); len += l.length + 1; });
-    if (cur.length) parts.push(cur.join('\n'));
-    const notesList = [tamNotes].concat(parts.map((p, i) => `Affected systems (part ${i + 1} of ${parts.length}):\n${p}`));
-    return { challengesFull: `${s.challenges}\n\nAffected systems: ${(s.affectedSystems || []).length} -- the complete list is in this plan's notes (${parts.length} part${parts.length !== 1 ? 's' : ''}).`, objectives, tamNotes, notesList };
-  }
-  return { challengesFull, objectives, tamNotes, notesList: [tamNotes] };
-}
-
 function toggleSuggestedPlanPreview(idx) {
   const row = document.getElementById(`suggestedPlanPreview-${idx}`);
   const toggleBtn = document.getElementById(`suggestedPlanToggle-${idx}`);
@@ -42722,28 +42892,8 @@ function renderSuggestedPlans() {
   card.style.display = 'block';
   const esc = (t) => (t || '').replace(/</g, '&lt;');
   list.innerHTML = suggestions.map((s, i) => {
-    const payload = _buildSuccessPlanPayload(s);
-    const metricLabels = (s.metrics || []).map(m => m.replace(/_/g, ' ')).join(', ');
-    const preview = `
-      <div style="margin-bottom:10px;">
-        <div style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.4px; color:var(--text-muted); font-weight:700; margin-bottom:4px;">Customer Challenges &amp; Goals</div>
-        <div style="font-size:0.78rem; color:var(--text-secondary); white-space:pre-wrap; background:var(--bk-200); border-radius:6px; padding:10px; font-family:var(--font-mono, monospace);">${esc(payload.challengesFull)}</div>
-      </div>
-      <div style="margin-bottom:10px;">
-        <div style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.4px; color:var(--text-muted); font-weight:700; margin-bottom:4px;">Objectives</div>
-        <ul style="margin:0; padding-left:18px; font-size:0.78rem; color:var(--text-secondary);">
-          ${payload.objectives.map(o => `<li style="margin-bottom:3px;">${esc(o)}</li>`).join('')}
-        </ul>
-      </div>
-      <div style="margin-bottom:10px;">
-        <div style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.4px; color:var(--text-muted); font-weight:700; margin-bottom:4px;">Success Metrics</div>
-        <div style="font-size:0.78rem; color:var(--text-secondary);">${esc(metricLabels)}</div>
-      </div>
-      <div>
-        <div style="font-size:0.68rem; text-transform:uppercase; letter-spacing:0.4px; color:var(--text-muted); font-weight:700; margin-bottom:4px;">TAM Notes</div>
-        <div style="font-size:0.76rem; color:var(--text-muted); white-space:pre-wrap; background:var(--bk-200); border-radius:6px; padding:10px; font-family:var(--font-mono, monospace); max-height:220px; overflow-y:auto;">${esc(payload.tamNotes)}</div>
-      </div>
-      <div style="font-size:0.7rem; color:var(--text-muted); margin-top:8px; font-style:italic;">This is exactly what will be written to Active IQ if adopted -- nothing changes between this preview and the actual write-back.</div>`;
+    const model = _spComposePlan(s);
+    const preview = _spPreviewHtml(s, model, i);
     return `
     <div style="border:1px solid var(--border-color); border-radius:8px; margin-bottom:8px; overflow:hidden;">
       <div style="display:flex; align-items:flex-start; gap:10px; padding:10px;">
@@ -42780,66 +42930,116 @@ async function adoptSelectedSuggestedPlans() {
   const suggestions = state._suggestedPlans || [];
   const toAdopt = checkedIdx.map(i => suggestions[i]).filter(Boolean);
   if (!toAdopt.length) return;
-  if (!confirm(`⚠ This will WRITE BACK to the customer's live Active IQ account.\n\nCreate ${toAdopt.length} Success Plan(s) from the selected suggestion(s)?`)) return;
-
-  let ok = 0, fail = 0;
-  for (const s of toAdopt) {
+  const models = toAdopt.map(s => _spComposePlan(s)), nMs = models.reduce((n, m) => n + m.milestones.length, 0), nAc = models.reduce((n, m) => n + m.milestones.reduce((k, x) => k + x.actions.length, 0), 0);
+  if (!confirm(`⚠ This will WRITE BACK to the customer's live Active IQ account.\n\nCreate ${toAdopt.length} Success Plan(s) from the selected suggestion(s), each with its summary, objectives, success metrics, stakeholders, notes, milestones and actions (${nMs} milestones and ${nAc} actions in all)?`)) return;
+  const btn = document.getElementById('adoptSuggestedPlansBtn'), keep = btn ? btn.textContent : '';
+  let ok = 0, fail = 0; const problems = [];
+  for (let n = 0; n < toAdopt.length; n++) {
+    const s = toAdopt[n], model = models[n];
     try {
-      // Pre-fill every field with the REAL, specific findings that triggered
-      // this suggestion (system names/serials + the actual finding text and
-      // remediation from Active IQ), not just the summary count -- so the
-      // plan is trackable in Active IQ itself without needing this tool open.
-      // Same builder the expandable preview uses, so what a TAM reviewed
-      // before adopting is guaranteed to match what's actually posted.
-      let { challengesFull, objectives, tamNotes, notesList } = _buildSuccessPlanPayload(s);
-      const mutation = aiqQuery("CreateCSP");
-      const _vars = (ch, nl) => ({
-        accountPlan: {
-          nagpId: s.nagpId, name: s.title, source: 'MANUAL', title: s.title,
-          templateUsed: 'ESSENTIAL', planStatus: 'ACTIVE', lifecycleStage: s.stage,
-          health: 'YELLOW', customerChallengesAndGoals: ch,
-          objectives, successMetrics: s.metrics, notes: nl.filter(Boolean).map(message => ({ message })),
-          scope: { id: s.nagpId, name: s.nagpName },
-        },
-      });
-      let result;
-      try {
-        const data = await _callAIQMutation(mutation, _vars(challengesFull, notesList));
-        result = data.createSuccessPlan;
-        if (!result || !result.success) throw new Error((result && result.errors && result.errors.join('; ')) || 'Active IQ reported the create did not succeed.');
-      } catch (_fullErr) {
-        // The complete affected-system list must always reach Active IQ. If the single large field is rejected, resend the same
-        // complete list split across the plan's notes (one attempt); anything else is a real failure.
-        if ((s.affectedSystems || []).length < 1) throw _fullErr;
-        console.warn('[CSP] full-text create rejected, retrying with the list split across notes:', _fullErr && _fullErr.message);
-        const ch = _buildSuccessPlanPayload(s, { chunked: true });
-        const data2 = await _callAIQMutation(mutation, _vars(ch.challengesFull, ch.notesList));
-        result = data2.createSuccessPlan;
-        if (!result || !result.success) throw new Error((result && result.errors && result.errors.join('; ')) || (_fullErr && _fullErr.message) || 'Active IQ reported the create did not succeed.');
-        challengesFull = ch.challengesFull; tamNotes = ch.notesList.join('\n\n');
-      }
+      if (btn) { btn.disabled = true; btn.textContent = `Writing plan ${n + 1} of ${toAdopt.length}…`; }
+      const pushed = await _spPushPlan(s, model, m => console.log('[CSP]', m));
+      const notes = _spAiqNotes(model, _spListNotes(model));
       state.tamSuccessPlans = state.tamSuccessPlans || [];
       state.tamSuccessPlans.push({
-        id: result.id, name: s.title, title: s.title, status: 'ACTIVE', lifecycleStage: s.stage, health: 'YELLOW',
-        tamOwnerEmail: '', source: 'MANUAL', templateUsed: 'ESSENTIAL', tamNotes,
-        customerChallengesAndGoals: challengesFull, objectives,
-        nagpId: s.nagpId, nagpName: s.nagpName, scope: { id: s.nagpId, name: s.nagpName },
-        lastUpdated: new Date().toISOString(),
+        id: pushed.planId, name: model.name, title: model.title, status: 'ACTIVE', lifecycleStage: model.stage, health: model.health,
+        tamOwnerEmail: '', source: 'MANUAL', templateUsed: model.tier, tamNotes: notes.map(x => x.message).join('\n'), notes,
+        customerChallengesAndGoals: model.challengesText, objectives: model.objectives.map(name => ({ name, milestones: [] })), successMetrics: model.metrics,
+        keyStakeholders: model.stakeholders, internalTeamMembers: model.internalTeamMembers,
+        nagpId: s.nagpId, nagpName: s.nagpName, scope: { id: s.nagpId, name: s.nagpName }, lastUpdated: new Date().toISOString(),
       });
       try {
         await fetch('/api/plan-progress', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ planId: result.id, nagpId: s.nagpId, templateKey: s.templateKey, metricLabel: s.metricLabel, baselineValue: s.metricValue, targetDirection: s.targetDirection, affectedSerials: (s.affectedSystems || []).map(x => x.serial).filter(Boolean) }),
+          body: JSON.stringify({ planId: pushed.planId, nagpId: s.nagpId, templateKey: s.templateKey, metricLabel: s.metricLabel, baselineValue: s.metricValue, targetDirection: s.targetDirection, affectedSerials: (s.affectedSystems || []).map(x => x.serial).filter(Boolean), spec: _spSpecRecord(model, pushed) })
         });
       } catch (e) { console.warn('Progress baseline save failed (non-fatal):', e); }
+      if (pushed.failed.length) problems.push(`${s.title}: the plan was created, but Active IQ did not accept ${pushed.failed.length} item(s): ${pushed.failed.slice(0, 3).map(f => f.what + ' (' + f.error + ')').join('; ')}. Open the plan and use "Complete missing items".`);
       ok++;
     } catch (e) {
       console.error('Failed to adopt suggested plan:', s, e);
+      problems.push(`${s.title}: not created (${e && e.message ? e.message : e}).`);
       fail++;
     }
   }
+  if (btn) { btn.textContent = keep; btn.disabled = false; }
   await loadPlanProgress();
-  alert(`Adopted ${ok} Success Plan(s)${fail ? `, ${fail} failed -- see console` : ''}.`);
+  alert(`Adopted ${ok} Success Plan(s)${fail ? `, ${fail} failed` : ''}.` + (problems.length ? '\n\n' + problems.join('\n\n') : ''));
+  renderSuccessPlansTab();
+}
+
+// ── Reporting progress back to Active IQ ─────────────────────────────────────────────────────────────────
+// The plan's measure is recomputed from the live harvest (computePlanOutcome). From that: each milestone's status by its own rule, the health of the
+// plan (GREEN, YELLOW or RED, as the plan's notes describe), and a dated progress note. Only what changed is written.
+function _spProgressFraction(dir, base, cur, tgt) {
+  if (dir === 'down') return base === tgt ? (cur <= tgt ? 1 : 0) : (base - cur) / (base - tgt);
+  return base === tgt ? (cur >= tgt ? 1 : 0) : (cur - base) / (tgt - base);
+}
+function _spPlanSyncPlan(plan, prog) {
+  const spec = prog && prog.spec; if (!spec) return { error: 'No plan structure is stored for this plan (it was not created by ARIA).' };
+  const o = computePlanOutcome(plan); if (!o || o.currentValue == null) return { error: 'The measure cannot be recomputed from the current data.' };
+  const dir = spec.direction, base = Number(o.baselineValue), cur = Number(o.currentValue), tgt = Number(spec.target);
+  const todayS = new Date().toISOString().slice(0, 10), met = dir === 'down' ? cur <= tgt : cur >= tgt, frac = _spProgressFraction(dir, base, cur, tgt);
+  const t0 = Date.parse(spec.start), t1 = Date.parse(spec.end), elapsed = (t1 > t0) ? Math.min(1, Math.max(0, (Date.now() - t0) / (t1 - t0))) : 1;
+  const improving = dir === 'down' ? cur < base : cur > base;
+  const ms = [], acts = [];
+  let anyOverdue = false;
+  spec.milestones.forEach(m => {
+    if (!m.id) return;
+    const c = m.criterion || {}; let st = m.status;
+    if (c.type === 'baseline') st = 'COMPLETE';
+    else if (c.type === 'metric' || c.type === 'verify') {
+      const reached = c.dir === 'down' ? cur <= c.value : cur >= c.value;
+      if (reached && (c.type === 'metric' || met)) st = 'COMPLETE';
+      else if (m.due < todayS) { st = 'OVERDUE'; anyOverdue = true; }
+      else if (improving && c.type === 'metric') st = 'IN_PROGRESS';
+    }
+    if (st !== m.status) ms.push({ m, status: st });
+    if ((c.type === 'metric') && st !== m.status && (st === 'COMPLETE' || st === 'OVERDUE')) (m.actions || []).forEach(a => { if (a.id && a.status !== 'COMPLETE') { const s2 = st === 'COMPLETE' ? 'COMPLETE' : (a.due < todayS ? 'OVERDUE' : a.status); if (s2 !== a.status) acts.push({ m, a, status: s2 }); } });
+  });
+  const health = met || frac >= elapsed * 0.8 ? 'GREEN' : (improving ? 'YELLOW' : (elapsed >= 0.5 || anyOverdue ? 'RED' : 'YELLOW'));
+  return { o, cur, base, tgt, met, frac, elapsed, health, ms, acts, noteText: `ARIA progress, ${todayS}: ${o.metricLabel} ${base} -> ${cur} (target ${dir === 'down' ? (tgt === 0 ? 'none' : tgt + ' or fewer') : tgt + ' or higher'}; ${Math.max(0, Math.round(frac * 100))}% of the way, ${Math.round(elapsed * 100)}% of the time elapsed). Health ${health}.${ms.length ? ' Milestones updated: ' + ms.map(x => `${x.m.name} -> ${x.status.replace('_', ' ').toLowerCase()}`).join('; ') + '.' : ''}` };
+}
+async function syncPlanToActiveIQ(id) {
+  const plan = (state.tamSuccessPlans || []).find(p => String(p.id) === String(id)), prog = (state.planProgress || []).find(b => String(b.planId) === String(id));
+  if (!plan) return;
+  const r = _spPlanSyncPlan(plan, prog); if (r.error) { alert(r.error); return; }
+  if (!confirm(`⚠ This will WRITE BACK to the customer's live Active IQ account.\n\nUpdate Success Plan "${plan.name}" from ARIA's measurement (${r.o.metricLabel}: ${r.base} → ${r.cur}):\n- health ${plan.health || '?'} → ${r.health}\n- ${r.ms.length} milestone status change(s), ${r.acts.length} action status change(s)\n- one dated progress note`)) return;
+  const nagpId = plan.nagpId, errs = [];
+  try {
+    const notes = (plan.notes && plan.notes.length ? plan.notes.map(n => ({ name: n.name || undefined, email: n.email || undefined, date: n.date || undefined, message: n.message })) : (plan.tamNotes ? [{ message: plan.tamNotes }] : [])).concat([{ message: r.noteText, date: new Date().toISOString() }]);
+    const d1 = await _callAIQMutation(aiqQuery('UpdateCSP'), { nagpId, accountPlanId: id, accountPlan: { id, health: r.health, notes } });
+    if (!d1.updateSuccessPlan || !d1.updateSuccessPlan.success) throw new Error('Active IQ did not accept the plan update: ' + (((d1.updateSuccessPlan || {}).results || []).flatMap(x => x.errors || []).join('; ') || 'no reason given'));
+    plan.health = r.health; plan.notes = notes; plan.tamNotes = notes.map(n => n.message).join('\n'); plan.lastUpdated = new Date().toISOString();
+  } catch (e) { alert('Could not update the plan: ' + e.message); return; }
+  for (const x of r.ms) {
+    try { const d = await _callAIQMutation(aiqQuery('UpdateCSPMilestone'), { nagpId, accountPlanId: id, milestone: { id: x.m.id, status: x.status } }); if (d.updateSuccessPlan && d.updateSuccessPlan.success) x.m.status = x.status; else errs.push(x.m.name); } catch (e) { errs.push(`${x.m.name} (${e.message})`); }
+  }
+  for (const x of r.acts) {
+    try { const d = await _callAIQMutation(aiqQuery('UpdateCSPAction'), { nagpId, accountPlanId: id, milestoneAction: { id: x.a.id, actionStatus: x.status } }); if (d.updateSuccessPlan && d.updateSuccessPlan.success) x.a.status = x.status; else errs.push(x.a.name); } catch (e) { errs.push(`${_spClip(x.a.name, 50)} (${e.message})`); }
+  }
+  try { await fetch('/api/plan-progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId: id, nagpId, templateKey: prog.templateKey, metricLabel: prog.metricLabel, baselineValue: prog.baselineValue, targetDirection: prog.targetDirection, createdAt: prog.createdAt, affectedSerials: prog.baselineSerials || undefined, spec: prog.spec }) }); await loadPlanProgress(); } catch (e) { /* the record is local bookkeeping */ }
+  alert(errs.length ? `Plan and health updated; ${errs.length} item(s) were not accepted: ${errs.slice(0, 4).join('; ')}` : 'Active IQ updated.');
+  closeSuccessPlanModal(); renderSuccessPlansTab();
+}
+// creates the milestones and actions Active IQ did not accept when the plan was created (the plan itself exists)
+async function completePlanStructure(id) {
+  const plan = (state.tamSuccessPlans || []).find(p => String(p.id) === String(id)), prog = (state.planProgress || []).find(b => String(b.planId) === String(id));
+  const spec = prog && prog.spec; if (!plan || !spec) { alert('No plan structure is stored for this plan.'); return; }
+  const missing = spec.milestones.filter(m => !m.id).length + spec.milestones.reduce((n, m) => n + m.actions.filter(a => !a.id).length, 0);
+  if (!missing) { alert('Every milestone and action of this plan is in Active IQ.'); return; }
+  if (!confirm(`⚠ This will WRITE BACK to the customer's live Active IQ account.\n\nCreate the ${missing} missing milestone(s) and action(s) of "${plan.name}"?`)) return;
+  const nagpId = plan.nagpId, errs = [];
+  for (const m of spec.milestones) {
+    if (!m.id) { try { const d = await _callAIQMutation(aiqQuery('CreateCSPMilestone'), { milestones: { nagpId, accountPlanId: id, name: _spClip(m.name, 190), status: m.status, lifecycleStage: spec.stage } }); const r = d.createSuccessPlanMilestone; if (!r || !r.success) throw new Error((r && r.errors && r.errors.join('; ')) || 'not created'); m.id = r.id; } catch (e) { errs.push(`${m.name}: ${e.message}`); continue; } }
+    for (const a of m.actions) {
+      if (a.id) continue;
+      try { const d = await _callAIQMutation(aiqQuery('CreateCSPAction'), { actions: { nagpId, accountPlanId: id, accountPlanObjectiveId: m.id, name: a.name, actionOwner: a.owner, actionStatus: a.status, dueDate: a.due, objective: spec.objective } }); const r = d.createSuccessPlanAction; if (!r || !r.success) throw new Error((r && r.errors && r.errors.join('; ')) || 'not created'); a.id = r.id; } catch (e) { errs.push(`${_spClip(a.name, 50)}: ${e.message}`); }
+    }
+  }
+  spec.failed = errs.map(e => ({ what: 'item', error: e }));
+  try { await fetch('/api/plan-progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId: id, nagpId, templateKey: prog.templateKey, metricLabel: prog.metricLabel, baselineValue: prog.baselineValue, targetDirection: prog.targetDirection, createdAt: prog.createdAt, affectedSerials: prog.baselineSerials || undefined, spec }) }); await loadPlanProgress(); } catch (e) { /* local bookkeeping */ }
+  alert(errs.length ? `${errs.length} item(s) were still not accepted: ${errs.slice(0, 3).join('; ')}` : 'The plan is complete in Active IQ.');
   renderSuccessPlansTab();
 }
 
@@ -42959,6 +43159,11 @@ function openSuccessPlanModal(id) {
   closeBtn.textContent = 'Close Plan';
   closeBtn.style.display = plan ? '' : 'none';
   closeBtn.title = "Active IQ has no delete API for Success Plans -- this sets status to Closed, the closest real equivalent.";
+  { const prog = plan && (state.planProgress || []).find(b => String(b.planId) === String(plan.id)), sp = prog && prog.spec;
+    const sb = document.getElementById('successPlanSyncBtn'), cb = document.getElementById('successPlanCompleteBtn');
+    if (sb) { sb.style.display = sp ? '' : 'none'; sb.dataset.id = plan ? plan.id : ''; }
+    const miss = sp ? sp.milestones.filter(m => !m.id).length + sp.milestones.reduce((n, m) => n + m.actions.filter(a => !a.id).length, 0) : 0;
+    if (cb) { cb.style.display = miss ? '' : 'none'; cb.dataset.id = plan ? plan.id : ''; cb.textContent = `Complete missing items (${miss})`; } }
   _cspRenderEvidence(plan);
   document.getElementById('successPlanModal').style.display = 'flex';
 }
@@ -42992,7 +43197,7 @@ async function saveSuccessPlanFromModal() {
         accountPlan: {
           id, name,
           tamOwnerEmail: tamOwnerEmail || undefined,
-          status, lifecycleStage, health, notes: tamNotes ? [{ message: tamNotes }] : undefined,
+          status, lifecycleStage, health, notes: (tamNotes && !(plan && plan.notes && plan.notes.length && tamNotes === String(plan.tamNotes || '').trim())) ? [{ message: tamNotes }] : undefined,   // the plan's own notes are left alone unless the text was edited
           scope: { id: nagpId, name: scopeName },
         },
       };

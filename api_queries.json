@@ -294,6 +294,30 @@
       "query": "mutation UpdateCSP($nagpId: String!, $accountPlanId: String!, $accountPlan: AccountPlanUpdateInput) {\n        updateSuccessPlan(nagpId: $nagpId, accountPlanId: $accountPlanId, accountPlan: $accountPlan) { success results { id type success errors } }\n      }",
       "schema_check": "validated against the public schema reference"
     },
+    "CreateCSPMilestone": {
+      "description": "Write-back. Adds a milestone to a Success Plan (status, blocker notes, lifecycle stage). Sent only after the user confirms the plan.",
+      "type": "mutation",
+      "query": "mutation CreateCSPMilestone($milestones: MilestoneCreateInput!) {\n        createSuccessPlanMilestone(milestones: $milestones) { success id accountPlanId errors }\n      }",
+      "schema_check": "validated against the live schema (createSuccessPlanMilestone, MilestoneCreateInput)"
+    },
+    "CreateCSPAction": {
+      "description": "Write-back. Adds an action (owner, status, due date, the objective it serves) under a milestone of a Success Plan. Sent only after the user confirms the plan.",
+      "type": "mutation",
+      "query": "mutation CreateCSPAction($actions: MilestoneActionCreateInput!) {\n        createSuccessPlanAction(actions: $actions) { success id accountPlanObjectiveId errors }\n      }",
+      "schema_check": "validated against the live schema (createSuccessPlanAction, MilestoneActionCreateInput)"
+    },
+    "UpdateCSPMilestone": {
+      "description": "Write-back. Updates one milestone of a Success Plan (status, blocker notes). Sent only after the user confirms.",
+      "type": "mutation",
+      "query": "mutation UpdateCSPMilestone($nagpId: String!, $accountPlanId: String!, $milestone: MilestoneUpdateInput) {\n        updateSuccessPlan(nagpId: $nagpId, accountPlanId: $accountPlanId, milestone: $milestone) { success results { id type success errors } }\n      }",
+      "schema_check": "validated against the live schema (updateSuccessPlan, MilestoneUpdateInput)"
+    },
+    "UpdateCSPAction": {
+      "description": "Write-back. Updates one action of a Success Plan (status, owner, due date). Sent only after the user confirms.",
+      "type": "mutation",
+      "query": "mutation UpdateCSPAction($nagpId: String!, $accountPlanId: String!, $milestoneAction: MilestoneActionUpdateInput) {\n        updateSuccessPlan(nagpId: $nagpId, accountPlanId: $accountPlanId, milestoneAction: $milestoneAction) { success results { id type success errors } }\n      }",
+      "schema_check": "validated against the live schema (updateSuccessPlan, MilestoneActionUpdateInput)"
+    },
     "CloseCSP": {
       "description": "Write-back. Closes a Success Plan by setting its status to CLOSED (the API has no delete). Sent only after the user confirms.",
       "type": "mutation",
