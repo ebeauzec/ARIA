@@ -42,11 +42,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=5.6.339-1">
+  <link rel="stylesheet" href="styles.css?v=5.6.340-1">
   
   <!-- Load Chart.js locally -->
-  <script src="chart.js?v=5.6.339-1"></script>
-  <script src="pptxgen.bundle.js?v=5.6.339-1"></script>
+  <script src="chart.js?v=5.6.340-1"></script>
+  <script src="pptxgen.bundle.js?v=5.6.340-1"></script>
 <script>
   /* theme: 'dark' (default), 'light' or 'system'; applied before the page paints */
   (function () { var m = 'dark'; try { m = localStorage.getItem('aria_theme') || 'dark'; } catch (e) {}
@@ -822,6 +822,7 @@
           </div>
         </div>
 
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px; font-size:0.78rem; color:var(--text-secondary);"><label style="display:flex; gap:6px; align-items:center; white-space:nowrap;"><input type="checkbox" id="successAutoSyncToggle" checked onchange="setPlanAutoSync(this.checked)"> Update plans in Active IQ automatically</label><span id="successAutoSyncStatus"></span></div>
         <div id="successKpiRow" class="kpi-row" style="grid-template-columns: repeat(5, 1fr); margin-bottom: 20px;">
           <!-- Injected dynamically by JS -->
         </div>
@@ -880,7 +881,7 @@
 
       <!-- Success Plan create/edit modal -->
       <div id="successPlanModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center;">
-        <div class="card" style="width: 480px; max-width: 92vw;">
+        <div class="card" style="width: 640px; max-width: 94vw; max-height: 92vh; overflow-y: auto;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
             <h3 id="successPlanModalTitle" style="margin:0; font-size:1.1rem;">New Success Plan</h3>
             <button class="action-btn secondary" style="padding:4px 10px;" onclick="closeSuccessPlanModal()">✕</button>
@@ -923,6 +924,48 @@
               <option value="YELLOW">At Risk</option>
               <option value="RED">Critical</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanTitle">Plan title</label>
+            <input type="text" id="successPlanTitle" class="form-input" placeholder="One line stating the outcome, e.g. Cut critical risks from 40 to 10 by 31 March">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanChallenges">Customer challenges &amp; goals</label>
+            <textarea id="successPlanChallenges" class="form-input" style="min-height:90px;" placeholder="What the customer faces today and what they want to achieve, in their terms. Shown in Active IQ as Customer Challenges &amp; Goals."></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanStakeholders">Key stakeholders (one per line: name, e-mail, role)</label>
+            <textarea id="successPlanStakeholders" class="form-input" style="min-height:56px;" placeholder="Casey Example, casey@example.com, Storage Lead"></textarea>
+          </div>
+          <div id="successPlanCreateOnly">
+            <div class="form-group">
+              <label class="form-label" for="successPlanTier">Plan template</label>
+              <select id="successPlanTier" class="form-input"><option value="ESSENTIAL">Essential</option><option value="ELITE">Elite</option></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="successPlanSummary">Summary (one or two sentences)</label>
+              <input type="text" id="successPlanSummary" class="form-input" placeholder="Reduce open critical findings across the production clusters by 31 March">
+            </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanObjectives">Objectives (one per line)</label>
+            <textarea id="successPlanObjectives" class="form-input" style="min-height:56px;" placeholder="Reduce operational risk&#10;Improve data protection and recovery"></textarea>
+          </div>
+            <div class="form-group">
+              <label class="form-label">Success metrics (Active IQ)</label>
+              <div id="successPlanMetrics" style="display:grid; grid-template-columns:1fr 1fr; gap:4px 14px;"></div>
+            </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanMeasures">Success measures (one per line: measure | baseline | target | by when)</label>
+            <textarea id="successPlanMeasures" class="form-input" style="min-height:56px;" placeholder="Open critical findings | 40 | 10 | 2027-03-31"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="successPlanMilestones">Milestones and actions</label>
+            <textarea id="successPlanMilestones" class="form-input" style="min-height:110px;" placeholder="Milestone: name | due date | status&#10;- action: name | owner | due date | status&#10;&#10;Confirm scope and baseline | 2026-11-15 | in progress&#10;- Review the clusters in scope | NetApp TAM | 2026-11-10&#10;- Agree change windows | Customer storage administrator | 2026-11-15"></textarea>
+          </div>
+            <div class="form-group">
+              <label class="form-label" for="successPlanTeam">Internal (NetApp) team</label>
+              <input type="text" id="successPlanTeam" class="form-input" placeholder="TAM, SE, support engineer: names, separated by commas">
+            </div>
           </div>
           <div id="successPlanEvidence" style="margin-bottom:12px;"></div>
           <div class="form-group">
@@ -1643,9 +1686,9 @@
   <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleJSONImport(event)">
 
   <!-- Javascript File -->
-  <script src="aria-api.js?v=5.6.339-1"></script>
-  <script src="data/reference_library.js?v=5.6.339-1"></script>
-  <script src="app.js?v=5.6.339-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
+  <script src="aria-api.js?v=5.6.340-1"></script>
+  <script src="data/reference_library.js?v=5.6.340-1"></script>
+  <script src="app.js?v=5.6.340-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
   <script>
     // Verify app.js parsed OK — if APP_VERSION is undefined, the file had a parse error
     if (typeof APP_VERSION === 'undefined') {

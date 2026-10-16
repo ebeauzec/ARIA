@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.339";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.340";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.340",
+    date: "2026-10-16",
+    title: "Success Plans update themselves after each harvest; richer manual plan form",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Success Plans now follow the data. After every harvest ARIA re-measures each active plan it created and, when the measure has moved, a milestone or action changes status, or the health changes, writes the update to Active IQ itself: the plan's health, the status of each milestone and action, and one dated progress note (for example 'Open critical findings 16 -> 10, 50% of the way, 20% of the time elapsed'). A plan whose measure has not changed is not written to, and closed plans are left alone. The Success Plans tab shows when the last check ran and what it updated, and a checkbox there turns the automatic updates off (the update button on a plan still works).",
+          "Health is no longer lowered by a harvest that shows no change: a plan opened RED stays RED until it improves or the date passes.",
+          "The New Success Plan form now captures what a well-shaped plan holds: title, customer challenges and goals, summary, objectives, Active IQ success metrics (chosen from the list Active IQ accepts), success measures with baseline, target and date, key stakeholders (name, e-mail, role), the NetApp team, notes, and milestones with dated actions, owners and statuses. It is written to Active IQ the same way as a composed plan (plan, then milestones, then actions), and anything Active IQ refuses is listed. Editing a plan can now change its title, challenges and goals and stakeholders as well. The window is wider and scrolls.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.339",
     date: "2026-10-16",
@@ -41844,6 +41861,8 @@ async function loadProductionData(forceRefresh = false) {
     // ── Persistent enrichment: pre-load from server SQLite cache, then fill gaps ──
     // Non-blocking: runs after render, never delays the UI
     setTimeout(() => enrichmentEngine.syncFromServer(state.systems), 1200);
+    // plans created by ARIA follow the new data: re-measure and write what changed (can be switched off on the Success Plans tab)
+    if (!result._stillSyncingInBackground) setTimeout(() => { try { autoSyncSuccessPlans(); } catch (e) { console.warn('[CSP] auto update failed:', e); } }, 4000);
 
   } catch (err) {
     console.error("[AIQ] Harvest error:", err);
@@ -42754,7 +42773,7 @@ function _spListNotes(model) {
 }
 function _spPlanInput(s, model, opts) {
   opts = opts || {};
-  const input = { nagpId: s.nagpId, name: model.name, source: 'MANUAL', title: model.title, templateUsed: model.tier, planStatus: 'ACTIVE', lifecycleStage: model.stage, health: model.health,
+  const input = { nagpId: s.nagpId, name: model.name, source: 'MANUAL', title: model.title, templateUsed: model.tier, planStatus: model.status || 'ACTIVE', lifecycleStage: model.stage, health: model.health,
     customerChallengesAndGoals: opts.shortText ? model.challengesText.split('\n\nSCOPE')[0] + '\n\nSCOPE\nThe complete list is in the plan notes.' : model.challengesText,
     objectives: opts.otherObjective ? ['Other'] : model.objectives, successMetrics: model.metrics, notes: _spAiqNotes(model, _spListNotes(model)), scope: { id: s.nagpId, name: s.nagpName } };
   if (opts.otherObjective) input.objectiveOther = model.objectives.join('; ');
@@ -42997,30 +43016,74 @@ function _spPlanSyncPlan(plan, prog) {
     if (st !== m.status) ms.push({ m, status: st });
     if ((c.type === 'metric') && st !== m.status && (st === 'COMPLETE' || st === 'OVERDUE')) (m.actions || []).forEach(a => { if (a.id && a.status !== 'COMPLETE') { const s2 = st === 'COMPLETE' ? 'COMPLETE' : (a.due < todayS ? 'OVERDUE' : a.status); if (s2 !== a.status) acts.push({ m, a, status: s2 }); } });
   });
-  const health = met || frac >= elapsed * 0.8 ? 'GREEN' : (improving ? 'YELLOW' : (elapsed >= 0.5 || anyOverdue ? 'RED' : 'YELLOW'));
+  const worse = dir === 'down' ? cur > base : cur < base;
+  // no movement yet and nothing late: the health the plan was created with stays (a plan opened RED is not lowered by a harvest that shows no change)
+  const health = met || frac >= elapsed * 0.8 ? 'GREEN' : (improving ? 'YELLOW' : (elapsed >= 0.5 || anyOverdue || worse ? 'RED' : (plan.health === 'RED' ? 'RED' : 'YELLOW')));
   return { o, cur, base, tgt, met, frac, elapsed, health, ms, acts, noteText: `ARIA progress, ${todayS}: ${o.metricLabel} ${base} -> ${cur} (target ${dir === 'down' ? (tgt === 0 ? 'none' : tgt + ' or fewer') : tgt + ' or higher'}; ${Math.max(0, Math.round(frac * 100))}% of the way, ${Math.round(elapsed * 100)}% of the time elapsed). Health ${health}.${ms.length ? ' Milestones updated: ' + ms.map(x => `${x.m.name} -> ${x.status.replace('_', ' ').toLowerCase()}`).join('; ') + '.' : ''}` };
 }
-async function syncPlanToActiveIQ(id) {
-  const plan = (state.tamSuccessPlans || []).find(p => String(p.id) === String(id)), prog = (state.planProgress || []).find(b => String(b.planId) === String(id));
-  if (!plan) return;
-  const r = _spPlanSyncPlan(plan, prog); if (r.error) { alert(r.error); return; }
-  if (!confirm(`⚠ This will WRITE BACK to the customer's live Active IQ account.\n\nUpdate Success Plan "${plan.name}" from ARIA's measurement (${r.o.metricLabel}: ${r.base} → ${r.cur}):\n- health ${plan.health || '?'} → ${r.health}\n- ${r.ms.length} milestone status change(s), ${r.acts.length} action status change(s)\n- one dated progress note`)) return;
-  const nagpId = plan.nagpId, errs = [];
-  try {
-    const notes = (plan.notes && plan.notes.length ? plan.notes.map(n => ({ name: n.name || undefined, email: n.email || undefined, date: n.date || undefined, message: n.message })) : (plan.tamNotes ? [{ message: plan.tamNotes }] : [])).concat([{ message: r.noteText, date: new Date().toISOString() }]);
-    const d1 = await _callAIQMutation(aiqQuery('UpdateCSP'), { nagpId, accountPlanId: id, accountPlan: { id, health: r.health, notes } });
-    if (!d1.updateSuccessPlan || !d1.updateSuccessPlan.success) throw new Error('Active IQ did not accept the plan update: ' + (((d1.updateSuccessPlan || {}).results || []).flatMap(x => x.errors || []).join('; ') || 'no reason given'));
-    plan.health = r.health; plan.notes = notes; plan.tamNotes = notes.map(n => n.message).join('\n'); plan.lastUpdated = new Date().toISOString();
-  } catch (e) { alert('Could not update the plan: ' + e.message); return; }
+// writes one sync (plan health + dated note, milestone and action statuses) to Active IQ and keeps the local record; returns the items Active IQ refused
+async function _spApplySync(plan, prog, r) {
+  const id = plan.id, nagpId = plan.nagpId, errs = [];
+  const notes = (plan.notes && plan.notes.length ? plan.notes.map(n => ({ name: n.name || undefined, email: n.email || undefined, date: n.date || undefined, message: n.message })) : (plan.tamNotes ? [{ message: plan.tamNotes }] : [])).concat([{ message: r.noteText, date: new Date().toISOString() }]);
+  const d1 = await _callAIQMutation(aiqQuery('UpdateCSP'), { nagpId, accountPlanId: id, accountPlan: { id, health: r.health, notes } });
+  if (!d1.updateSuccessPlan || !d1.updateSuccessPlan.success) throw new Error('Active IQ did not accept the plan update: ' + (((d1.updateSuccessPlan || {}).results || []).flatMap(x => x.errors || []).join('; ') || 'no reason given'));
+  plan.health = r.health; plan.notes = notes; plan.tamNotes = notes.map(n => n.message).join('\n'); plan.lastUpdated = new Date().toISOString();
   for (const x of r.ms) {
     try { const d = await _callAIQMutation(aiqQuery('UpdateCSPMilestone'), { nagpId, accountPlanId: id, milestone: { id: x.m.id, status: x.status } }); if (d.updateSuccessPlan && d.updateSuccessPlan.success) x.m.status = x.status; else errs.push(x.m.name); } catch (e) { errs.push(`${x.m.name} (${e.message})`); }
   }
   for (const x of r.acts) {
     try { const d = await _callAIQMutation(aiqQuery('UpdateCSPAction'), { nagpId, accountPlanId: id, milestoneAction: { id: x.a.id, actionStatus: x.status } }); if (d.updateSuccessPlan && d.updateSuccessPlan.success) x.a.status = x.status; else errs.push(x.a.name); } catch (e) { errs.push(`${_spClip(x.a.name, 50)} (${e.message})`); }
   }
+  prog.spec.lastValue = r.cur; prog.spec.lastSync = new Date().toISOString(); prog.spec.lastHealth = r.health;
   try { await fetch('/api/plan-progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId: id, nagpId, templateKey: prog.templateKey, metricLabel: prog.metricLabel, baselineValue: prog.baselineValue, targetDirection: prog.targetDirection, createdAt: prog.createdAt, affectedSerials: prog.baselineSerials || undefined, spec: prog.spec }) }); await loadPlanProgress(); } catch (e) { /* the record is local bookkeeping */ }
+  return errs;
+}
+async function syncPlanToActiveIQ(id) {
+  const plan = (state.tamSuccessPlans || []).find(p => String(p.id) === String(id)), prog = (state.planProgress || []).find(b => String(b.planId) === String(id));
+  if (!plan) return;
+  const r = _spPlanSyncPlan(plan, prog); if (r.error) { alert(r.error); return; }
+  if (!confirm(`⚠ This will WRITE BACK to the customer's live Active IQ account.\n\nUpdate Success Plan "${plan.name}" from ARIA's measurement (${r.o.metricLabel}: ${r.base} → ${r.cur}):\n- health ${plan.health || '?'} → ${r.health}\n- ${r.ms.length} milestone status change(s), ${r.acts.length} action status change(s)\n- one dated progress note`)) return;
+  let errs;
+  try { errs = await _spApplySync(plan, prog, r); } catch (e) { alert('Could not update the plan: ' + e.message); return; }
   alert(errs.length ? `Plan and health updated; ${errs.length} item(s) were not accepted: ${errs.slice(0, 4).join('; ')}` : 'Active IQ updated.');
   closeSuccessPlanModal(); renderSuccessPlansTab();
+}
+// ── Automatic updates after every harvest ────────────────────────────────────────────────────────────────
+// When fresh Active IQ data arrives, every active plan ARIA created is re-measured. A plan is written to only when something moved: the measure
+// differs from the value last reported, a milestone or action changed status, or the health changed. Switched on by default (the checkbox on the
+// Success Plans tab turns it off); the result of the last pass is shown on that tab. Nothing is written for a plan whose measure has not changed.
+const SP_AUTOSYNC_KEY = 'aria_plan_autosync';
+const _spAutoOn = () => { try { return localStorage.getItem(SP_AUTOSYNC_KEY) !== 'off'; } catch (e) { return true; } };
+function setPlanAutoSync(on) { try { localStorage.setItem(SP_AUTOSYNC_KEY, on ? 'on' : 'off'); } catch (e) { /* default stays on */ } if (on) autoSyncSuccessPlans(); else _spShowAutoStatus(); }
+function _spShowAutoStatus() {
+  const el = document.getElementById('successAutoSyncStatus'), cb = document.getElementById('successAutoSyncToggle'); if (cb) cb.checked = _spAutoOn();
+  if (!el) return; const a = state.planAutoSync;
+  el.textContent = !_spAutoOn() ? 'Automatic updates are off: plans change in Active IQ only when you press the update button on a plan.'
+    : !a ? 'Plans are updated in Active IQ automatically after each harvest, when the measure or a status has changed.'
+    : `Last check ${new Date(a.at).toLocaleString()}: ${a.checked} plan(s) re-measured, ${a.updated.length} updated${a.updated.length ? ' (' + a.updated.slice(0, 3).join('; ') + (a.updated.length > 3 ? '; ...' : '') + ')' : ''}${a.errors.length ? `, ${a.errors.length} problem(s): ${a.errors.slice(0, 2).join('; ')}` : ''}.`;
+}
+let _spAutoRunning = false;
+async function autoSyncSuccessPlans() {
+  if (_spAutoRunning || !_spAutoOn()) { _spShowAutoStatus(); return; }
+  _spAutoRunning = true;
+  const res = { at: new Date().toISOString(), checked: 0, updated: [], errors: [] };
+  try {
+    if (!(state.systems || []).length || state.isDemo) return;
+    await loadPlanProgress();
+    for (const plan of (state.tamSuccessPlans || [])) {
+      const prog = (state.planProgress || []).find(b => String(b.planId) === String(plan.id));
+      if (!prog || !prog.spec || String(plan.status || 'ACTIVE') !== 'ACTIVE' || String(plan.id).startsWith('demo-')) continue;
+      let r; try { r = _spPlanSyncPlan(plan, prog); } catch (e) { continue; }
+      if (r.error) continue;
+      res.checked++;
+      const last = prog.spec.lastValue != null ? Number(prog.spec.lastValue) : Number(prog.baselineValue);
+      const moved = r.cur !== last || r.ms.length || r.acts.length || (plan.health && r.health !== plan.health);
+      if (!moved) continue;
+      try { const errs = await _spApplySync(plan, prog, r); res.updated.push(`${plan.name}: ${r.base} → ${r.cur}`); errs.forEach(e => res.errors.push(`${plan.name}: ${e}`)); }
+      catch (e) { res.errors.push(`${plan.name}: ${e.message}`); }
+    }
+  } catch (e) { res.errors.push(String(e && e.message || e)); }
+  finally { _spAutoRunning = false; state.planAutoSync = res; _spShowAutoStatus(); if (res.updated.length && state.currentTab === 'success') renderSuccessPlansTab(); }
 }
 // creates the milestones and actions Active IQ did not accept when the plan was created (the plan itself exists)
 async function completePlanStructure(id) {
@@ -43129,6 +43192,49 @@ function addPlanEvidenceToNotes(id) {
   ta.value = (ta.value ? ta.value.trim() + '\n\n' : '') + _cspOutcomeText(plan, o);
 }
 
+// ── The manual plan form: the same shape as a composed plan ──────────────────────────────────────────────
+const SP_METRIC_LABELS = { REDUCED_OPERATIONAL_RISK: 'Reduced operational risk', REDUCED_CRITICAL_ALERTS: 'Fewer critical alerts', REDUCED_RANSOMWARE_RISK_EXPOSURE: 'Reduced ransomware risk exposure', REDUCED_VULNERABILITY_RESOLUTION_RATE: 'Faster vulnerability resolution', CAPACITY_UTILIZATION_WITHIN_LIMITS: 'Capacity utilization within limits', REDUCED_COST_PER_TB: 'Reduced cost per TB', REDUCED_RECOVERY_TIME_OBJECTIVE: 'Reduced recovery time objective', UPTIME_99_9: 'Uptime of 99.9%', LATENCY_WITHIN_CUSTOMER_DEFINED_MEASURES: 'Latency within customer-defined measures', DECREASED_STORAGE_PROVISIONING_TIME: 'Faster storage provisioning' };
+const _spLines = id => (document.getElementById(id).value || '').split('\n').map(x => x.trim()).filter(Boolean);
+const _spStatusWord = t => { t = String(t || '').toLowerCase().replace(/[_-]/g, ' '); return /complete|done/.test(t) ? 'COMPLETE' : /progress|started|under way/.test(t) && !/not started/.test(t) ? 'IN_PROGRESS' : /overdue|late/.test(t) ? 'OVERDUE' : /block/.test(t) ? 'BLOCKED' : 'NOT_STARTED'; };
+const _spDateIn = t => { const m = String(t || '').match(/\d{4}-\d{2}-\d{2}/); return m ? m[0] : ''; };
+function _spParseStakeholders(lines) {
+  const out = [], bad = [];
+  lines.forEach(l => { const parts = l.split(/[,;|]/).map(x => x.trim()), email = parts.find(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    if (!email) { bad.push(l); return; }
+    const rest = parts.filter(x => x && x !== email); out.push({ name: rest[0] || email.split('@')[0], email, role: rest[1] || undefined }); });
+  return { out, bad };
+}
+// milestone line:  Name | due date | status        action line (starts with "-"):  - Action | owner | due date | status
+function _spParseMilestones(lines, stage) {
+  const ms = [], today = _spDay(0);
+  for (const l of lines) {
+    const parts = l.replace(/^[-*•]\s*/, '').split('|').map(x => x.trim());
+    if (/^[-*•]/.test(l)) {
+      const m = ms[ms.length - 1]; if (!m) throw new Error('An action line ("- ...") comes before any milestone line.');
+      const day = _spDateIn(parts[2]) || m.dueDay;
+      m.actions.push({ name: _spClip(parts[0], 190), owner: parts[1] || 'NetApp TAM', due: day + 'T12:00:00Z', dueDay: day, status: _spStatusWord(parts[3]) });
+    } else {
+      const day = _spDateIn(parts[1]) || _spDay(30 * (ms.length + 1));
+      ms.push({ key: 'm' + (ms.length + 1), name: _spClip(parts[0], 190), stage, status: _spStatusWord(parts[2]), due: Math.max(0, Math.round((Date.parse(day) - Date.parse(today)) / 86400000)), dueDay: day, criterion: { type: 'manual' }, actions: [] });
+    }
+  }
+  return ms;
+}
+function _spReadManualForm(nagpId, scopeName) {
+  const name = document.getElementById('successPlanName').value.trim(), stage = document.getElementById('successPlanStage').value, status = document.getElementById('successPlanStatus').value, health = document.getElementById('successPlanRisk').value;
+  const metrics = [...document.querySelectorAll('#successPlanMetrics input:checked')].map(x => x.value);
+  if (!metrics.length) throw new Error('Choose at least one success metric: Active IQ requires it.');
+  const objectives = _spLines('successPlanObjectives').slice(0, 5); if (!objectives.length) objectives.push(name);
+  const st = _spParseStakeholders(_spLines('successPlanStakeholders')); if (st.bad.length) throw new Error('Each key stakeholder needs an e-mail address ("Name, e-mail, role"). Fix: ' + st.bad[0]);
+  const milestones = _spParseMilestones(_spLines('successPlanMilestones'), stage);
+  const summary = document.getElementById('successPlanSummary').value.trim(), challenges = document.getElementById('successPlanChallenges').value.trim(), measures = _spLines('successPlanMeasures');
+  const text = [summary && 'SUMMARY\n' + summary, challenges && 'CUSTOMER CHALLENGES AND GOALS\n' + challenges, 'OBJECTIVES\n' + objectives.map((o, i) => `${i + 1}. ${o}`).join('\n'),
+    measures.length && 'SUCCESS MEASURES (measure | baseline | target | by when)\n' + measures.map(m => '- ' + m).join('\n'), scopeName && 'SCOPE\n' + scopeName].filter(Boolean).join('\n\n');
+  const notes = document.getElementById('successPlanNotes').value.trim();
+  return { name, title: document.getElementById('successPlanTitle').value.trim() || name, tier: document.getElementById('successPlanTier').value, stage, status, health, objectives, objective: objectives[0], metrics,
+    stakeholders: st.out, internalTeamMembers: document.getElementById('successPlanTeam').value.trim(), challengesText: text, notes: notes ? [notes] : [], listText: '', milestones, nagpId, nagpName: scopeName };
+}
+
 function openSuccessPlanModal(id) {
   const scopeSelect = document.getElementById('successPlanScope');
   // Option value is the real nagpId (NetApp Account Group Profile) required
@@ -43164,6 +43270,14 @@ function openSuccessPlanModal(id) {
     if (sb) { sb.style.display = sp ? '' : 'none'; sb.dataset.id = plan ? plan.id : ''; }
     const miss = sp ? sp.milestones.filter(m => !m.id).length + sp.milestones.reduce((n, m) => n + m.actions.filter(a => !a.id).length, 0) : 0;
     if (cb) { cb.style.display = miss ? '' : 'none'; cb.dataset.id = plan ? plan.id : ''; cb.textContent = `Complete missing items (${miss})`; } }
+  { const set = (i, v) => { const el = document.getElementById(i); if (el) el.value = v; };
+    set('successPlanTitle', plan ? (plan.title || '') : ''); set('successPlanChallenges', plan ? (plan.customerChallengesAndGoals || '') : '');
+    set('successPlanStakeholders', plan ? (plan.keyStakeholders || []).map(x => [x.name, x.email, x.role].filter(Boolean).join(', ')).join('\n') : '');
+    ['successPlanSummary', 'successPlanObjectives', 'successPlanMeasures', 'successPlanTeam', 'successPlanMilestones'].forEach(i => set(i, ''));
+    set('successPlanTier', 'ESSENTIAL');
+    const mbox = document.getElementById('successPlanMetrics'); if (mbox && !mbox.children.length) mbox.innerHTML = Object.entries(SP_METRIC_LABELS).map(([k, v]) => `<label style="display:flex;gap:6px;align-items:center;font-size:0.76rem;"><input type="checkbox" value="${k}"> ${v}</label>`).join('');
+    if (mbox) mbox.querySelectorAll('input').forEach(x => { x.checked = false; });
+    const co = document.getElementById('successPlanCreateOnly'); if (co) co.style.display = plan ? 'none' : ''; }
   _cspRenderEvidence(plan);
   document.getElementById('successPlanModal').style.display = 'flex';
 }
@@ -43184,6 +43298,9 @@ async function saveSuccessPlanFromModal() {
   const health = document.getElementById('successPlanRisk').value;
   const tamNotes = document.getElementById('successPlanNotes').value.trim();
   const tamOwnerEmail = document.getElementById('successPlanOwner').value.trim();
+  let manual = null, editStake = null;
+  try { if (!id) manual = _spReadManualForm(nagpId, scopeName); else { const st = _spParseStakeholders(_spLines('successPlanStakeholders')); if (st.bad.length) throw new Error('Each key stakeholder needs an e-mail address ("Name, e-mail, role"). Fix: ' + st.bad[0]); editStake = st.out; } }
+  catch (e) { alert(e.message); return; }
 
   if (!confirm(`⚠ This will WRITE BACK to the customer's live Active IQ account.\n\n${id ? 'Update' : 'Create'} Success Plan "${name}"${id ? '' : ` for ${scopeName}`}?`)) return;
 
@@ -43201,30 +43318,29 @@ async function saveSuccessPlanFromModal() {
           scope: { id: nagpId, name: scopeName },
         },
       };
+      { const ap = variables.accountPlan, tt = document.getElementById('successPlanTitle').value.trim(), ch = document.getElementById('successPlanChallenges').value.trim();
+        if (tt && tt !== (plan && plan.title || '')) ap.title = tt;
+        if (ch && ch !== String(plan && plan.customerChallengesAndGoals || '').trim()) ap.customerChallengesAndGoals = ch;
+        const oldS = JSON.stringify(((plan && plan.keyStakeholders) || []).map(x => [x.name, x.email, x.role || ''])), newS = JSON.stringify(editStake.map(x => [x.name, x.email, x.role || '']));
+        if (newS !== oldS && editStake.length) ap.keyStakeholders = editStake; }
       const data = await _callAIQMutation(mutation, variables);
       if (!data.updateSuccessPlan || !data.updateSuccessPlan.success) { const _errs = ((data.updateSuccessPlan && data.updateSuccessPlan.results) || []).flatMap(r => r.errors || []); throw new Error('Active IQ reported the update did not succeed' + (_errs.length ? ': ' + _errs.join('; ') : '.')); }
       // Optimistic local merge -- the mutation doesn't return the full
       // updated record; the next real harvest is the authoritative refresh.
-      if (plan) Object.assign(plan, { name, status, lifecycleStage, health, tamNotes, nagpId, nagpName: scopeName, scope: { id: nagpId, name: scopeName }, tamOwnerEmail: tamOwnerEmail || plan.tamOwnerEmail });
+      if (plan) Object.assign(plan, variables.accountPlan.title ? { title: variables.accountPlan.title } : {}, variables.accountPlan.customerChallengesAndGoals ? { customerChallengesAndGoals: variables.accountPlan.customerChallengesAndGoals } : {}, variables.accountPlan.keyStakeholders ? { keyStakeholders: variables.accountPlan.keyStakeholders } : {}, { name, status, lifecycleStage, health, tamNotes, nagpId, nagpName: scopeName, scope: { id: nagpId, name: scopeName }, tamOwnerEmail: tamOwnerEmail || plan.tamOwnerEmail });
     } else {
-      const mutation = aiqQuery("CreateCSP");
-      const variables = {
-        accountPlan: {
-          nagpId, name, source: 'MANUAL', title: name,
-          templateUsed: 'ESSENTIAL', planStatus: status, lifecycleStage,
-          health, notes: tamNotes ? [{ message: tamNotes }] : undefined, scope: { id: nagpId, name: scopeName },
-        },
-      };
-      const data = await _callAIQMutation(mutation, variables);
-      const result = data.createSuccessPlan;
-      if (!result || !result.success) throw new Error((result && result.errors && result.errors.join('; ')) || 'Active IQ reported the create did not succeed.');
+      // the same write chain as a composed plan: the plan, then its milestones, then their actions
+      const pushed = await _spPushPlan({ nagpId, nagpName: scopeName }, manual);
+      const notes = _spAiqNotes(manual, []);
       state.tamSuccessPlans = state.tamSuccessPlans || [];
       state.tamSuccessPlans.push({
-        id: result.id, name, title: name, status, lifecycleStage, health,
-        tamOwnerEmail: '', source: 'MANUAL', templateUsed: 'ESSENTIAL',
-        tamNotes, nagpId, nagpName: scopeName, scope: { id: nagpId, name: scopeName },
-        lastUpdated: new Date().toISOString(),
+        id: pushed.planId, name, title: manual.title, status, lifecycleStage, health,
+        tamOwnerEmail: '', source: 'MANUAL', templateUsed: manual.tier, tamNotes: manual.notes.join('\n'), notes,
+        customerChallengesAndGoals: manual.challengesText, objectives: manual.objectives.map(o => ({ name: o, milestones: [] })), successMetrics: manual.metrics,
+        keyStakeholders: manual.stakeholders, internalTeamMembers: manual.internalTeamMembers,
+        nagpId, nagpName: scopeName, scope: { id: nagpId, name: scopeName }, lastUpdated: new Date().toISOString(),
       });
+      if (pushed.failed.length) alert(`The plan was created in Active IQ, but it did not accept ${pushed.failed.length} item(s): ` + pushed.failed.slice(0, 4).map(f => f.what + ' (' + f.error + ')').join('; '));
     }
     closeSuccessPlanModal();
     renderSuccessPlansTab();
@@ -44057,6 +44173,7 @@ function switchTab(tabId) {
   } else if (tabId === "success") {
     renderSuccessPlansTab();
     loadPlanProgress().then(() => { if (state.currentTab === 'success') renderSuccessPlansTab(); });
+    _spShowAutoStatus();
   } else if (tabId === "settings") {
     try { renderPerfSettings(); } catch (e) { console.warn('[PERF] settings render failed:', e); }
     populateGroupManagerSystems();

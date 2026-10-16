@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.340 (2026-10-16)
+
+### Added
+- Success Plans now follow the data. After every harvest ARIA re-measures each active plan it created and, when the measure has moved, a milestone or action changes status, or the health changes, writes the update to Active IQ itself: the plan's health, the status of each milestone and action, and one dated progress note (for example 'Open critical findings 16 -> 10, 50% of the way, 20% of the time elapsed'). A plan whose measure has not changed is not written to, and closed plans are left alone. The Success Plans tab shows when the last check ran and what it updated, and a checkbox there turns the automatic updates off (the update button on a plan still works).
+- Health is no longer lowered by a harvest that shows no change: a plan opened RED stays RED until it improves or the date passes.
+- The New Success Plan form now captures what a well-shaped plan holds: title, customer challenges and goals, summary, objectives, Active IQ success metrics (chosen from the list Active IQ accepts), success measures with baseline, target and date, key stakeholders (name, e-mail, role), the NetApp team, notes, and milestones with dated actions, owners and statuses. It is written to Active IQ the same way as a composed plan (plan, then milestones, then actions), and anything Active IQ refuses is listed. Editing a plan can now change its title, challenges and goals and stakeholders as well. The window is wider and scrolls.
+
 ## 5.6.339 (2026-10-16)
 
 ### Added

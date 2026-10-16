@@ -1,8 +1,8 @@
 {
-  "version": "5.6.339",
+  "version": "5.6.340",
   "major": 5,
   "minor": 6,
-  "patch": 339,
+  "patch": 340,
   "date": "2026-10-16",
-  "notes": "Success Plans: complete measurable plans with milestones, actions, stakeholders and notes written to Active IQ; progress sync"
+  "notes": "Success Plans: automatic updates after each harvest; manual plan form with objectives, metrics, stakeholders, milestones and actions"
 }
