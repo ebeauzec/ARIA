@@ -1,8 +1,8 @@
 {
-  "version": "5.6.337",
+  "version": "5.6.338",
   "major": 5,
   "minor": 6,
-  "patch": 337,
+  "patch": 338,
   "date": "2026-10-11",
-  "notes": "SnapMirror health view; cases and firmware documents per cluster; grid scope"
+  "notes": "The weekly library routine runs inside ARIA: sweeps official pages, checks against ARIA data, keeps a review queue and table status"
 }

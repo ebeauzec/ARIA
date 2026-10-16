@@ -7,6 +7,26 @@ files and code. What ships contains no AI.
 Run it from the repository root (`G:\My Drive\AntiGravity\ARIA` on the development machine). Follow `CLAUDE.md` for the release workflow; its rules
 win over anything here.
 
+## What ARIA now does by itself (reference updater, `tools/library_updater.py`)
+
+Sections 1 and 3 below used to be done by hand. ARIA now runs them in its own engine, with no AI: the scheduler starts a sweep four minutes after
+start-up and then every 24 hours (`libraryUpdateEnabled`, `libraryUpdateIntervalHours`, `libraryUpdateBudget` in `aiq_config.json`); Settings > Data &
+Sync > Reference updater has "Sweep now"; `python tools/library_updater.py [--budget N]` runs one from the command line.
+
+| Step of this routine | Done by ARIA |
+|---|---|
+| 3. Check each topic against the official source | Reads the key pages every run (release lists, What's new pages, end-of-availability, TR indexes, advisories) and the stalest of the other pages the library's documents name in their `Source:` line (the list ships in `tools/library_sources.json`, so a machine without the library folder sweeps too). One request a second, public pages only. |
+| Compare with what ARIA holds | A newer release number than the last read, new KB / CVE / advisory ids, or added and removed lines. Each id and release is looked up in ARIA's own data: held ones are "covered", the rest go to the review queue. |
+| Apply what a scanner can apply | A change to a release, end-of-availability, advisory or What's new page runs the existing scanners at once (version catalogue, EOA, advisories, release notes). |
+| 1. Read the library's new CHANGELOG entries | Ids and releases in each unseen entry are checked the same way; an entry that says "no material changes" and names nothing ARIA lacks is recorded as harvested by itself. |
+| Say what is out of date | Settings shows each curated reference table (`data/reference_library.js`) as kept up to date by a scanner, partly by a scanner, or by hand; for the by-hand ones it lists the official pages that changed since the file was compiled. A copy of every page read is kept in `data/library_refreshed/` and is searchable next to the library. |
+
+What stays for a person (or for this routine, run by Claude Code): the **review queue** (`data/library_update_queue.json`, shown in Settings, or
+`python -c "import sys;sys.path.insert(0,'tools');import library_updater as u,json;print(json.dumps(u.status('.')['queue'],indent=1))"`). Items are a release ARIA
+does not hold, ids ARIA has no rule for (with a rules stub), a key page whose text changed, a source that stopped answering, or a library entry that names something ARIA lacks.
+Sections 2 and 4 below still apply to those items: the updater never writes a compatibility range, a prose best-practice fact or a new kind of check.
+Close an item in Settings ("done, close it") once it is dealt with.
+
 ## 0. Ground rules
 
 - **Nothing invented.** Add only what a source states. Where the library says a fix version is behind the support login, ARIA says so too.

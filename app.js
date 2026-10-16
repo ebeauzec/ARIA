@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.337";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.338";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.338",
+    date: "16 Oct 2026",
+    title: "Reference updater built into ARIA",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "The weekly library routine is now built into the ARIA engine (tools/library_updater.py), so reference data and the NetApp library are kept current without anyone running a job. Each sweep (four minutes after start-up, then every 24 hours; 'Sweep now' in Settings > Data & Sync) reads the key official pages (release lists, What's new pages, end-of-availability, TR indexes) and the stalest of the 160 source pages the library's documents name, one request a second and public pages only, keeps a searchable copy of each page, and compares it with the last read: a newer release number, new KB, CVE or advisory ids, or lines added and removed.",
+          "Every new release or id is looked up in ARIA's own data; what ARIA holds is covered, the rest goes to a review queue in Settings with the page, the changed lines and, for known-issue ids, a ready rules stub. A change to a release, end-of-availability, advisory or What's new page runs the existing scanners straight away. The library's unseen CHANGELOG entries are read the same way, and one that says no material changes and names nothing ARIA lacks is recorded as harvested by itself.",
+          "The Curated reference tables row no longer says 'static (manual)': Settings lists all 21 tables as kept up to date by a scanner (9), partly by a scanner (5) or by hand (7), and for the hand-kept ones names the official pages that changed since the file was compiled. A compatibility range, a prose best-practice fact or a new kind of check is never written by the updater; those stay with a person. Eleven tests cover it (65 in all).",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.337",
     date: "14 Oct 2026",
@@ -40779,21 +40796,57 @@ async function loadReferenceStatus() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json(), lib = d.library || {};
     const age = h => h == null ? '' : h < 1 ? '< 1 h' : h < 48 ? Math.round(h) + ' h' : Math.round(h / 24) + ' days';
-    let rows = (d.data || []).map(x => `<tr><td style="padding:3px 8px 3px 0;">${_esc(x.label)}</td><td style="padding:3px 8px;color:var(--text-muted);">${x.present ? _esc(x.updated) + ' (' + age(x.ageHours) + ' ago)' : _esc(x.note || 'not present')}</td><td style="padding:3px 0;color:${x.stale ? '#f59e0b' : (x.static ? 'var(--text-muted)' : 'var(--accent-green)')};">${x.stale ? 'stale' : (x.static ? 'static (manual)' : (x.present ? 'current' : 'missing'))}</td></tr>`).join('');
-    if (lib.found) rows += `<tr><td style="padding:3px 8px 3px 0;">NetApp Reference Library (${lib.docs} documents)</td><td style="padding:3px 8px;color:var(--text-muted);">compiled ${_esc(lib.compiled || '?')}, newest file ${_esc(lib.newestFile || '?')}</td><td style="padding:3px 0;color:${lib.stale ? '#f59e0b' : 'var(--accent-green)'};">${lib.stale ? 'stale' : 'current'}</td></tr>`;
+    let rows = (d.data || []).map(x => `<tr><td style="padding:3px 8px 3px 0;">${_esc(x.label)}${x.file === 'reference_library.js' && x.note ? `<div style="font-size:0.68rem;color:var(--text-muted);">${_esc(x.note)}</div>` : ''}</td><td style="padding:3px 8px;color:var(--text-muted);">${x.present ? _esc(x.updated) + ' (' + age(x.ageHours) + ' ago)' : _esc(x.note || 'not present')}</td><td style="padding:3px 0;color:${x.stale ? '#f59e0b' : (x.static ? 'var(--text-muted)' : 'var(--accent-green)')};">${x.stale ? (x.file === 'reference_library.js' ? 'review' : 'stale') : (x.static ? 'static (manual)' : (x.present ? 'current' : 'missing'))}</td></tr>`).join('');
+    if (lib.found) rows += `<tr><td style="padding:3px 8px 3px 0;">NetApp Reference Library (${lib.docs} documents)</td><td style="padding:3px 8px;color:var(--text-muted);">compiled ${_esc(lib.compiled || '?')}, newest file ${_esc(lib.newestFile || '?')}${lib.updater && lib.updater.lastRun ? `<div style="font-size:0.68rem;">ARIA's own sweep: ${_esc(String(lib.updater.lastRun).slice(0, 10))}, ${lib.updater.pagesKnown} source pages followed, ${lib.updater.openItems} to review</div>` : ''}</td><td style="padding:3px 0;color:${lib.stale ? '#f59e0b' : 'var(--accent-green)'};">${lib.stale ? 'stale' : 'current'}</td></tr>`;
     tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;">${rows}</table>`;
+    loadLibraryUpdater();
     const stale = (d.data || []).filter(x => x.stale && x.present).map(x => x.label);
     const msgs = [];
     if (stale.length) msgs.push(`Not refreshed recently: ${stale.join(', ')}. Use "Refresh all reference data now".`);
     if (lib.found && lib.stale) msgs.push(`The NetApp Reference Library was last compiled ${lib.compiled || 'on an unknown date'} (${lib.ageDays == null ? 'age unknown' : lib.ageDays + ' days ago'}). ARIA reads that folder but does not update it.`);
     (d.imtNewer || []).forEach(x => msgs.push(`${x.name}: version ${x.latest} is released, ARIA's compatibility table recommends ${x.ours}. The table needs its compatibility range for ${x.latest} before it can recommend it.`));
     const _seenW = new Set(); (d.harvestWarnings || []).forEach(w => { const m = 'Harvest warning: ' + w.message; if (!_seenW.has(m)) { _seenW.add(m); msgs.push(m + ' (' + String(w.at).slice(0, 10) + ')'); } });
-    if (lib.found && lib.harvest && lib.harvest.unharvested && lib.harvest.unharvested.length) msgs.push(`The NetApp Reference Library has ${lib.harvest.unharvested.length} entr${lib.harvest.unharvested.length === 1 ? 'y' : 'ies'} newer than the last harvest into ARIA (newest: ${lib.harvest.unharvested[0]}). The weekly harvest routine (docs/LIBRARY_HARVEST_ROUTINE.md) reads them.`);
+    if (lib.found && lib.harvest && lib.harvest.unharvested && lib.harvest.unharvested.length) msgs.push(`The NetApp Reference Library has ${lib.harvest.unharvested.length} entr${lib.harvest.unharvested.length === 1 ? 'y' : 'ies'} newer than the last harvest into ARIA (newest: ${lib.harvest.unharvested[0]}). ARIA's reference updater reads them on each sweep and lists anything it cannot settle itself under "Reference updater" below${lib.updater && lib.updater.openItems ? ` (${lib.updater.openItems} waiting)` : ''}.`);
     if (!lib.found) msgs.push('The NetApp Reference Library folder was not found on this machine. Enter its path below to enable the library search.');
     ban.style.display = msgs.length ? '' : 'none'; ban.style.background = 'rgba(245,158,11,0.10)'; ban.style.border = '1px solid rgba(245,158,11,0.35)'; ban.innerHTML = msgs.map(m => _esc(m)).join('<br>');
     const inp = document.getElementById('libraryPathInput'); if (inp && document.activeElement !== inp) inp.value = lib.configured || '';
     const info = document.getElementById('libraryPathInfo'); if (info) info.textContent = lib.found ? `Using ${lib.path} (${lib.source}).` : 'Not found.';
   } catch (e) { tbl.textContent = 'Could not load reference status: ' + e.message; }
+}
+// The reference updater (tools/library_updater.py): sweeps the pages the library is built from, checks what is new against ARIA's data, keeps a review queue.
+async function loadLibraryUpdater() {
+  const sum = document.getElementById('refUpdaterSummary'); if (!sum) return;
+  try {
+    const r = await fetch('/api/library/update/status', { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json(), ago = iso => { if (!iso) return 'never'; const h = (Date.now() - Date.parse(iso)) / 3600000; return h < 1 ? 'less than an hour ago' : h < 48 ? Math.round(h) + ' h ago' : Math.round(h / 24) + ' days ago'; };
+    const btn = document.getElementById('refUpdaterBtn'); if (btn) { btn.disabled = !!d.running || !d.enabled; btn.textContent = d.running ? 'Sweeping…' : 'Sweep now'; }
+    const ev = (d.events || []).filter(e => e.kind === 'new-version').map(e => `${_esc(e.product)} ${_esc(e.was)} → ${_esc(e.now)}`);
+    sum.innerHTML = d.enabled === false ? 'The reference updater is switched off (libraryUpdateEnabled in aiq_config.json).'
+      : `Last sweep ${_esc(ago(d.lastRun))}: ${d.checked || 0} page${d.checked === 1 ? '' : 's'} read of ${d.sources || '?'} sources (${d.pagesKnown || 0} known so far; ${d.neverChecked || 0} not read yet), ${d.changedPages || 0} changed${d.baselined ? `, ${d.baselined} read for the first time` : ''}, ${(d.unreachable || []).length} not readable.` + (ev.length ? ` <b>Newer releases seen:</b> ${ev.join('; ')}.` : '') + (d.library && d.library.autoMarkedHarvested ? ' The library changelog was read and needs nothing.' : '') + ` Each sweep reads the key pages plus the stalest sources, one request a second; it runs by itself every day.`;
+    const q = d.queue || [];
+    document.getElementById('refUpdaterQueue').innerHTML = q.length ? `<div style="font-weight:600; margin-bottom:4px;">${q.length} item${q.length === 1 ? '' : 's'} for a person to review</div>` + q.map(i => `<div style="padding:6px 0; border-top:1px solid var(--wa-50);"><div><b>${_esc(i.title)}</b> <span style="color:var(--text-muted);">(${_esc(i.kind)}${i.category ? ', ' + _esc(i.category) : ''}, ${_esc(i.firstSeen || '')})</span></div><div style="color:var(--text-secondary);">${_esc(i.detail || '')}</div>`
+      + `<div style="margin-top:3px;">${i.url ? `<a href="${_esc(i.url)}" target="_blank" rel="noopener">source page</a> · ` : ''}${(i.stubs || []).length ? `<a href="#" data-id="${_esc(i.id)}" onclick="copyLibraryStub(this.dataset.id);return false;">copy rule stub${i.stubs.length > 1 ? 's' : ''}</a> · ` : ''}<a href="#" data-id="${_esc(i.id)}" onclick="ackLibraryItem(this.dataset.id);return false;">done, close it</a></div></div>`).join('') : '<div style="color:var(--text-muted);">Nothing waits for review.</div>';
+    window._libQueue = q;
+    const tb = d.tables || [], bad = tb.filter(x => x.status === 'review' || x.status === 'stale');
+    document.getElementById('refTablesCount').textContent = `${tb.filter(x => x.mode === 'scanner').length} kept up to date by a scanner, ${tb.filter(x => x.mode === 'partial').length} partly, ${tb.filter(x => x.mode === 'manual').length} by hand; ${bad.length} to look at`;
+    document.getElementById('refTablesList').innerHTML = `<table style="width:100%;border-collapse:collapse;">` + tb.map(x => `<tr style="border-top:1px solid var(--wa-50);"><td style="padding:3px 8px 3px 0;">${_esc(x.label)}</td><td style="padding:3px 8px;color:var(--text-muted);">${x.mode === 'scanner' ? 'scanner' : x.mode === 'partial' ? 'scanner + by hand' : 'by hand'}</td><td style="padding:3px 8px;color:${x.status === 'review' || x.status === 'stale' ? '#f59e0b' : 'var(--status-normal)'};">${_esc(x.status)}${x.changedCount ? ` (${x.changedCount} source page${x.changedCount === 1 ? '' : 's'} changed since it was compiled: ${x.changedSources.slice(0, 2).map(c => _esc(c.title)).join(', ')})` : ''}</td></tr>`).join('') + `</table>`;
+    window._refTablesSummary = { total: tb.length, auto: tb.filter(x => x.mode === 'scanner').length, partial: tb.filter(x => x.mode === 'partial').length, manual: tb.filter(x => x.mode === 'manual').length, review: bad.length };
+    if (d.running) setTimeout(loadLibraryUpdater, 5000);
+  } catch (e) { sum.textContent = 'Could not load the updater status: ' + e.message; }
+}
+async function runLibraryUpdate() {
+  const btn = document.getElementById('refUpdaterBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Sweeping…'; }
+  const r = await fetch('/api/library/update/run', { method: 'POST' }); const d = await r.json().catch(() => ({}));
+  showToast(r.ok ? (d.started === false ? 'A sweep is already running.' : 'Sweep started. It takes about a minute.') : (d.error || 'Could not start the sweep.'), r.ok ? 'success' : 'error');
+  setTimeout(loadLibraryUpdater, 4000);
+}
+async function ackLibraryItem(id) {
+  const r = await fetch('/api/library/update/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [id] }) });
+  showToast(r.ok ? 'Closed.' : 'Only administrators can close items.', r.ok ? 'success' : 'error'); loadLibraryUpdater();
+}
+function copyLibraryStub(id) {
+  const it = (window._libQueue || []).find(x => x.id === id); if (!it) return;
+  try { navigator.clipboard.writeText(JSON.stringify(it.stubs, null, 2)); showToast('Rule stub copied. Fill the summary, families and versions from the article, then add it to resolution_rules.json > firmwareKnownIssues.', 'success'); } catch (e) { /* the item stays listed */ }
 }
 async function refreshReferenceNow() {
   const btn = document.getElementById('refRefreshBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }

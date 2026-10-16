@@ -247,6 +247,7 @@ def _get_accounts(cfg=None):
 
 # Enrichment scanner state
 _enrichment_scheduler = None  # Set during server startup
+_library_updater = None       # tools/library_updater.py Scheduler: the weekly library routine, built in
 _harvest_scheduler = None  # Set during server startup -- see HarvestScheduler
 # Guards concurrent read-modify-write access to BULLETINS_PATH — scanners 1-4
 # (CISA KEV, PSIRT, NVD, EPSS) all upsert into the same security_bulletins.json
@@ -11307,7 +11308,10 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         GET  /api/library/search?q=&limit= keyword search over the library's markdown
         GET  /api/library/doc?path=        one library document (markdown text)
         POST /api/library/config           {libraryPath} -- save the folder (empty = auto-detect)
-        POST /api/library/refresh          run every built-in reference scanner now"""
+        POST /api/library/refresh          run every built-in reference scanner now
+        GET  /api/library/update/status    the reference updater: last sweep, tables, review queue
+        POST /api/library/update/run       sweep now (administrators)
+        POST /api/library/update/ack       {ids, note} -- close review items (administrators)"""
         _tools = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools')
         if _tools not in sys.path:
             sys.path.insert(0, _tools)
@@ -11333,17 +11337,36 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     _warns = _recent_harvest_warnings(_wdb)
                 finally:
                     _wdb.close()
-                self._send_json(200, {'harvestWarnings': _warns, 'imtNewer': _ndv_newer(), 'library': lib, 'data': _lm.data_freshness(str(SCRIPT_DIR / 'data')),
+                _data_rows = _lm.data_freshness(str(SCRIPT_DIR / 'data'))
+                try:   # the curated tables are kept by scanners, partly or by hand; the updater says which hand-kept ones have a changed source
+                    import library_updater as _lu
+                    _ust = _lu.status(str(SCRIPT_DIR))
+                    _tb = _ust.get('tables') or []
+                    _rev = [t for t in _tb if t['status'] in ('review', 'stale')]
+                    for _r in _data_rows:
+                        if _r.get('file') == 'reference_library.js' and _tb:
+                            _r['refreshedBy'] = f"{sum(1 for t in _tb if t['mode'] == 'scanner')} tables by scanner, {sum(1 for t in _tb if t['mode'] == 'partial')} partly, {sum(1 for t in _tb if t['mode'] == 'manual')} by hand"
+                            _r['static'] = False; _r['stale'] = bool(_rev)
+                            _r['note'] = (f"{len(_rev)} table(s) have an official source page that changed since the file was compiled: see the reference updater below." if _rev else _r['refreshedBy'] + '; no source change seen since it was compiled.')
+                    lib['updater'] = {'lastRun': _ust.get('lastRun', ''), 'checked': _ust.get('checked', 0), 'pagesKnown': _ust.get('pagesKnown', 0), 'openItems': _ust.get('openItems', 0)}
+                except Exception:
+                    pass
+                self._send_json(200, {'harvestWarnings': _warns, 'imtNewer': _ndv_newer(), 'library': lib, 'data': _data_rows,
                                       'scanner': {'running': bool(sch.get('isRunning') or sch.get('isKbRunning')), 'lastScan': sch.get('lastScan'), 'lastKbScan': sch.get('lastKbScan')}})
             elif method == 'GET' and route == '/api/library/search':
                 root = _lm.find_library(cfg).get('path')
-                if not root:
+                _cache = str(SCRIPT_DIR / 'data' / 'library_refreshed')
+                if not root and not os.path.isdir(_cache):
                     self._send_json(404, {'error': 'Library folder not found. Set its path in Settings > Sync.'})
                 else:
-                    self._send_json(200, _lm.search(root, (q.get('q') or [''])[0], min(int((q.get('limit') or ['25'])[0]), 100)))
+                    self._send_json(200, _lm.search(root, (q.get('q') or [''])[0], min(int((q.get('limit') or ['25'])[0]), 100), extra=_cache))
             elif method == 'GET' and route == '/api/library/doc':
                 root = _lm.find_library(cfg).get('path')
-                text = _lm.read_doc(root, (q.get('path') or [''])[0]) if root else None
+                _dpath = (q.get('path') or [''])[0]
+                if _dpath.startswith('refreshed/'):   # a copy ARIA's reference updater made itself
+                    text = _lm.read_doc(str(SCRIPT_DIR / 'data' / 'library_refreshed'), _dpath[len('refreshed/'):])
+                else:
+                    text = _lm.read_doc(root, _dpath) if root else None
                 if text is None:
                     self._send_json(404, {'error': 'Document not found'})
                 else:
@@ -11359,6 +11382,25 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 cfg['libraryPath'] = path
                 CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
                 self._send_json(200, {'ok': True})
+            elif method == 'GET' and route == '/api/library/update/status':
+                import library_updater as _lu
+                st = _lu.status(str(SCRIPT_DIR))
+                st['running'] = bool(_library_updater and _library_updater.running())
+                st['enabled'] = bool(_library_updater)
+                self._send_json(200, st)
+            elif method == 'POST' and route == '/api/library/update/run':
+                if (getattr(self, '_user', None) or {}).get('role') != 'admin':
+                    self._send_json(403, {'error': 'Administrators only'}); return
+                if not _library_updater:
+                    self._send_json(503, {'error': 'The reference updater is switched off (libraryUpdateEnabled in aiq_config.json)'}); return
+                self._send_json(202, _library_updater.run_now())
+            elif method == 'POST' and route == '/api/library/update/ack':
+                if (getattr(self, '_user', None) or {}).get('role') != 'admin':
+                    self._send_json(403, {'error': 'Administrators only'}); return
+                import library_updater as _lu
+                n = int(self.headers.get('Content-Length') or 0)
+                body = json.loads(self.rfile.read(n) or b'{}')
+                self._send_json(200, {'ok': True, 'closed': _lu.ack(str(SCRIPT_DIR / 'data'), [str(i) for i in (body.get('ids') or [])], str(body.get('note') or '')[:200])})
             elif method == 'POST' and route == '/api/library/refresh':
                 if not _enrichment_scheduler:
                     self._send_json(503, {'error': 'Scanner is not running'}); return
@@ -12490,6 +12532,25 @@ def main(block=True, port=None):
             _enrichment_scheduler.start()
     except Exception as _sched_err:
         print(f'  [STARTUP] Enrichment scheduler failed to start: {_sched_err}', flush=True)
+
+    # Reference updater: sweeps the pages the NetApp Reference Library is built from, compares them with the last read, checks what is new against
+    # ARIA's own data and keeps the review queue (what the weekly library routine did by hand). Public pages only; no AI.
+    try:
+        global _library_updater
+        _cfg_lu = json.loads(CONFIG_PATH.read_text(encoding='utf-8')) if CONFIG_PATH.exists() else {}
+        if _cfg_lu.get('libraryUpdateEnabled', True):
+            _t = str(SCRIPT_DIR / 'tools')
+            if _t not in sys.path:
+                sys.path.insert(0, _t)
+            import library_updater as _lu
+            import library_manager as _lm0
+            _library_updater = _lu.Scheduler(str(SCRIPT_DIR), _load_config, interval_hours=int(_cfg_lu.get('libraryUpdateIntervalHours', 24)), budget=int(_cfg_lu.get('libraryUpdateBudget', 30)),
+                                             on_relevant=lambda: _enrichment_scheduler and _enrichment_scheduler.run_now(), library_manager=_lm0,
+                                             log=lambda m: print(m, flush=True), fetch=_lu.make_fetch(_ssl_ctx))
+            _library_updater.start(delay=240)
+            print('  [LIBRARY] Reference updater scheduled (first sweep in 4 minutes, then every ' + str(int(_cfg_lu.get('libraryUpdateIntervalHours', 24))) + ' h)', flush=True)
+    except Exception as _lu_err:
+        print(f'  [STARTUP] Reference updater failed to start: {_lu_err}', flush=True)
 
     # Start harvest scheduler -- keeps live Active IQ fleet data (systems,
     # risks, cases, config) fresh on its own timer, independent of whether

@@ -106,6 +106,7 @@ edges, one previously-claimed edge that turned out to be false, and prioritized 
 | `launcher.py` | 7.8KB | Desktop launcher (pywebview native window + embedded CORS proxy + fallback browser) |
 | `asup_parser.py` | 25KB | Offline ASUP bundle parser (ONTAP, StorageGRID, E-Series) with ARIA schema normalization |
 | `reference_harvester.py` | — | Dedicated reference harvester tool for harvesting and updating offline reference libraries, data catalogs, IMT interop (20+ vendors), and EOA databases |
+| `library_updater.py` | — | The reference updater: sweeps the pages the NetApp Reference Library is built from, compares each with its last read, checks new releases and ids against ARIA's own data, keeps a review queue and the status of every curated reference table; scheduled by the server (`Scheduler`), shown in Settings > Data & Sync. No AI. See docs/LIBRARY_HARVEST_ROUTINE.md |
 
 ### Configuration & Data Files
 

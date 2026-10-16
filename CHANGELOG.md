@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.338 (2026-10-16)
+
+### Added
+- The weekly library routine is now built into the ARIA engine (tools/library_updater.py), so reference data and the NetApp library are kept current without anyone running a job. Each sweep (four minutes after start-up, then every 24 hours; 'Sweep now' in Settings > Data & Sync) reads the key official pages (release lists, What's new pages, end-of-availability, TR indexes) and the stalest of the 160 source pages the library's documents name, one request a second and public pages only, keeps a searchable copy of each page, and compares it with the last read: a newer release number, new KB, CVE or advisory ids, or lines added and removed.
+- Every new release or id is looked up in ARIA's own data; what ARIA holds is covered, the rest goes to a review queue in Settings with the page, the changed lines and, for known-issue ids, a ready rules stub. A change to a release, end-of-availability, advisory or What's new page runs the existing scanners straight away. The library's unseen CHANGELOG entries are read the same way, and one that says no material changes and names nothing ARIA lacks is recorded as harvested by itself.
+- The Curated reference tables row no longer says 'static (manual)': Settings lists all 21 tables as kept up to date by a scanner (9), partly by a scanner (5) or by hand (7), and for the hand-kept ones names the official pages that changed since the file was compiled. A compatibility range, a prose best-practice fact or a new kind of check is never written by the updater; those stay with a person. Eleven tests cover it (65 in all).
+
 ## 5.6.337 (2026-10-14)
 
 ### Added

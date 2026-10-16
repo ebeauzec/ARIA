@@ -1,0 +1,805 @@
+{
+ "note": "Public pages the NetApp Reference Library is built from (addresses only), used by the reference updater when the library folder is not on this machine.",
+ "sources": [
+  {
+   "category": "Backup-3rdParty",
+   "title": "Prepare ONTAP NDMP configurations",
+   "url": "https://docs.netapp.com/us-en/ontap/ndmp/prepare-ndmp-config-task.html"
+  },
+  {
+   "category": "Backup-3rdParty",
+   "title": "Backup and recover data using StorageGRID and Commvault",
+   "url": "https://docs.netapp.com/us-en/storagegrid-enable/technical-reports/commvault-index.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Learn about the ONTAP management REST APIs",
+   "url": "https://docs.netapp.com/us-en/bluexp-automation/cm/overview.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "NetApp Backup and Recovery documentation",
+   "url": "https://docs.netapp.com/us-en/bluexp-backup-recovery/"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Learn about NetApp Backup and Recovery",
+   "url": "https://docs.netapp.com/us-en/bluexp-backup-recovery/concept-backup-to-cloud.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Scan Cloud Volumes ONTAP and on-premises ONTAP volumes with NetApp Data Classification",
+   "url": "https://docs.netapp.com/us-en/bluexp-classification/task-getting-started-compliance.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Cloud Volumes ONTAP documentation",
+   "url": "https://docs.netapp.com/us-en/bluexp-cloud-volumes-ontap/"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Add an existing Cloud Volumes ONTAP system to NetApp Console",
+   "url": "https://docs.netapp.com/us-en/bluexp-cloud-volumes-ontap/task-adding-systems.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Administer Cloud Volumes ONTAP using System Manager",
+   "url": "https://docs.netapp.com/us-en/bluexp-cloud-volumes-ontap/task-administer-advanced-view.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Plan your Cloud Volumes ONTAP configuration in AWS",
+   "url": "https://docs.netapp.com/us-en/bluexp-cloud-volumes-ontap/task-planning-your-config.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "NetApp Disaster Recovery documentation",
+   "url": "https://docs.netapp.com/us-en/bluexp-disaster-recovery/"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Learn about NetApp Disaster Recovery",
+   "url": "https://docs.netapp.com/us-en/bluexp-disaster-recovery/get-started/dr-intro.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Quick start for NetApp Disaster Recovery",
+   "url": "https://docs.netapp.com/us-en/bluexp-disaster-recovery/get-started/dr-quick-start.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Introduction of NetApp Disaster Recovery using Amazon Elastic VMware Service and Amazon FSx for NetApp ONTAP",
+   "url": "https://docs.netapp.com/us-en/bluexp-disaster-recovery/reference/evs-deploy-guide-introduction.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "NetApp Console documentation",
+   "url": "https://docs.netapp.com/us-en/bluexp-family/"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "NetApp Cloud Tiering documentation",
+   "url": "https://docs.netapp.com/us-en/bluexp-tiering/"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Learn about NetApp Cloud Tiering",
+   "url": "https://docs.netapp.com/us-en/bluexp-tiering/concept-cloud-tiering.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "NetApp Cloud Tiering technical FAQ",
+   "url": "https://docs.netapp.com/us-en/bluexp-tiering/faq-cloud-tiering.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Set up disaster recovery for VMFS datastores using BlueXP disaster recovery",
+   "url": "https://docs.netapp.com/us-en/netapp-solutions-virtualization/vmware/vmw-disaster-recovery-vmfs.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "What's new in Cloud Volumes ONTAP",
+   "url": "https://docs.netapp.com/us-en/storage-management-cloud-volumes-ontap/whats-new.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Administer StorageGRID: Overview",
+   "url": "https://docs.netapp.com/us-en/storagegrid-116/admin/"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "StorageGRID software documentation",
+   "url": "https://docs.netapp.com/us-en/storagegrid-appliances/storagegrid-documentation.html"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "StorageGRID 12.0 software documentation",
+   "url": "https://docs.netapp.com/us-en/storagegrid/"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "Networking guidelines for StorageGRID",
+   "url": "https://docs.netapp.com/us-en/storagegrid/network/"
+  },
+  {
+   "category": "Cloud-BlueXP",
+   "title": "StorageGRID architecture and network topology",
+   "url": "https://docs.netapp.com/us-en/storagegrid/primer/storagegrid-architecture-and-network-topology.html"
+  },
+  {
+   "category": "DSPM",
+   "title": "NetApp Data Classification documentation",
+   "url": "https://docs.netapp.com/us-en/bluexp-classification/"
+  },
+  {
+   "category": "DSPM",
+   "title": "Deploy NetApp Data Classification in the cloud using the NetApp Console",
+   "url": "https://docs.netapp.com/us-en/bluexp-classification/task-deploy-cloud-compliance.html"
+  },
+  {
+   "category": "DSPM",
+   "title": "Scan Cloud Volumes ONTAP and on-premises ONTAP volumes with NetApp Data Classification",
+   "url": "https://docs.netapp.com/us-en/bluexp-classification/task-getting-started-compliance.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "SnapCenter Software 4.2 Getting Started Guide",
+   "url": "https://docs.netapp.com/a/snap/snapcenter/4.2/Getting-Started-Guide.pdf"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "MetroCluster Documentation",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Configure the MetroCluster FC software in ONTAP",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-fc/concept_configure_the_mcc_software_in_ontap.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Considerations when using ONTAP in a MetroCluster configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-fc/concept_considerations_when_using_ontap_in_a_mcc_configuration.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Configure a Cisco switch (MetroCluster FC)",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-fc/task_fcsw_cisco_configure_a_cisco_switch_supertask.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "MetroCluster IP installation workflow",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Requirements to deploy MetroCluster IP configurations in shared layer 2 or layer 3 networks",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/concept-considerations-layer-2-layer-3.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "ONTAP platform-specific network speeds and switch port modes for MetroCluster-compliant switches",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/concept-network-speeds-and-switchport-modes.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Requirements and limitations for MetroCluster-compliant switches",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/concept-requirement-and-limitations-mcc-compliant-switches.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Requirements for Inter-Switch Links (ISLs) on MetroCluster IP configurations",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/concept-requirements-isls.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Differences between ONTAP Mediator and MetroCluster Tiebreaker",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/concept_considerations_mediator.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "ONTAP Mediator installation requirements for MetroCluster IP configurations",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/concept_mediator_requirements.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Required MetroCluster IP configuration components and naming conventions",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/concept_required_mcc_ip_components_and_naming_guidelines_mcc_ip.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Inter-Switch Link requirements for MetroCluster IP configurations",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/overview-isl-requirements.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Platform port assignments for Broadcom supported BES-53248 IP switches in a MetroCluster IP configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/port_usage_bes53248.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Configure ONTAP clusters in a MetroCluster IP configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/task_sw_config_configure_clusters.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Set up MetroCluster Tiebreaker or ONTAP Mediator for a MetroCluster IP configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/task_sw_config_configure_mediator.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Test the ONTAP node switchover for your MetroCluster IP configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/task_test_the_mcc_configuration.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Configuring the FC-to-SAS bridges",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-stretch/task_configure_the_fc_to_sas_bridges_fb_new_install_configure.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Install FC-to-SAS bridges and SAS disk shelves",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-stretch/task_fb_new_install.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Using the Interoperability Matrix Tool to find MetroCluster information",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/maintain/concept_using_the_interoperability_matrix_tool_to_find_mcc_information.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Understanding MetroCluster data protection and disaster recovery",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/manage/concept_understanding_mcc_data_protection_and_disaster_recovery.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Performing switchover for tests or maintenance",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/manage/task_perform_switchover_for_tests_or_maintenance.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Install a stretch MetroCluster configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/pdfs/sidebar/Install_a_stretch_MetroCluster_configuration.pdf"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Overview of the Tiebreaker software",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/tiebreaker/"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Preparing for disruptive FC-to-IP transition",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/transition/concept_requirements_for_fc_to_ip_transition_2n_mcc_transition.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Expanding a four-node MetroCluster FC configuration to an eight-node configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/upgrade/task_expand_a_four_node_mcc_fc_configuration_to_an_eight_node_configuration.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Expanding a four-node MetroCluster IP configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/upgrade/task_expand_a_four_node_mcc_ip_configuration.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Expanding a two-node MetroCluster FC configuration to a four-node configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/upgrade/task_expand_a_two_node_mcc_fc_configuration_to_a_four_node_fc_configuration_supertask.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Refresh a four-node or an eight-node MetroCluster IP configuration (ONTAP 9.8 and later)",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/upgrade/task_refresh_4n_mcc_ip.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Upgrade controllers in a MetroCluster FC configuration using switchover and switchback",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/upgrade/task_upgrade_controllers_in_a_four_node_fc_mcc_us_switchover_and_switchback_mcc_fc_4n_cu.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Business continuity technical reports",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/business-continuity.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "ONTAP SnapCenter technical reports",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/snapcenter.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "MetroCluster continuous availability",
+   "url": "https://docs.netapp.com/us-en/ontap/concepts/mcc-config-concept.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Learn about vault archiving using ONTAP SnapMirror technology",
+   "url": "https://docs.netapp.com/us-en/ontap/data-protection/vault-archive-snapmirror-technology-concept.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Manual nondisruptive ONTAP upgrade of a four- or eight-node MetroCluster configuration using the CLI",
+   "url": "https://docs.netapp.com/us-en/ontap/upgrade/task_updating_a_four_or_eight_node_mcc.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Prepare storage systems for SnapMirror and SnapVault replication for MySQL",
+   "url": "https://docs.netapp.com/us-en/snapcenter-60/protect-mysql/prepare-storage-systems-for-snapmirror-and-snapvault-replication-for-plugin-for-mysql.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "SnapCenter 6.2 cmdlets",
+   "url": "https://docs.netapp.com/us-en/snapcenter-cmdlets/"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "NetApp supported plug-ins overview",
+   "url": "https://docs.netapp.com/us-en/snapcenter/protect-nsp/netapp_supported_plugins_overview.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Prepare storage systems for SnapMirror and SnapVault replication",
+   "url": "https://docs.netapp.com/us-en/snapcenter/protect-sce/reference_prepare_storage_system_for_snapmirror_and_snapvault.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "Prepare storage systems for SnapMirror and SnapVault replication for Plug-in for Oracle",
+   "url": "https://docs.netapp.com/us-en/snapcenter/protect-sco/reference_prepare_storage_systems_for_snapmirror_and_snapvault_replication_for_plugin_for_oracle.html"
+  },
+  {
+   "category": "Data-Protection",
+   "title": "What's new in SnapCenter software 6.2.1",
+   "url": "https://docs.netapp.com/us-en/snapcenter/release-notes/what's-new-in-snapcenter621.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Configure the MetroCluster FC software in ONTAP",
+   "url": "https://docs.netapp.com/us-en/ontap-metrocluster/install-fc/concept_configure_the_mcc_software_in_ontap.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "ONTAP SAN Host Utilities",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "AIX Host Utilities Release Notes",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/hu-aix-release-notes.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "HP-UX Host Utilities Release Notes",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/hu-hpux-release-notes.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Linux Host Utilities Release Notes",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/hu-luhu-release-notes.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Learn about configuring ONTAP SAN hosts with NVMe-oF",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/hu-nvme-index.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Solaris Host Utilities Release Notes",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/hu-solaris-release-notes.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Windows Host Utilities Release Notes",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/hu-wuhu-release-notes.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Overview (Configure hosts with FCP and iSCSI)",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/hu_fcp_scsi_index.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Learn about SAN Host Utilities",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/hu_sanhost_index.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Learn about SAN host configurations",
+   "url": "https://docs.netapp.com/us-en/ontap-sanhost/overview.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Cable the hardware - AFF A20, AFF A30, and AFF A50",
+   "url": "https://docs.netapp.com/us-en/ontap-systems/a20-30-50/install-cable.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Detailed guide - AFF A220",
+   "url": "https://docs.netapp.com/us-en/ontap-systems/a220/install-detailed-guide.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Detailed guide - AFF A700",
+   "url": "https://docs.netapp.com/us-en/ontap-systems/a700/install-detailed-guide.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Detailed steps - AFF A800",
+   "url": "https://docs.netapp.com/us-en/ontap-systems/a800/install-detailed-guide.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Detailed guide - FAS8300 and FAS8700",
+   "url": "https://docs.netapp.com/us-en/ontap-systems/fas8300/install-detailed-guide.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "Detailed guide - FAS9000",
+   "url": "https://docs.netapp.com/us-en/ontap-systems/fas9000/install-detailed-guide.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "SAN management overview",
+   "url": "https://docs.netapp.com/us-en/ontap/san-admin/index.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "ONTAP support for SAN host multipathing",
+   "url": "https://docs.netapp.com/us-en/ontap/san-config/host-support-multipathing-concept.html"
+  },
+  {
+   "category": "Host-Integration-Cabling",
+   "title": "SAN configuration overview",
+   "url": "https://docs.netapp.com/us-en/ontap/san-config/index.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "Autonomous Ransomware Protection for NFS and VMFS",
+   "url": "https://docs.netapp.com/us-en/netapp-solutions-virtualization/vmware/vmw-arp-nfs-vmfs.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "Configure disaster recovery for NFS datastores using VMware Site Recovery Manager",
+   "url": "https://docs.netapp.com/us-en/netapp-solutions-virtualization/vmware/vmw-nfs-vlsr.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "NFS",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vsphere-datastores-nfs.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "SAN (FC, FCoE, NVMe/FC, iSCSI), RDM",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vsphere-datastores-san.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "vSphere datastore and protocol features overview",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vsphere-datastores-top.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "VMware vSphere with ONTAP best practices guide",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vsphere-overview.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "Quality of service (QoS)",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vsphere-qos.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "Recommended ESXi host and other ONTAP settings",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vsphere-settings.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "VMware vSphere Virtual Volumes (vVols) overview",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware-vvols-overview.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "vSphere Metro Storage Cluster with ONTAP",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware_vmsc_overview.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "Configure SRA on the VMware Live Site Recovery appliance using ONTAP tools",
+   "url": "https://docs.netapp.com/us-en/ontap-tools-vmware-vsphere-10/protect/configure-on-srm-appliance.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "Configure disaster recovery setup",
+   "url": "https://docs.netapp.com/us-en/ontap-tools-vmware-vsphere/concepts/concept_manage_disaster_recovery_setup_using_srm.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "Configure SRA with SRM in a Shared recovery site configuration",
+   "url": "https://docs.netapp.com/us-en/ontap-tools-vmware-vsphere/protect/configure_sra_with_srm_shared_site.html"
+  },
+  {
+   "category": "Hypervisors",
+   "title": "ONTAP tools for VMware vSphere Quick Start",
+   "url": "https://docs.netapp.com/us-en/ontap-tools-vmware-vsphere/qsg.html"
+  },
+  {
+   "category": "Kubernetes-Containers",
+   "title": "Trident 26.02 documentation",
+   "url": "https://docs.netapp.com/us-en/trident/"
+  },
+  {
+   "category": "Kubernetes-Containers",
+   "title": "Learn about Trident",
+   "url": "https://docs.netapp.com/us-en/trident/trident-get-started/intro.html"
+  },
+  {
+   "category": "Kubernetes-Containers",
+   "title": "Quick start for Trident",
+   "url": "https://docs.netapp.com/us-en/trident/trident-get-started/quickstart.html"
+  },
+  {
+   "category": "Kubernetes-Containers",
+   "title": "Requirements",
+   "url": "https://docs.netapp.com/us-en/trident/trident-get-started/requirements.html"
+  },
+  {
+   "category": "Kubernetes-Containers",
+   "title": "Manually deploy the Trident operator (Standard mode)",
+   "url": "https://docs.netapp.com/us-en/trident/trident-install/kubernetes-deploy-operator.html"
+  },
+  {
+   "category": "Kubernetes-Containers",
+   "title": "What's new (Trident Release Notes)",
+   "url": "https://docs.netapp.com/us-en/trident/trident-rn.html"
+  },
+  {
+   "category": "Migration",
+   "title": "NetApp Copy and Sync documentation",
+   "url": "https://docs.netapp.com/us-en/bluexp-copy-sync/"
+  },
+  {
+   "category": "Migration",
+   "title": "BlueXP copy and sync technical FAQ",
+   "url": "https://docs.netapp.com/us-en/bluexp-copy-sync/faq.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Learn about NetApp Copy and Sync",
+   "url": "https://docs.netapp.com/us-en/data-services-copy-sync/concept-cloud-sync.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Deployment steps",
+   "url": "https://docs.netapp.com/us-en/netapp-solutions-dataops/xcp/xcp-bp-deployment-steps.html"
+  },
+  {
+   "category": "Migration",
+   "title": "NetApp XCP",
+   "url": "https://docs.netapp.com/us-en/netapp-solutions-dataops/xcp/xcp-bp-netapp-xcp-overview.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Migration workflow",
+   "url": "https://docs.netapp.com/us-en/netapp-solutions/xcp/xcp-bp-migration-workflow-overview.html"
+  },
+  {
+   "category": "Migration",
+   "title": "7-Mode Transition Documentation",
+   "url": "https://docs.netapp.com/us-en/ontap-7mode-transition/"
+  },
+  {
+   "category": "Migration",
+   "title": "ONTAP Foreign LUN Import Documentation",
+   "url": "https://docs.netapp.com/us-en/ontap-fli/"
+  },
+  {
+   "category": "Migration",
+   "title": "Foreign LUN Import overview",
+   "url": "https://docs.netapp.com/us-en/ontap-fli/san-migration/concept_foreign_lun_import_overview.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Using Foreign LUN Import to import LUNs into AFF",
+   "url": "https://docs.netapp.com/us-en/ontap-fli/san-migration/concept_using_fli_to_import_luns_into_all_flash.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Map the source LUN to the ONTAP array for an FLI online migration",
+   "url": "https://docs.netapp.com/us-en/ontap-fli/san-migration/map-source-lun-to-destination-online-migration.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Prepare foreign storage array LUNs for an ONTAP FLI offline migration",
+   "url": "https://docs.netapp.com/us-en/ontap-fli/san-migration/prepare-foreign-lun-offline.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Move an ONTAP volume",
+   "url": "https://docs.netapp.com/us-en/ontap-sm-classic/online-help-96-97/task_moving_flexvol_volumes_between_aggregates_or_nodes.html"
+  },
+  {
+   "category": "Migration",
+   "title": "XCP documentation",
+   "url": "https://docs.netapp.com/us-en/xcp/"
+  },
+  {
+   "category": "Migration",
+   "title": "Migrate NFS data",
+   "url": "https://docs.netapp.com/us-en/xcp/xcp-migrate-data.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Migrate SMB data",
+   "url": "https://docs.netapp.com/us-en/xcp/xcp-migrate-smb-data.html"
+  },
+  {
+   "category": "Migration",
+   "title": "Plan NFS data migration",
+   "url": "https://docs.netapp.com/us-en/xcp/xcp-plan-nfs-data-migration.html"
+  },
+  {
+   "category": "Networking-Performance",
+   "title": "qos statistics workload performance show",
+   "url": "https://docs.netapp.com/us-en/ontap-cli/qos-statistics-workload-performance-show.html"
+  },
+  {
+   "category": "Networking-Performance",
+   "title": "ONTAP NAS technical reports",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/nas.html"
+  },
+  {
+   "category": "Networking-Performance",
+   "title": "ONTAP SAN technical reports",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/san.html"
+  },
+  {
+   "category": "Networking-Performance",
+   "title": "Set throughput with ONTAP adaptive QoS policy groups",
+   "url": "https://docs.netapp.com/us-en/ontap/performance-admin/adaptive-qos-policy-groups-task.html"
+  },
+  {
+   "category": "Networking-Performance",
+   "title": "Learn about ONTAP QoS throughput guarantee",
+   "url": "https://docs.netapp.com/us-en/ontap/performance-admin/guarantee-throughput-qos-task.html"
+  },
+  {
+   "category": "Networking-Performance",
+   "title": "Set a throughput ceiling with ONTAP QoS policy groups",
+   "url": "https://docs.netapp.com/us-en/ontap/performance-admin/set-throughput-ceiling-qos-task.html"
+  },
+  {
+   "category": "Networking-Performance",
+   "title": "Set a throughput floor with ONTAP QoS policy groups",
+   "url": "https://docs.netapp.com/us-en/ontap/performance-admin/set-throughput-floor-qos-task.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "vSphere Metro Storage Cluster with ONTAP",
+   "url": "https://docs.netapp.com/us-en/ontap-apps-dbs/vmware/vmware_vmsc_overview.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.10.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9101/index.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.11.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9111/"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.12.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9121/index.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.13.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9131/"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.14.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9141/"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.15.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9151/index.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.16.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9161/index.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.17.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9171/index.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.18.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-9181/index.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.18.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-93/"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.9.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli-991/"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9.18.1 commands",
+   "url": "https://docs.netapp.com/us-en/ontap-cli/"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "NetApp Technical Reports",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP and application and database technical reports",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/apps-dbs.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP security technical reports",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/security.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP virtualization technical reports",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/virtualization.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP 9 documentation",
+   "url": "https://docs.netapp.com/us-en/ontap/"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "ONTAP command reference",
+   "url": "https://docs.netapp.com/us-en/ontap/concepts/manual-pages.html"
+  },
+  {
+   "category": "ONTAP-Core",
+   "title": "What's new in ONTAP 9.19.1",
+   "url": "https://docs.netapp.com/us-en/ontap/release-notes/whats-new-9191.html"
+  },
+  {
+   "category": "Security-Hardening",
+   "title": "Learn about NetApp Ransomware Resilience",
+   "url": "https://docs.netapp.com/us-en/data-services-ransomware-resilience/concept-ransomware-resilience.html"
+  },
+  {
+   "category": "Security-Hardening",
+   "title": "ONTAP security hardening guides",
+   "url": "https://docs.netapp.com/us-en/ontap-technical-reports/security-hardening-guides.html"
+  },
+  {
+   "category": "Security-Hardening",
+   "title": "Learn about ONTAP Autonomous Ransomware Protection",
+   "url": "https://docs.netapp.com/us-en/ontap/anti-ransomware/"
+  },
+  {
+   "category": "Security-Hardening",
+   "title": "Enable ONTAP Autonomous Ransomware Protection by default in new volumes",
+   "url": "https://docs.netapp.com/us-en/ontap/anti-ransomware/enable-default-task.html"
+  },
+  {
+   "category": "Security-Hardening",
+   "title": "Enable ONTAP Autonomous Ransomware Protection on a volume",
+   "url": "https://docs.netapp.com/us-en/ontap/anti-ransomware/enable-task.html"
+  },
+  {
+   "category": "Security-Hardening",
+   "title": "ONTAP Autonomous Ransomware Protection use cases and considerations",
+   "url": "https://docs.netapp.com/us-en/ontap/anti-ransomware/use-cases-restrictions-concept.html"
+  }
+ ]
+}

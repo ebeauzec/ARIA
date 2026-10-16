@@ -23,7 +23,7 @@ _LIB_MARKER = 'INDEX.md'
 _LIB_NAME = 'NetApp Reference Library'
 _MAX_FILE_BYTES = 3 * 1024 * 1024
 _index_lock = threading.Lock()
-_index_cache = {'sig': None, 'docs': [], 'root': None}
+_index_cache = {}   # root -> {'sig', 'docs'}
 
 
 # ── locating the folder ──────────────────────────────────────────────────────
@@ -198,9 +198,10 @@ def _build_index(root):
 def _get_index(root):
     sig = _signature(root)
     with _index_lock:
-        if _index_cache['sig'] != sig:
-            _index_cache.update({'sig': sig, 'docs': _build_index(root), 'root': root})
-        return _index_cache['docs']
+        hit = _index_cache.get(root)
+        if not hit or hit['sig'] != sig:
+            hit = _index_cache[root] = {'sig': sig, 'docs': _build_index(root)}
+        return hit['docs']
 
 
 def _snippet(text, lower, terms, width=240):
@@ -217,13 +218,17 @@ def _snippet(text, lower, terms, width=240):
     return ('… ' if start > 0 else '') + s + (' …' if end < len(text) else '')
 
 
-def search(root, query, limit=25):
-    """Keyword search: every term must appear in the document; title hits and repeated hits rank higher."""
+def search(root, query, limit=25, extra=None):
+    """Keyword search: every term must appear in the document; title hits and repeated hits rank higher. `extra` is a second folder of markdown
+    (the copies ARIA refreshed itself), listed under 'refreshed/'."""
     terms = [t for t in re.findall(r'[A-Za-z0-9][A-Za-z0-9._\-/]*', (query or '').lower()) if len(t) > 1]
-    if not root or not terms:
+    if (not root and not extra) or not terms:
         return {'query': query, 'results': [], 'total': 0}
     results = []
-    for d in _get_index(root):
+    docs = list(_get_index(root)) if root and os.path.isdir(root) else []
+    if extra and os.path.isdir(extra):
+        docs += [dict(d, path='refreshed/' + d['path'], category='Auto-refreshed: ' + d['category']) for d in _get_index(extra)]
+    for d in docs:
         low = d['lower']
         if not all(t in low for t in terms):
             continue
