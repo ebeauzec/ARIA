@@ -1,8 +1,8 @@
 {
-  "version": "5.6.340",
+  "version": "5.6.341",
   "major": 5,
   "minor": 6,
-  "patch": 340,
+  "patch": 341,
   "date": "2026-10-16",
-  "notes": "Success Plans: automatic updates after each harvest; manual plan form with objectives, metrics, stakeholders, milestones and actions"
+  "notes": "Documentation audit and update (README, CONTEXT, docs); Success Plan auto-update skips viewer sessions"
 }

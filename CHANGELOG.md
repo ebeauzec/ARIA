@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.341 (2026-10-16)
+
+### Changed
+- Documentation brought up to date with everything shipped since 5.6.262. README: version badge; the new analysis (cluster-level reporting, known exploited vulnerabilities with their evidence rule, the security hardening scorecard, SnapMirror health, unowned drives, What changed, automatic update settings); the Success Plans use case, dashboard section, 19-template trigger table (Best Practice & Configuration Hardening was missing) and the new write chain, progress sync and manual form; light theme, Connection check and Reference updater in Settings; three background timers; repository layout, component sizes, development workflow and release rule; new troubleshooting rows (401 through a proxy, empty first sync, account warning, partial Success Plan, plans not updating). CONTEXT.md: current version, corrected file inventory (paths under tools/, sizes, new data files and documents) and a new addendum for 5.6.276 to 5.6.340 describing how the code is organised. docs: DEPLOY (role table, ARIA_NO_PROXY, outbound access, automatic plan updates, image tag, Settings > Access), DATA_SOURCES (plan write-backs, the library updater's pages), OFFLINE (dark-site reference data), data/README, PLATFORM_COVERAGE (installed cards, verification tools, what Active IQ does not give) and a historical note on ARIA_FIX_PLAN.
+- The automatic Success Plan update now skips a signed-in viewer's session (the server would refuse the write on every harvest); an administrator's open session, or a single-user install, does the update. The Success Plans tab says so.
+
 ## 5.6.340 (2026-10-16)
 
 ### Added

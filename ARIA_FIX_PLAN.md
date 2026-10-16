@@ -1,3 +1,7 @@
+> **Historical note (2026-10-16).** This is the status note of an early fix round (enrichment-scheduler staleness checks and related changes). All of it has shipped and
+> is superseded by `CHANGELOG.md` (release history) and `CONTEXT.md` (current architecture). It is kept only as a record; do not treat the "uncommitted" and
+> "mid-session conflict" remarks below as current state.
+
 # ARIA Fix Plan — Round 3: enrichment optimizations implemented
 
 Rounds 1 (contract-null cascade, asup_parser, mock badge, sustainabilityScore/

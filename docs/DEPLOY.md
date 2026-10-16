@@ -6,7 +6,7 @@ By default ARIA is a single-user tool: it listens on `127.0.0.1` and has no sign
 
 - **Sign-in** with ARIA's own accounts (`ARIA_AUTH=local`), or single sign-on through a reverse proxy you already run (`ARIA_AUTH=header`).
 - **A default administrator** so there is always a way in on the first start (`admin` / `Changeme1!`), which has to choose a new password at the first sign-in before anything else works.
-- **User administration in Settings** (Settings > Users & Access): add and remove people, set roles, reset passwords, change your own password.
+- **User administration in Settings** (Settings > Access): add and remove people, set roles, reset passwords, change your own password.
 - **Two roles.** `admin` can do everything. `viewer` can read dashboards, the Action Planner, reports and exports from the data already synced.
 - **Hardened by default.** Non-root user, read-only root filesystem, no capabilities, host-name check, same-origin check, signed session cookies, login throttling, security headers, an audit line for every state-changing call.
 - **One volume** for everything ARIA writes: Active IQ tokens, the cache database, user accounts, reference data.
@@ -36,6 +36,7 @@ Important points before you start:
 | `ARIA_SESSION_SECRET` | generated, stored on the volume | Key that signs session cookies |
 | `ARIA_COOKIE_SECURE` | off | Set to `1` when ARIA is served over HTTPS (it is also set automatically when `X-Forwarded-Proto: https` arrives) |
 | `ARIA_CA_BUNDLE` | | Path to extra trusted CA certificates (for example a TLS inspection CA) |
+| `ARIA_NO_PROXY` | off | `1` makes every connection direct, ignoring the system proxy. Without it ARIA retries once without the proxy when a proxy answers an Active IQ request with 401 or 407 |
 | `ARIA_HEADER_USER`, `ARIA_HEADER_GROUPS` | `X-Forwarded-User`, `X-Forwarded-Groups` | Header mode: where the proxy puts the user name and groups |
 | `ARIA_ADMIN_USERS`, `ARIA_ADMIN_GROUPS` | | Header mode: who is an administrator (user names / group names). Everyone else is a viewer |
 | `ARIA_VIEWER_GROUPS` | | Header mode: if set, only people in these groups (or an admin group) may sign in |
@@ -83,7 +84,7 @@ docker compose up -d --build
 # 4. if you set ARIA_ADMIN_PASSWORD, remove it from .env and restart; the account is already created
 ```
 
-Add people in Settings > Users & Access, or with the command line inside the container:
+Add people in Settings > Access, or with the command line inside the container:
 
 ```bash
 docker compose exec aria python server.py --add-user alice --role viewer     # prompts for a password
@@ -99,8 +100,8 @@ The same actions are in the API: `GET/POST/DELETE /api/auth/users` (administrato
 The manifests are in [`deploy/k8s`](../deploy/k8s): namespace, persistent volume claim, deployment (one replica, non-root, read-only root filesystem, probes on `/healthz`), service, ingress with TLS, and a network policy.
 
 ```bash
-docker build -t registry.example.com/aria:5.6.266 .
-docker push registry.example.com/aria:5.6.266
+docker build -t registry.example.com/aria:5.6.341 .
+docker push registry.example.com/aria:5.6.341
 # edit deploy/k8s/deployment.yaml (image, ARIA_ALLOWED_HOSTS), ingress.yaml (host, TLS secret) and networkpolicy.yaml (ingress namespace)
 cp deploy/k8s/secret.example.yaml deploy/k8s/secret.yaml        # optional: your own first-administrator password; do not commit it
 kubectl apply -f deploy/k8s/secret.yaml
@@ -130,13 +131,21 @@ ARIA trusts that header completely, so ARIA must not be reachable except through
 | Dashboards, Action Planner, reports, Word/Markdown exports | yes | yes |
 | Read synced data, tracker, history, reference data | yes | yes |
 | Start a sync, change settings, add Active IQ tokens | yes | no |
-| Write back to Active IQ (acknowledge risks, Success Plans, CQV) | yes | no |
+| Write back to Active IQ (acknowledge or withdraw risks, create and update Success Plans, CQV) | yes | no |
+| Success Plans updated automatically after each harvest (runs in an open administrator session) | yes | no (the viewer's page skips it) |
+| Run or acknowledge the reference updater (Settings > Data & Sync) | yes | no |
 | Update the remediation tracker, import AutoSupport files | yes | no |
 | Use the Active IQ proxy and probes | yes | no |
-| Manage users (Settings > Users & Access) | yes | no |
+| Manage users (Settings > Access) | yes | no |
 | Change their own password | yes | yes |
 
 A viewer who clicks an administrator-only action gets a "Your role does not allow this" message.
+
+## Outbound access
+
+The container needs outbound HTTPS to the Active IQ services (`api.activeiq.netapp.com`, `gql.aiq.netapp.com`) and, for the reference scanners and the reference updater, to the public sources listed in [DATA_SOURCES.md](DATA_SOURCES.md) (cisa.gov, nvd.nist.gov, api.first.org, security.netapp.com, kb.netapp.com, docs.netapp.com, github.com and a few others). The updater makes one request a second to public pages only and never signs in anywhere. Where outbound access is restricted, allow those hosts or switch the scanners and the updater off in Settings > Data & Sync; ARIA keeps working from the reference files already in the volume.
+
+**Automatic Success Plan updates** run in the browser of a signed-in administrator after each harvest loads, not in the server: with nobody signed in, plans are not updated until an administrator opens ARIA.
 
 ## Corporate TLS inspection
 

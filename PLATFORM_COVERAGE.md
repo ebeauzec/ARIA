@@ -146,6 +146,13 @@ for every harvest query. See `CONTEXT.md` for details.
 
 ---
 
+## Added since v5.6.221
+
+- **Installed cards (rear panel).** The adapter inventory Active IQ reports (slot, card, type, ports, firmware) is shown as a table next to the drawing, with a note where the inventory and the reported ports disagree. Onboard devices (slot 0), storage-shelf, service-processor and internal ports are not flagged as missing from ONTAP's network port list. `tools/verify_rear_panels.py` checks every documented port has a place in the drawing; `tools/verify_rear_panels_reverse.py` lists every fixed port the drawing shows that NetApp's install, cabling and setup pages for that platform never mention. Run both after changing a drawing.
+- **Cluster, grid, array.** An ONTAP cluster, a StorageGRID grid and an E-Series array are different units everywhere in the interface and documents; a grid or array is never called a cluster. StorageGRID nodes that cannot be placed in a grid are reported as such.
+- **What Active IQ does not give, by platform** (live schema): SnapMirror source, destination, policy and lag (only `snapMirrorRelationships.totalCount` per cluster), auto-assign state, MetroCluster partner, and the E-Series and StorageGRID fields listed in the README under *Data Active IQ does not provide*. ARIA shows these as *not reported* or builds an honest substitute from Active IQ's findings (SnapMirror health), and says so.
+- **Known issues by card firmware** are rules in `resolution_rules.json` (first rule: the X60132A 4-port CX7 25GbE module on firmware 28.49.1014, CFDIAGS-40); the adapter inventory of every system is checked against them.
+
 ## How to keep this file honest
 
 - When a platform/switch/ISL figure is verified or corrected, update the

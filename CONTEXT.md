@@ -1,9 +1,9 @@
 # CONTEXT.md — Active IQ Reporting Tool (ARIA)
 
 > **Reconstructed**: 2026-07-28 from full codebase analysis + previous conversation artifacts.
-> **Current Version**: 5.6.233 (per `version.json`, dated 2026-10-03)
-> **Note**: Sections 1-4 were refreshed 2026-09-27. Sections 5-12 still describe the app as of v4.0.7
-> (2026-08-04) and predate the dated addenda below plus everything through v5.6.221 -- treat them
+> **Current Version**: 5.6.340 (per `version.json`, dated 2026-10-16). Addenda run through v5.6.340; the last one is "Cluster-level reporting ... Success Plans" at the end of this file.
+> **Note**: Sections 1-4 were refreshed 2026-10-16 (file inventory, views, data sources). Sections 5-12 still describe the app as of v4.0.7
+> (2026-08-04) and predate the dated addenda below plus everything through v5.6.340 -- treat them
 > as a historical snapshot, not current state (items known to be out of date are struck through). For what's actually shipped since, read the addenda
 > at the end of this file and `APP_CHANGELOG` in `app.js` (near line 32), not the tables in 5-8.
 
@@ -96,24 +96,30 @@ edges, one previously-claimed edge that turned out to be false, and prioritized 
 
 | File | Size | Purpose |
 |------|------|---------|
-| `server.py` | 572 KB / 10,245 lines | Central HTTP proxy, SQLite cache, GraphQL harvester, enrichment engine (9 scanners including the hardware-docs harvester), version catalog, ASUP handler, TLS auto-config, cluster name derivation, E-Series hardware synthesis |
-| `app.js` | 2.30 MB / 38,337 lines | All frontend logic: state management, API calls, tab rendering, enrichment display, remediation plan generator, reference library, dynamic version management, platform-aware upgrade paths (ONTAP + StorageGRID + E-Series), deliverable DR/capacity/adoption intelligence, controller rear-panel SVG drawings |
+| `server.py` | 724 KB / 12,663 lines | Central HTTP proxy, SQLite cache, GraphQL harvester, enrichment engine (9 scanners including the hardware-docs harvester), version catalog, ASUP handler, TLS auto-config, cluster name derivation, E-Series hardware synthesis, risk acknowledgement writes, `/api/doctor` connection check, reference updater routes and scheduler |
+| `app.js` | 3.2 MB / 47,671 lines | All frontend logic: state management, API calls, tab rendering, enrichment display, remediation plan generator, reference library, dynamic version management, platform-aware upgrade paths (ONTAP + StorageGRID + E-Series), deliverable DR/capacity/adoption intelligence, controller rear-panel SVG drawings |
 | `index.html` | 125KB / 1,597 lines | Production dashboard SPA (8 nav views, sidebar nav, search, modals) |
-| `index_src.html` | 129KB / 1,694 lines | Development/source version of dashboard — includes ASUP import modal DOM + enhanced error handling |
-| `styles.css` | 31 KB / 1,396 lines | Complete dark-mode design system with CSS custom properties, responsive layouts, animations |
+| `index_src.html` | 139 KB / 1,815 lines | Development/source version of dashboard (the build inlines `app.js` and `styles.css` into `index.html`) |
+| `styles.css` | 73 KB / 2,089 lines | Dark and light design system with CSS custom properties, responsive layouts, animations |
 | `chart.js` | 208KB | Bundled Chart.js library |
 | `hw_docs_harvester.py` | — | Fetches NetApp's official hardware/cabling documentation per platform, writes `data/platform_hardware.json` |
 | `launcher.py` | 7.8KB | Desktop launcher (pywebview native window + embedded CORS proxy + fallback browser) |
-| `asup_parser.py` | 25KB | Offline ASUP bundle parser (ONTAP, StorageGRID, E-Series) with ARIA schema normalization |
-| `reference_harvester.py` | — | Dedicated reference harvester tool for harvesting and updating offline reference libraries, data catalogs, IMT interop (20+ vendors), and EOA databases |
-| `library_updater.py` | — | The reference updater: sweeps the pages the NetApp Reference Library is built from, compares each with its last read, checks new releases and ids against ARIA's own data, keeps a review queue and the status of every curated reference table; scheduled by the server (`Scheduler`), shown in Settings > Data & Sync. No AI. See docs/LIBRARY_HARVEST_ROUTINE.md |
+| `tools/asup_parser.py` | 25KB | Offline ASUP bundle parser (ONTAP, StorageGRID, E-Series) with ARIA schema normalization |
+| `tools/reference_harvester.py` | — | Dedicated reference harvester tool for harvesting and updating offline reference libraries, data catalogs, IMT interop (20+ vendors), and EOA databases |
+| `tools/library_updater.py` | — | The reference updater: sweeps the pages the NetApp Reference Library is built from, compares each with its last read, checks new releases and ids against ARIA's own data, keeps a review queue and the status of every curated reference table; scheduled by the server (`Scheduler`), shown in Settings > Data & Sync. No AI. See docs/LIBRARY_HARVEST_ROUTINE.md |
 
 ### Configuration & Data Files
 
 | File | Purpose |
 |------|---------|
-| `aiq_config.json` | Stores refresh token, watchlist IDs, TAM info |
-| `version.json` | Source of truth for version number (currently 5.6.136) |
+| `aiq_config.json` | Stores refresh token(s), watchlist IDs, TAM info, scheduler and updater settings (git-ignored) |
+| `api_queries.json` | Every Active IQ endpoint, query, mutation and fragment; the program has no query text of its own |
+| `resolution_rules.json` | Finding-resolution wording and product matching, firmware and upgrade-path known issues (a copy in `data/` overrides it) |
+| `tools/library_sources.json` | The page list of the reference updater (key pages and the library's `Source:` urls) |
+| `data/library_update_*.json`, `data/library_refreshed/` | Reference updater state, review queue, report and the kept copy of each page read |
+| `data/cisa_kev.json`, `data/advisory_index.json`, `data/advisory_resolutions.json` | CISA KEV catalog, NetApp's CVE-to-advisory index, and the resolution (fixed release / workaround) of each advisory |
+| `data/derived_reference.json`, `data/fleet_evidence.json`, `data/ontap_release_notes.json` | Reference tables ARIA derives itself, evidence recorded at each harvest, release highlights |
+| `version.json` | Source of truth for version number (read it; the app, `CHANGELOG.md` and the `?v=` stamps must match) |
 | `data/platform_hardware.json` | Harvested per-platform port/slot assignments from NetApp's official docs (feeds the rear-panel documentation panel) |
 | `data/firmware_baselines.json` | Ground-truth firmware recommendations (ONTAP, SP/BMC, shelf, disk, StorageGRID, SANtricity) |
 | `data/security_bulletins.json` | Local CVE/NTAP advisory database for offline security matching |
@@ -139,7 +145,13 @@ edges, one previously-claimed edge that turned out to be false, and prioritized 
 
 | File | Purpose |
 |------|---------|
-| `README.md` | Comprehensive user & developer manual (1,000+ lines) |
+| `README.md` | Comprehensive user & developer manual (1,200 lines) |
+| `PLATFORM_COVERAGE.md` | What ARIA shows per platform family and what Active IQ does not provide |
+| `docs/DEPLOY.md` | Containers, Kubernetes, sign-in and roles |
+| `docs/DATA_SOURCES.md` | Where every piece of data comes from |
+| `docs/OFFLINE.md` | The offline / dark-site path (AutoSupport import) |
+| `docs/LIBRARY_HARVEST_ROUTINE.md` | The maintenance routine for the NetApp Reference Library's review queue |
+| `THIRD_PARTY_NOTICES.md` | Open-source components |
 | `CHANGELOG.md` | Full release history (v1.0.0 through current) |
 | `LEGAL.md` | IP ownership declaration |
 | `LICENSE` | Proprietary license (Obi1 - FZCO, non-commercial free, commercial requires consent) |
@@ -198,7 +210,8 @@ Also includes: `brace_report.txt` (JS syntax audit), `fix_guidelines.ps1` (one-o
 
 ### View 7: Success Plans (`success`)
 - Real Active IQ Success Plans (read AND write): owner, lifecycle stage, status, objectives, milestones and actions with progress (`_cspProgress`)
-- Plans ARIA submits carry the complete affected-system list (notes fallback when a field is too large); mutations use `notes:[{message}]` and `results{ id type success errors }`
+- 19 suggestion templates (`SUCCESS_PLAN_TEMPLATES`); a suggestion is composed into a complete, measurable plan (`_spComposePlan`), previewed, and written as plan + milestones + actions (`_spPushPlan`); progress is re-measured and written back after each harvest (`autoSyncSuccessPlans`). See the last addendum.
+- Manual plans: the New Success Plan form builds the same model (`_spReadManualForm`). Mutations use `notes:[{message, date}]` and `results{ id type success errors }`
 
 ### View 8: Settings & Config (`settings`)
 - API Authentication (refresh token, base URL, offline demo toggle)
@@ -953,3 +966,30 @@ system's family to `system.risksNotApplicable` (and drops them from `securityBul
 Fleet-wide invariants worth re-running after any change to findings or capacity logic (browser console on a loaded fleet): no database advisory whose ID NetApp does not publish (`ADVISORY_NOT_FOUND`); `_capacityHeadroomPct` always 0-100 or null; no system `_osIsCurrent` while `_fixUpgradeNeeded`; every `riskResolution(...).cleared` finding is in the single 'check in Active IQ' action; fix target never below the installed release. Extend the audit script rather than fixing one document at a time.
 
 Data provenance rule (5.6.282): nothing is shown as a finding unless Active IQ raised it or a NetApp advisory (checked through `/api/advisory-resolutions`, which holds NetApp's CVE index in `data/advisory_index.json`) confirms it for the installed release. `data/security_bulletins.json` seed rows and `REFERENCE_LIBRARY_ADVISORIES` are hints only; `_rrAlignBulletin` / `_rrAlignRisk` replace their title, severity and score with NetApp's. Hand-compiled tables (EOA dates, shelf firmware baselines, version lists) disagree with Active IQ's own figures and are fallbacks only: Active IQ's per-system value always wins.
+
+
+## Cluster-level reporting, KEV, hardening, reference updater and Success Plans (v5.6.276 - v5.6.340)
+
+Read `CHANGELOG.md` for each release; this is the map of what changed in how the code is organised.
+
+**Findings and upgrade targets (5.6.276-291).** One upgrade target per system (`_sysFixTarget`), on the release line the system runs; a P-release on that line is the default fix; Active IQ's cross-line recommendation is shown as an option. Findings Active IQ still reports although the installed release contains the fix are one *check in Active IQ* action (`riskResolution(...).cleared`). Findings ARIA made up from its own reference library are no longer listed (5.6.281): a finding exists only if Active IQ raised it or a NetApp advisory confirms it. NetApp's complete advisory index (about 4,500 advisories, CVE to advisory) is downloaded daily and refreshed only where NetApp's own last-updated date changed. MFG_TEST units are excluded. Word tables: SLA matrix, SVM/LIF summary, recommendation scores.
+
+**Reference data without AI (5.6.292-306).** `tools/derived_reference.py`, `eoa_list.py`, `ontap_release_notes.py`, `netapp_docs_versions.py` compute the reference tables from NetApp's public pages and the fleet; `data/reference_library.js` is optional and the scanners' data is applied over it. The harvest keeps a previous result when a new one lost 10% or more of customers/sites; `/api/harvest` is built once per cache version and gzip-compressed; cache metadata is its own table (`harvest_cache_meta`). Token cleaning (newline, quotes, `Bearer `), a 401/407 through a proxy is retried without the proxy (5.6.309), and an account whose harvest fails is flagged in Settings until one succeeds.
+
+**Connection check and hardware (5.6.302-316).** `/api/doctor` backs Settings > Connection check. The rear panel gets an installed-cards table from Active IQ's adapter inventory (`tools/verify_rear_panels.py` checks every documented port is drawn; `verify_rear_panels_reverse.py` checks the drawing shows nothing NetApp's pages do not mention). A rule-based check for network/I-O card firmware known issues (first rule CFDIAGS-40).
+
+**Security (5.6.312-328).** Hardening scorecard (`_dfHardeningRows`; ten controls plus three for automatic update settings; wording: *no gap raised* is not *confirmed*). Risk acknowledgement is a server write (`POST /api/risk/ack`, `GET /api/risk/ack-log`, administrators only) using the token of the account that owns each system, with Active IQ's five justifications, withdrawal and an Undo log. KEV: `loadKevCatalog`, `_kevExposure`, `_kevCvesOfSystem`, `renderKevCard`; a system is listed on evidence only (Active IQ reported the CVE, or the NetApp advisory publishes a fixed release for the product and the installed release is below it; BMC advisories decided per model from the download file names); NetApp's advisory index names 84 of CISA's KEV CVEs and all are requested. Product matching no longer treats Data ONTAP Edge or components (Antivirus Connector, SMI-S Provider ...) as ONTAP. `_applyAdvisoryApplicability` also moves findings about the Unified Manager installation to *not applicable*. Unowned drives card (`_unownedDrives`, `renderUnownedCard`).
+
+**Interface (5.6.310-329).** *What changed* card (`/api/history/changes`; daily snapshots now record risk ids, SP/BMC version and watchlists), Success Plan outcomes, light/dark theme (`applyTheme`, `setTheme`; every chart is recoloured on change), sidebar counts that say what they count (open risks, open cases only).
+
+**Cluster, grid and array as the unit of reporting (5.6.330-337).** `_unitOf(system)` returns {key, name, kind} for an ONTAP cluster, a StorageGRID grid or an E-Series array; `getClusters`, `_uN` (noun: cluster, grid, array), `_dfLbl`, `_dfNodeTag`, `_dfUnitInputs`, `_dfUnitReps`, `_dfScopeCountText` carry it into the Overview, Technical Audit, the system picker, the sidebar and every document; a risk on only some nodes is *node-specific*. Scopes `CLUSTER:` and `GRID:` are selectable on Support & Ops and Customer Success. Capacity: raw capacity is the sum of the node figures (checked against Active IQ's cluster total; a per-pair rule tried in 5.6.334 was wrong and reverted in 5.6.335); `_fmtCap` shows TB below 1,000 and PB above, everywhere; the runway sort compares days. SnapMirror health (`_snapMirrorHealth`, `renderSnapMirrorCard`): the API has only `snapMirrorRelationships.totalCount`, so health comes from the findings Active IQ raises.
+
+**Reference updater (5.6.338).** `tools/library_updater.py` (stdlib): `load_sources`, `run_update` (fetch with the server's ssl context, `html_to_text`, `extract_facts`, `compare` against `data/library_refreshed/`, `aria_holdings` coverage check, queue `data/library_update_queue.json`, state `data/library_update_state.json`, report `data/library_update_report.json`), `crosscheck_library`, `tables_status` (the 21 curated tables as scanner / partial / manual), `Scheduler` (4 minutes after start, then 24 hours; a change to a release, EOA, advisory or What's new page triggers `_enrichment_scheduler.run_now()`). Routes `GET /api/library/update/status`, `POST /api/library/update/run`, `POST /api/library/update/ack`; config `libraryUpdateEnabled`, `libraryUpdateIntervalHours`, `libraryUpdateBudget`. The weekly Claude job (`docs/LIBRARY_HARVEST_ROUTINE.md`) only handles the review queue and is not part of the runtime.
+
+**Success Plans (5.6.339-340).**
+- Model: `_spComposePlan(s, over)` returns the complete plan: name, title, tier (ESSENTIAL | ELITE), stage, status, health, objectives (the template's outcome plus a sustain objective), summary, `challengesText` (summary / what Active IQ shows / why it matters / goals / success measures / scope / assumptions / governance, capped near 9,000 characters with the complete scope list moved to the notes), `metrics` (the Active IQ `SuccessMetric` enum), `measures` (baseline, interim, target, dates, how measured), five milestones (scope and baseline, halfway, target, verify, sustain) each with actions sorted by due date, stakeholders and the NetApp team (`_spPeople`), notes and `listText`. Per-template objective, value statement, target rule, horizon and measure text are in `SP_SPEC`; a target is a plain rule stated in the plan.
+- Write: `_spPushPlan` calls `CreateCSP`, then `CreateCSPMilestone` for each milestone, then `CreateCSPAction` for each action (`accountPlanObjectiveId` is the milestone id; `objective` must equal one of the plan's objective names). Fallbacks: if Active IQ rejects objectives the plan is retried with `["Other"]` plus `objectiveOther`; if it rejects the text a shorter text is sent and the scope list goes to the notes; items still refused are returned in `failed` and listed, and `completePlanStructure` creates them later. The mutations are in `api_queries.json` (`CreateCSP`, `CreateCSPMilestone`, `CreateCSPAction`, `UpdateCSP`, `UpdateCSPMilestone`, `UpdateCSPAction`, `CloseCSP`).
+- Local record: `_spSpecRecord` stores milestone ids, due dates, completion rules, action ids/owners/status, objective, target and `lastValue` in `success_plan_progress.spec_json` through `POST /api/plan-progress` (the server keeps the previous spec if a save omits it). Plans created before 5.6.339 have no spec.
+- Progress: `computePlanOutcome` re-measures; `_spPlanSyncPlan` decides each milestone/action status by its rule and the plan health from progress against elapsed time (a RED plan stays RED until it improves); `_spApplySync` writes `UpdateCSP` (health and a dated note), `UpdateCSPMilestone` and `UpdateCSPAction`; `syncPlanToActiveIQ` is the confirmed, manual route; `autoSyncSuccessPlans` runs 4 seconds after each completed `loadProductionData` for every ACTIVE plan with a spec and writes only when the measure, a status or the health changed. Switch: localStorage `aria_plan_autosync` (checkbox `successAutoSyncToggle` on the Success Plans tab, status line `successAutoSyncStatus`). It runs only while ARIA is open in a browser.
+- Manual plans: the modal (`successPlanModal`) has title, challenges and goals, stakeholders (name, e-mail, role), and on create: template, summary, objectives, metrics, measures, milestones/actions (`Name | date | status`, then `- Action | owner | date | status`) and the NetApp team; `_spReadManualForm` validates (at least one metric; every stakeholder needs an e-mail) and the create goes through `_spPushPlan`. Manual plans have no measure spec, so they are not auto-updated. Editing can change title, challenges and goals, stakeholders, name, status, stage, health and owner; objectives, metrics and template are create-only because Active IQ's update input has no such fields.
+- Verification method: stub `_callAIQMutation` in a browser (Playwright), capture every payload, and validate it against the live input-type definitions of Active IQ's schema (introspection dump). All 17 reachable templates pass (323 create payloads and the three update shapes). **Not yet exercised against a live account**: Active IQ's objective picklist is unknown (hence the *Other* fallback) and the live write test needs a token that can write plans.

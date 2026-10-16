@@ -29,3 +29,7 @@ Treat an imported system as a configuration snapshot at the date of the bundle, 
 - The customer cannot or will not enable AutoSupport to NetApp.
 - A site is isolated (secure, air-gapped or regulated) and the bundle is carried out by hand.
 - Active IQ is unreachable for a while and a snapshot is still needed for a review.
+
+## Reference data on a dark site
+
+Everything ARIA needs to analyse a system is in files on the machine (`data/`), so a site with no internet access keeps working. The reference scanners and the reference updater (Settings > Data & Sync) simply cannot reach the public pages; they record the failure and the previous files stay in use. To keep a dark site's reference data current, run ARIA with internet access somewhere else and copy its `data/` folder across, or use the AutoSupport import only for the systems themselves. Imported systems are covered by the same checks that need only configuration facts; Success Plans and risk acknowledgement need Active IQ and are not available for them.

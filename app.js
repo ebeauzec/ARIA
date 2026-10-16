@@ -45,9 +45,25 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.340";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.341";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.341",
+    date: "2026-10-16",
+    title: "Documentation brought up to date; plan auto-update skips viewers",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Changed",
+        color: "#22c55e",
+        items: [
+          "Documentation brought up to date with everything shipped since 5.6.262. README: version badge; the new analysis (cluster-level reporting, known exploited vulnerabilities with their evidence rule, the security hardening scorecard, SnapMirror health, unowned drives, What changed, automatic update settings); the Success Plans use case, dashboard section, 19-template trigger table (Best Practice & Configuration Hardening was missing) and the new write chain, progress sync and manual form; light theme, Connection check and Reference updater in Settings; three background timers; repository layout, component sizes, development workflow and release rule; new troubleshooting rows (401 through a proxy, empty first sync, account warning, partial Success Plan, plans not updating). CONTEXT.md: current version, corrected file inventory (paths under tools/, sizes, new data files and documents) and a new addendum for 5.6.276 to 5.6.340 describing how the code is organised. docs: DEPLOY (role table, ARIA_NO_PROXY, outbound access, automatic plan updates, image tag, Settings > Access), DATA_SOURCES (plan write-backs, the library updater's pages), OFFLINE (dark-site reference data), data/README, PLATFORM_COVERAGE (installed cards, verification tools, what Active IQ does not give) and a historical note on ARIA_FIX_PLAN.",
+          "The automatic Success Plan update now skips a signed-in viewer's session (the server would refuse the write on every harvest); an administrator's open session, or a single-user install, does the update. The Success Plans tab says so.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.340",
     date: "2026-10-16",
@@ -43058,7 +43074,7 @@ function setPlanAutoSync(on) { try { localStorage.setItem(SP_AUTOSYNC_KEY, on ? 
 function _spShowAutoStatus() {
   const el = document.getElementById('successAutoSyncStatus'), cb = document.getElementById('successAutoSyncToggle'); if (cb) cb.checked = _spAutoOn();
   if (!el) return; const a = state.planAutoSync;
-  el.textContent = !_spAutoOn() ? 'Automatic updates are off: plans change in Active IQ only when you press the update button on a plan.'
+  el.textContent = a && a.skipped === 'viewer' ? 'Plans are updated in Active IQ by an administrator session; this session is read-only.' : !_spAutoOn() ? 'Automatic updates are off: plans change in Active IQ only when you press the update button on a plan.'
     : !a ? 'Plans are updated in Active IQ automatically after each harvest, when the measure or a status has changed.'
     : `Last check ${new Date(a.at).toLocaleString()}: ${a.checked} plan(s) re-measured, ${a.updated.length} updated${a.updated.length ? ' (' + a.updated.slice(0, 3).join('; ') + (a.updated.length > 3 ? '; ...' : '') + ')' : ''}${a.errors.length ? `, ${a.errors.length} problem(s): ${a.errors.slice(0, 2).join('; ')}` : ''}.`;
 }
@@ -43069,6 +43085,9 @@ async function autoSyncSuccessPlans() {
   const res = { at: new Date().toISOString(), checked: 0, updated: [], errors: [] };
   try {
     if (!(state.systems || []).length || state.isDemo) return;
+    // a signed-in viewer cannot write to Active IQ (the server refuses): only an administrator's session updates plans
+    let me = null; try { me = await (await fetch('/api/auth/me', { cache: 'no-store' })).json(); } catch (e) { /* single-user install or server not reachable */ }
+    if (me && me.mode && me.mode !== 'none' && me.role && me.role !== 'admin') { res.skipped = 'viewer'; return; }
     await loadPlanProgress();
     for (const plan of (state.tamSuccessPlans || [])) {
       const prog = (state.planProgress || []).find(b => String(b.planId) === String(plan.id));
