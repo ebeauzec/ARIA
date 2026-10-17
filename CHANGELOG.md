@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.342 (2026-10-17)
+
+### Added
+- Unowned drives are now a risk and a recommendation in the reports and deliverables, not only in the Security Posture Brief. A section 'Unowned Drives (risk and recommendation)' states the risk (unowned drives cannot serve as spares or hold data, so spare coverage and usable capacity are lower than the drive count suggests; Active IQ's severity, the count and how long it has been open), the recommendation, and the commands to list, assign and verify. It is in the Executive Risk Assessment, the Customer Advisory, the Technical Solution Proposals, the TAM Success Plan, the QBR Pack, the MSP Service Report, the Account Handover Brief, the Customer Health and Lifecycle Report and the Risk & Remediation Brief (full table); the Change Control tickets get one change per cluster (pre-check, change, verify, rollback), and the CLI Runbooks the commands. A document for a customer with no unowned drives is unchanged.
+- New Configuration review, on the Overview (a card folded to one line) and in the documents, for the configuration problems that sit beside unowned drives. It groups what Active IQ already flags: a card in an unsupported slot, NS224 shelf cabling that does not follow best practice, takeover not possible, automatic giveback off, two cluster LIFs on one port, a cluster network port offline, intercluster LIFs below best practice, a Service Processor with no address, AutoSupport sent by SMTP, and unowned drives. For each: what to do and the commands that show and fix it, with the clusters and Active IQ's own evidence. On the current fleet: 151 findings on 123 clusters.
+- Three comparisons Active IQ does not raise, derived by ARIA from the inventory Active IQ reports and labelled 'ARIA comparison' (confirm them on the array): the two nodes of an HA pair with different cards in the same slot (found on 3 of 213 two-node clusters, for example a card or Flash Cache present on one node only), ports of one broadcast domain with different MTUs (data ports against each other; the fixed 1500 management port e0M is excluded, which removed every hit on the current fleet), and AutoSupport over plain HTTP. A card's slot is deliberately not judged against the documentation: NetApp's slot rules differ by platform (an Ethernet card in a storage slot is correct for NS224 shelves), so only Active IQ's own unsupported-slot finding is used.
+- In the documents the review is a table of the checks with the recommendation (and the evidence for ARIA's own comparisons), the full per-cluster list in the Risk & Remediation Brief and the Security Posture Brief, and the commands in the CLI Runbooks.
+
 ## 5.6.341 (2026-10-16)
 
 ### Changed

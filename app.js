@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.341";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.342";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.342",
+    date: "2026-10-17",
+    title: "Unowned drives in every report; Configuration review (slots, failover, cluster network, MTU, AutoSupport)",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Unowned drives are now a risk and a recommendation in the reports and deliverables, not only in the Security Posture Brief. A section 'Unowned Drives (risk and recommendation)' states the risk (unowned drives cannot serve as spares or hold data, so spare coverage and usable capacity are lower than the drive count suggests; Active IQ's severity, the count and how long it has been open), the recommendation, and the commands to list, assign and verify. It is in the Executive Risk Assessment, the Customer Advisory, the Technical Solution Proposals, the TAM Success Plan, the QBR Pack, the MSP Service Report, the Account Handover Brief, the Customer Health and Lifecycle Report and the Risk & Remediation Brief (full table); the Change Control tickets get one change per cluster (pre-check, change, verify, rollback), and the CLI Runbooks the commands. A document for a customer with no unowned drives is unchanged.",
+          "New Configuration review, on the Overview (a card folded to one line) and in the documents, for the configuration problems that sit beside unowned drives. It groups what Active IQ already flags: a card in an unsupported slot, NS224 shelf cabling that does not follow best practice, takeover not possible, automatic giveback off, two cluster LIFs on one port, a cluster network port offline, intercluster LIFs below best practice, a Service Processor with no address, AutoSupport sent by SMTP, and unowned drives. For each: what to do and the commands that show and fix it, with the clusters and Active IQ's own evidence. On the current fleet: 151 findings on 123 clusters.",
+          "Three comparisons Active IQ does not raise, derived by ARIA from the inventory Active IQ reports and labelled 'ARIA comparison' (confirm them on the array): the two nodes of an HA pair with different cards in the same slot (found on 3 of 213 two-node clusters, for example a card or Flash Cache present on one node only), ports of one broadcast domain with different MTUs (data ports against each other; the fixed 1500 management port e0M is excluded, which removed every hit on the current fleet), and AutoSupport over plain HTTP. A card's slot is deliberately not judged against the documentation: NetApp's slot rules differ by platform (an Ethernet card in a storage slot is correct for NS224 shelves), so only Active IQ's own unsupported-slot finding is used.",
+          "In the documents the review is a table of the checks with the recommendation (and the evidence for ARIA's own comparisons), the full per-cluster list in the Risk & Remediation Brief and the Security Posture Brief, and the commands in the CLI Runbooks.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.341",
     date: "2026-10-16",
@@ -22559,10 +22577,186 @@ function _dfUnownedText(systems, heading) {
   let o = `\n${heading || '## Unowned Drives'}\n\n`;
   if (!rows.length) return o + '**Finding:** Active IQ reports no unowned drives or partitions on the systems in scope.\n\n';
   const counted = rows.filter(x => x.count != null);
-  o += `**Finding:** ${_uN(rows.map(x => x.kind), rows.length)} report unowned drives or partitions${counted.length ? (counted.length === rows.length ? ` (${counted.reduce((n, x) => n + x.count, 0)} drives or partitions in all)` : ` (${counted.reduce((n, x) => n + x.count, 0)} in the ${counted.length} where Active IQ gives the count)`) : ''}. Unowned drives cannot serve as spares or hold data. Active IQ does not say which drives; run \`${_UNOWNED_CMD}\` on the cluster and assign them with \`storage disk assign\`.\n\n`;
+  o += `**Finding:** ${_uN(rows.map(x => x.kind), rows.length)} report${rows.length === 1 ? 's' : ''} unowned drives or partitions${counted.length ? (counted.length === rows.length ? ` (${counted.reduce((n, x) => n + x.count, 0)} drives or partitions in all)` : ` (${counted.reduce((n, x) => n + x.count, 0)} in the ${counted.length} where Active IQ gives the count)`) : ''}. Unowned drives cannot serve as spares or hold data. Active IQ does not say which drives; run \`${_UNOWNED_CMD}\` on the cluster and assign them with \`storage disk assign\`.\n\n`;
   o += '| System | Nodes affected | Serials | Customer | Site | Model | Release | Unowned | Severity | First seen | Last seen | Open for (days) | Support | Last AutoSupport | Health | Note |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n'
     + rows.map(x => `| ${cell(x.name)} | ${x.nodes} of ${x.nodeCount} | ${cell(x.serials.join(' '))} | ${cell(x.customer)} | ${cell(x.site)} | ${cell(x.model)} | ${cell(x.release)} | ${x.count == null ? 'not reported' : x.count} | ${cell(x.severity)} | ${cell(x.first)} | ${cell(x.last)} | ${x.days == null ? '-' : x.days} | ${cell(x.support)} | ${cell(x.asup)} | ${cell(x.health)} | ${x.ds460 ? 'DS460 ownership rule broken; ' : ''}${x.ack ? 'acknowledged' : ''} |`).join('\n') + '\n\n';
   return o;
+}
+// Unowned drives as a risk and a recommendation in the other documents. `kind`: 'brief' (risk, recommendation and a short table), 'full' (the complete
+// table), 'ticket' (a change ticket per cluster), 'cli' (the commands). The style (Markdown or plain text) follows the document it is added to.
+// A document with nothing to report is returned unchanged.
+function _dfAppendUnowned(doc, systems, kind) {
+  const rows = _unownedDrives(systems || []);
+  if (!rows.length || typeof doc !== 'string') return doc;
+  const md = /\n#{1,3} /.test(doc), W = 78, rule = '-'.repeat(W);
+  const units = _uN(rows.map(x => x.kind), rows.length), counted = rows.filter(x => x.count != null), total = counted.reduce((n, x) => n + x.count, 0);
+  const oldest = rows.reduce((m, x) => (x.days != null && x.days > m ? x.days : m), 0), sev = ['critical', 'high', 'medium', 'low', 'best practice'].find(v => rows.some(x => String(x.severity || '').toLowerCase() === v)) || '';
+  const head = t => md ? `\n## ${t}\n\n` : `\n${'='.repeat(W)}\n${t.toUpperCase()}\n${'='.repeat(W)}\n`;
+  const b = t => md ? `**${t}**` : t;
+  const risk = `${b('Risk:')} ${units} report${rows.length === 1 ? 's' : ''} unowned drives or partitions${counted.length ? ` (${total}${counted.length === rows.length ? '' : '+'} in all)` : ''}${sev ? `; Active IQ rates the finding ${sev}` : ''}${oldest ? `, open for up to ${oldest} days` : ''}. A drive without an owner cannot serve as a spare or hold data, so spare coverage and usable capacity are lower than the installed drive count suggests, and a failed drive may have nothing to rebuild onto.`;
+  const reco = `${b('Recommendation:')} on each cluster run \`${_UNOWNED_CMD}\` (Active IQ gives the count, not the drives), then assign every drive that should be in use to a node with \`storage disk assign\` (or confirm it is meant to be a spare), and check auto-assign with \`storage disk option show -fields autoassign\`. Verify with \`storage aggregate show-spare-disks\`.`;
+  const cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  const line = x => `${x.name}${x.nodeCount > 1 ? ` (${x.nodes} of ${x.nodeCount} nodes)` : ''}${x.customer ? ', ' + x.customer : ''}: ${x.count == null ? 'count not reported' : x.count + ' unowned'}${x.days != null ? `, open ${x.days} days` : ''}`;
+  if (kind === 'full') return doc.replace(/\s*$/, '\n') + _dfUnownedText(systems, md ? '## Unowned Drives (risk and recommendation)' : 'UNOWNED DRIVES (RISK AND RECOMMENDATION)') + `${reco}\n`;
+  let o = head('Unowned Drives (risk and recommendation)');
+  if (kind === 'cli') {
+    o += `${risk}\n\n${md ? '```\n' : ''}${_UNOWNED_CMD}\nstorage disk show -fields owner,container-type -container-type unassigned\nstorage disk option show -fields autoassign\nstorage disk assign -disk <disk> -owner <node>      (or: storage disk assign -all true -node <node>)\nstorage aggregate show-spare-disks\n${md ? '```\n' : ''}\nRun on: ${rows.slice(0, 25).map(x => x.name).join(', ')}${rows.length > 25 ? `, and ${rows.length - 25} more` : ''}.\n`;
+    return doc.replace(/\s*$/, '\n') + o;
+  }
+  if (kind === 'ticket') {
+    o += `${rows.length} change${rows.length !== 1 ? 's' : ''}, one per cluster, grid or array. Risk of the change: low (it only sets the owner of drives that have none). Window: any; no outage.\n\n`;
+    o += rows.slice(0, 40).map((x, i) => `${i + 1}. ${line(x)}\n   Pre-check: ${_UNOWNED_CMD}; confirm which drives are meant to be in use and which node owns the shelf\n   Change:    storage disk assign -disk <disk> -owner <node>\n   Verify:    ${_UNOWNED_CMD} returns nothing; storage aggregate show-spare-disks lists the new spares\n   Rollback:  storage disk removeowner -disk <disk>${x.ds460 ? '\n   Note:      the DS460 drive ownership rule is also broken on this system; assign by drawer as NetApp describes' : ''}`).join('\n') + (rows.length > 40 ? `\n... and ${rows.length - 40} more (the full list is in the Security Posture Brief)` : '') + '\n';
+    return doc.replace(/\s*$/, '\n') + o;
+  }
+  o += `${risk}\n\n${reco}\n\n`;
+  const top = rows.slice(0, 10);
+  o += md ? `| System | Customer | Unowned | Open (days) | Severity |\n|---|---|---|---|---|\n` + top.map(x => `| ${cell(x.name)} | ${cell(x.customer)} | ${x.count == null ? 'not reported' : x.count} | ${x.days == null ? '-' : x.days} | ${cell(x.severity)} |`).join('\n') + '\n' : top.map(x => '  ' + line(x)).join('\n') + '\n';
+  if (rows.length > top.length) o += `${md ? '\n' : ''}... and ${rows.length - top.length} more; the complete list, with serials and support state, is in the Security Posture Brief.\n`;
+  return doc.replace(/\s*$/, '\n') + o;
+}
+// ── Configuration review ──────────────────────────────────────────────────────────────────────────────────────
+// Configuration problems that sit beside unowned drives: a card in an unsupported slot, shelf cabling, failover that cannot happen, a cluster network with a
+// port offline or two LIFs on one port, a Service Processor with no address, AutoSupport sent by SMTP. Active IQ raises these as findings ('aiq'); ARIA groups
+// them, says what to do and which command shows it. Three more are ARIA's own comparison of the inventory Active IQ reports ('aria'), because Active IQ does not
+// raise them: the two nodes of an HA pair with different cards in the same slot, ports of one broadcast domain with different MTUs, and AutoSupport over plain
+// HTTP. Those are labelled as ARIA's comparison and carry the exact evidence, so they can be confirmed on the array. A card's slot is NOT judged by ARIA
+// against the documentation: NetApp's own slot rules differ by platform (an Ethernet card in a "storage" slot is correct for NS224 shelves), so only Active
+// IQ's own unsupported-slot finding is used for that.
+const _CFG_CHECKS = [
+  { id: 'slot', group: 'Hardware', label: 'Card in an unsupported slot', src: 'aiq', rx: /adapter is in an unsupported slot/i,
+    rec: 'Move the card to a slot NetApp lists for it in the Hardware Universe, in a maintenance window (the node is halted for it), and keep the HA partner identical. Until then the card may not initialise, may run slower, or may not be supported when a case is opened.',
+    cmd: ['system controller slot module show', 'system node run -node <node> -command sysconfig -a'] },
+  { id: 'shelfcab', group: 'Hardware', label: 'Shelf cabling does not follow best practice', src: 'aiq', rx: /shelf cabling does not conform/i,
+    rec: 'Recable the NS224 shelf as NetApp\'s cabling guide shows (each controller on both shelf modules), one path at a time, and check the result with Config Advisor.',
+    cmd: ['storage shelf show -fields connection-type,path-to', 'storage shelf port show', 'system health alert show'] },
+  { id: 'unowned', group: 'Disks', label: 'Unowned drives or partitions', src: 'aiq', rx: /unowned drives or partitions/i,
+    rec: 'Assign every drive that should be in use to a node (or confirm it is meant to be a spare), and check that auto-assign works. The Unowned drives section lists the clusters.',
+    cmd: [_UNOWNED_CMD, 'storage disk assign -disk <disk> -owner <node>', 'storage disk option show -fields autoassign'] },
+  { id: 'takeover', group: 'High availability', label: 'Takeover is not possible', src: 'aiq', rx: /takeover impossible/i,
+    rec: 'Find out why the partner cannot take over (the state description names it) and fix it before the next planned or unplanned outage: an HA pair that cannot fail over has no protection.',
+    cmd: ['storage failover show -fields possible,state-description', 'system health alert show'] },
+  { id: 'giveback', group: 'High availability', label: 'Automatic giveback is off', src: 'aiq', rx: /auto giveback is not enabled/i,
+    rec: 'Enable automatic giveback so a node returns to service by itself after a takeover, unless a documented procedure needs it off.',
+    cmd: ['storage failover show -fields auto-giveback', 'storage failover modify -node * -auto-giveback true'] },
+  { id: 'clif', group: 'Cluster network', label: 'Two cluster LIFs on one port', src: 'aiq', rx: /more than one cluster lif homed to a port/i,
+    rec: 'Spread the cluster LIFs so each cluster port carries one; a port failure should not take out two paths.',
+    cmd: ['network interface show -role cluster -fields home-node,home-port,curr-port', 'network interface modify -vserver Cluster -lif <lif> -home-port <port>'] },
+  { id: 'coff', group: 'Cluster network', label: 'Cluster network port offline', src: 'aiq', rx: /cluster network ports are currently offline/i,
+    rec: 'Check the cable, SFP and switch port of the offline cluster port and bring it back; with one port down the cluster has no redundant path.',
+    cmd: ['network port show -ipspace Cluster', 'network interface show -role cluster', 'cluster ring show'] },
+  { id: 'iclif', group: 'Cluster network', label: 'Intercluster LIFs below best practice', src: 'aiq', rx: /intercluster lif/i,
+    rec: 'Give each node two intercluster LIFs on two ports (or one interface group), so replication survives a port or link failure.',
+    cmd: ['network interface show -role intercluster', 'network interface create -vserver <node> -lif <lif> -role intercluster -home-node <node> -home-port <port> -address <ip> -netmask <mask>'] },
+  { id: 'spnc', group: 'Management', label: 'Service Processor has no network address', src: 'aiq', rx: /service processor not configured/i,
+    rec: 'Configure the Service Processor (or BMC) network so the node can be managed and recovered remotely and can send hardware alerts.',
+    cmd: ['system service-processor network show', 'system service-processor network modify -node <node> -address-family IPv4 -enable true -ip-address <ip> -netmask <mask> -gateway <gw>'] },
+  { id: 'smtp', group: 'Management', label: 'AutoSupport sent by SMTP', src: 'aiq', rx: /smtp transport/i,
+    rec: 'Send AutoSupport over HTTPS: SMTP may truncate the message and is not the supported default.',
+    cmd: ['system node autosupport show -fields transport', 'system node autosupport modify -node * -transport https'] },
+  { id: 'ha-asym', group: 'High availability', label: 'HA partners have different cards', src: 'aria',
+    rec: 'Make the two nodes identical: the same card in the same slot. A LIF that fails over to a port the partner does not have cannot fail over. Confirm on the array; if the inventory is right, install the missing card (or remove the extra one) in a maintenance window.',
+    cmd: ['system controller slot module show', 'network port show -fields speed-admin,speed-oper,mtu', 'system node run -node <node> -command sysconfig -a'] },
+  { id: 'mtu', group: 'Cluster network', label: 'Ports of one broadcast domain have different MTUs', src: 'aria',
+    rec: 'Give every port of a broadcast domain the same MTU (and the switch ports the same), then check it end to end with a ping at full size. Mixed MTUs cause failover and storage-network problems that are hard to trace.',
+    cmd: ['network port show -fields broadcast-domain,mtu', 'network port broadcast-domain show', 'network port broadcast-domain modify -broadcast-domain <name> -ipspace <ipspace> -mtu <mtu>', 'network ping -lif <lif> -vserver <svm> -destination <ip> -packet-size 8972 -disallow-fragmentation true'] },
+  { id: 'http', group: 'Management', label: 'AutoSupport sent over plain HTTP', src: 'aria',
+    rec: 'Switch AutoSupport to HTTPS so the system data it carries is encrypted in transit.',
+    cmd: ['system node autosupport show -fields transport', 'system node autosupport modify -node * -transport https'] }
+];
+const _CFG_GROUPS = ['High availability', 'Hardware', 'Disks', 'Cluster network', 'Management'];
+function _cfgReview(systems) {
+  const units = getClusters(systems || []), rank = { critical: 0, high: 1, medium: 2, low: 3, best_practice: 4 }, rows = [];
+  const lbl = v => String(v || '').replace(/_/g, ' ');
+  const keepA = a => a && a.slot != null && String(a.slot) !== '0' && ['ETHERNET', 'FIBRE_CHANNEL', 'SAS_HOST_ADAPTER', 'FLASH_CACHE'].includes(a.type) && !/Internal/i.test(a.name || '');
+  const inv = n => { const m = new Map(); ((n.platformExtras || {}).adapters || []).filter(keepA).forEach(a => { const k = String(a.slot) + '|' + a.type + '|' + (a.ports || 0); const e = m.get(k) || { n: 0, name: a.name, slot: a.slot, ports: a.ports || 0 }; e.n++; m.set(k, e); }); return m; };
+  units.forEach(u => {
+    const base = { ckey: u.key, name: u.name, kind: u.kind, customer: u.customer, nodeCount: u.nodeCount };
+    _CFG_CHECKS.filter(c => c.src === 'aiq').forEach(c => {
+      const hits = (u.risks || []).filter(x => x.risk && c.rx.test(String(x.risk.description || x.risk.title || '')));
+      if (!hits.length) return;
+      const worst = hits.map(x => x.risk).sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9))[0];
+      const detail = String(worst.riskDetail || '').replace(/\s+/g, ' ').trim(), t = Date.parse(worst.firstSeen || '');
+      rows.push({ ...base, id: c.id, src: 'aiq', severity: lbl(worst.severity), sevRank: rank[worst.severity] ?? 9, evidence: _spClip(detail || worst.description || c.label, 240),
+        nodeSpecific: hits.some(x => x.nodeSpecific), days: isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 86400000)), ack: hits.every(x => x.risk.ack) });
+    });
+    if (u.kind !== 'cluster') return;
+    const nodes = u.nodes || [];
+    // 1. the two nodes of an HA pair: same model, same cards in the same slots
+    if (nodes.length === 2 && nodes[0].model && nodes[0].model === nodes[1].model) {
+      const A = inv(nodes[0]), B = inv(nodes[1]);
+      if (A.size && B.size) {
+        const diffs = [];
+        new Set([...A.keys(), ...B.keys()]).forEach(k => { const a = A.get(k), b = B.get(k), na = a ? a.n : 0, nb = b ? b.n : 0; if (na !== nb) { const e = a || b; diffs.push(`slot ${e.slot}: ${_spClip(e.name, 60)} (${e.ports} port${e.ports === 1 ? '' : 's'}) is in ${na > nb ? nodes[0].systemName : nodes[1].systemName} and not in ${na > nb ? nodes[1].systemName : nodes[0].systemName}`); } });
+        if (diffs.length) rows.push({ ...base, id: 'ha-asym', src: 'aria', severity: 'medium', sevRank: 2, evidence: diffs.slice(0, 4).join('; ') + (diffs.length > 4 ? `; and ${diffs.length - 4} more` : ''), nodeSpecific: false, days: null, ack: false });
+      }
+    }
+    // 2. one broadcast domain, more than one MTU (VLAN ports follow their parent and the node-management port is left out)
+    const dom = new Map();
+    nodes.forEach(n => (((n.networkPorts || {}).networkPorts) || []).forEach(pt => {
+      if (!pt.broadcastDomain || /VLAN/i.test(pt.type || '') || /MGMT/i.test(pt.role || '') || /^e0m$/i.test(pt.port || '') || !(pt.maxTransmissionUnitBytes > 0)) return;   // the management port (e0M) is fixed at 1500 and is not a data-path mismatch
+      const k = (pt.ipspaceName || '') + '|' + pt.broadcastDomain; const e = dom.get(k) || { name: pt.broadcastDomain, ip: pt.ipspaceName || '', mtus: new Map() };
+      const l = e.mtus.get(pt.maxTransmissionUnitBytes) || []; l.push(`${n.systemName}:${pt.port}`); e.mtus.set(pt.maxTransmissionUnitBytes, l); dom.set(k, e);
+    }));
+    const bad = [...dom.values()].filter(e => e.mtus.size > 1);
+    if (bad.length) {
+      const cl = bad.some(e => /^cluster$/i.test(e.name));
+      rows.push({ ...base, id: 'mtu', src: 'aria', severity: cl ? 'high' : 'medium', sevRank: cl ? 1 : 2, nodeSpecific: false, days: null, ack: false,
+        evidence: bad.slice(0, 3).map(e => `${e.name}${e.ip && e.ip !== e.name ? ' (' + e.ip + ')' : ''}: ` + [...e.mtus.entries()].sort((a, b) => b[0] - a[0]).map(([m, l]) => `MTU ${m} on ${l.slice(0, 3).join(', ')}${l.length > 3 ? ' +' + (l.length - 3) : ''}`).join(' but ')).join('; ') });
+    }
+    // 3. AutoSupport over plain HTTP
+    const ht = nodes.filter(n => String(n.asupTransport || '').toUpperCase() === 'HTTP');
+    if (ht.length) rows.push({ ...base, id: 'http', src: 'aria', severity: 'medium', sevRank: 2, evidence: `AutoSupport transport is HTTP on ${ht.map(n => n.systemName).slice(0, 4).join(', ')}${ht.length > 4 ? ' +' + (ht.length - 4) : ''}`, nodeSpecific: ht.length < nodes.length, days: null, ack: false });
+  });
+  const chk = new Map(_CFG_CHECKS.map(c => [c.id, c])), by = new Map();
+  rows.forEach(r => { const e = by.get(r.id) || { check: chk.get(r.id), rows: [] }; e.rows.push(r); by.set(r.id, e); });
+  const checks = [...by.values()].map(e => ({ ...e, worst: Math.min(...e.rows.map(r => r.sevRank)), customers: new Set(e.rows.map(r => r.customer).filter(Boolean)).size }))
+    .sort((a, b) => _CFG_GROUPS.indexOf(a.check.group) - _CFG_GROUPS.indexOf(b.check.group) || a.worst - b.worst || b.rows.length - a.rows.length);
+  rows.forEach(r => { r.sevRank = r.sevRank ?? 9; });
+  return { rows, checks, clusters: new Set(rows.map(r => r.ckey)).size, customers: new Set(rows.map(r => r.customer).filter(Boolean)).size };
+}
+function renderCfgReviewCard() {
+  const card = document.getElementById('overviewCfgCard'); if (!card) return;
+  const v = _cfgReview(getFilteredSystems(true) || []);
+  if (!v.rows.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const e2 = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.74rem;', sub = 'color:var(--text-muted);font-size:0.68rem;';
+  let h = `<div class="section-title" style="margin:0;">Configuration review</div><div style="font-size:0.8rem;margin:8px 0 10px;"><b>${v.rows.length}</b> configuration finding${v.rows.length !== 1 ? 's' : ''} on <b>${v.clusters}</b> cluster, grid or array${v.clusters !== 1 ? 's' : ''} (${v.customers} customer${v.customers !== 1 ? 's' : ''}). Most are findings Active IQ raises, grouped here with what to do and the command that shows each. <b>ARIA comparison</b> marks three that Active IQ does not raise and ARIA derives from the inventory Active IQ reports (partner cards, MTU, AutoSupport transport): confirm those on the array.</div>`;
+  h += v.checks.map(c => `<details style="border:1px solid var(--border-color);border-radius:6px;margin-bottom:6px;"><summary style="cursor:pointer;padding:8px 10px;font-size:0.8rem;"><b>${e2(c.check.label)}</b> <span style="${sub}">${e2(c.check.group)} · ${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}${c.check.src === 'aria' ? ' · <b>ARIA comparison</b>' : ' · Active IQ finding'}</span></summary>`
+    + `<div style="padding:4px 10px 10px;"><div style="font-size:0.76rem;margin-bottom:6px;"><b>What to do:</b> ${e2(c.check.rec)}</div><div style="font-size:0.72rem;margin-bottom:6px;color:var(--text-secondary);"><b>Commands:</b> ${c.check.cmd.map(x => `<code>${e2(x)}</code>`).join(' &nbsp; ')}</div>`
+    + `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${['System', 'Customer', 'Severity', 'Evidence'].map(x => `<th style="${th}">${x}</th>`).join('')}</tr></thead><tbody>`
+    + c.rows.slice(0, 25).map(r => `<tr><td style="${td}"><a href="#" data-ckey="${e2(r.ckey)}" onclick="selectCluster(this.dataset.ckey);return false;">${e2(r.name)}</a>${r.nodeSpecific ? `<div style="${sub}">only on some nodes</div>` : ''}</td><td style="${td}">${e2(r.customer)}</td><td style="${td}">${e2(r.severity)}${r.days != null ? `<div style="${sub}">${r.days} days</div>` : ''}</td><td style="${td}">${e2(r.evidence)}${r.ack ? ` <span style="${sub}">(acknowledged)</span>` : ''}</td></tr>`).join('')
+    + `</tbody></table></div>${c.rows.length > 25 ? `<div style="${sub}margin-top:4px;">and ${c.rows.length - 25} more; the complete list is in the Risk &amp; Remediation Brief.</div>` : ''}</div></details>`).join('');
+  card.innerHTML = h;
+  _ovFoldCard(card, `${v.rows.length} finding${v.rows.length !== 1 ? 's' : ''} on ${v.clusters} cluster${v.clusters !== 1 ? 's' : ''}, ${v.checks.length} kind${v.checks.length !== 1 ? 's' : ''}`);
+}
+// The review in the documents. kind: 'brief' (a table of the checks with the recommendation, and the evidence of ARIA's own comparisons), 'full' (also every
+// cluster), 'cli' (the commands). Markdown or plain text, following the document. A document with nothing to report is returned unchanged.
+function _dfAppendCfg(doc, systems, kind) {
+  const v = _cfgReview(systems || []);
+  if (!v.rows.length || typeof doc !== 'string') return doc;
+  const md = /\n#{1,3} /.test(doc), W = 78, cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  const head = t => md ? `\n## ${t}\n\n` : `\n${'='.repeat(W)}\n${t.toUpperCase()}\n${'='.repeat(W)}\n`;
+  const checks = v.checks.filter(c => c.check.id !== 'unowned' || kind === 'cli');
+  let o = head('Configuration Review (risks and recommendations)');
+  if (kind === 'cli') {
+    o += `Commands that show, and fix, the configuration findings above. Run them on the cluster named; confirm the finding on the array first.\n\n`;
+    v.checks.forEach(c => { o += `${md ? '### ' : ''}${c.check.label}  (${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}: ${c.rows.slice(0, 8).map(r => r.name).join(', ')}${c.rows.length > 8 ? ', ...' : ''})\n${md ? '```\n' : ''}${c.check.cmd.map(x => (md ? '' : '  ') + x).join('\n')}\n${md ? '```\n' : ''}\n`; });
+    return doc.replace(/\s*$/, '\n') + o;
+  }
+  o += `${v.rows.length} finding${v.rows.length !== 1 ? 's' : ''} on ${v.clusters} cluster${v.clusters !== 1 ? 's' : ''}. Findings marked "Active IQ" are raised by Active IQ; "ARIA comparison" findings are derived by ARIA from the inventory Active IQ reports (Active IQ does not raise them) and should be confirmed on the array.\n\n`;
+  if (md) o += '| Check | Source | Clusters | Worst severity | Recommendation |\n|---|---|---|---|---|\n' + checks.map(c => `| ${cell(c.check.label)} | ${c.check.src === 'aria' ? 'ARIA comparison' : 'Active IQ'} | ${c.rows.length} | ${cell(c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity)} | ${cell(c.check.rec)} |`).join('\n') + '\n';
+  else o += checks.map(c => `  ${c.check.label} [${c.check.src === 'aria' ? 'ARIA comparison' : 'Active IQ'}, ${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}, worst ${c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity}]\n    Recommendation: ${c.check.rec}`).join('\n') + '\n';
+  const own = v.rows.filter(r => r.src === 'aria');
+  if (own.length && kind !== 'full') o += `\n${md ? '**' : ''}Evidence for the ARIA comparisons${md ? '**' : ''}\n` + own.slice(0, 10).map(r => `${md ? '- ' : '  '}${r.name} (${r.customer || '-'}): ${r.evidence}`).join('\n') + (own.length > 10 ? `\n${md ? '- ' : '  '}and ${own.length - 10} more` : '') + '\n';
+  if (kind === 'full') {
+    const list = v.rows.filter(r => r.id !== 'unowned').sort((a, b) => a.sevRank - b.sevRank || a.name.localeCompare(b.name)).slice(0, 80);
+    o += `\n${md ? '**' : ''}Every cluster${md ? '**' : ''}\n`;
+    o += md ? '| System | Customer | Check | Severity | Evidence |\n|---|---|---|---|---|\n' + list.map(r => `| ${cell(r.name)} | ${cell(r.customer)} | ${cell(_CFG_CHECKS.find(c => c.id === r.id).label)} | ${cell(r.severity)} | ${cell(r.evidence)} |`).join('\n') + '\n'
+      : list.map(r => `  ${r.name} (${r.customer || '-'}): ${_CFG_CHECKS.find(c => c.id === r.id).label} [${r.severity}]: ${r.evidence}`).join('\n') + '\n';
+    if (v.rows.filter(r => r.id !== 'unowned').length > 80) o += `... and ${v.rows.filter(r => r.id !== 'unowned').length - 80} more.\n`;
+  }
+  return doc.replace(/\s*$/, '\n') + o;
 }
 // SnapMirror health. Active IQ's API exposes only the number of relationships per cluster (no source, destination, policy or lag), so the health of
 // the replication comes from the wellness findings Active IQ raises about it. Each class below is a family of those findings.
@@ -32249,6 +32443,28 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   // 13. Sustainability & ESG Report
   let sustainabilityReport = compileSustainabilityReport(targetSystems, allRisks, expiringContracts, allSupportCases, scopeTitle, fw);
 
+  // Unowned drives: a risk and a recommendation in the documents that carry findings, a change ticket, and the CLI steps
+  problemStatements = _dfAppendUnowned(problemStatements, targetSystems, 'brief');
+  customerComms = _dfAppendUnowned(customerComms, targetSystems, 'brief');
+  changeTickets = _dfAppendUnowned(changeTickets, targetSystems, 'ticket');
+  solutionProposals = _dfAppendUnowned(solutionProposals, targetSystems, 'brief');
+  implementationPlans = _dfAppendUnowned(implementationPlans, targetSystems, 'cli');
+  customerSuccessPlan = _dfAppendUnowned(customerSuccessPlan, targetSystems, 'brief');
+  qbrPack = _dfAppendUnowned(qbrPack, targetSystems, 'brief');
+  mspReport = _dfAppendUnowned(mspReport, targetSystems, 'brief');
+  handoverBrief = _dfAppendUnowned(handoverBrief, targetSystems, 'brief');
+  riskRemediationBrief = _dfAppendUnowned(riskRemediationBrief, targetSystems, 'full');
+  // The rest of the configuration review (cards, failover, cluster network, MTU, AutoSupport transport), after the unowned drives
+  problemStatements = _dfAppendCfg(problemStatements, targetSystems, 'brief');
+  solutionProposals = _dfAppendCfg(solutionProposals, targetSystems, 'brief');
+  implementationPlans = _dfAppendCfg(implementationPlans, targetSystems, 'cli');
+  customerSuccessPlan = _dfAppendCfg(customerSuccessPlan, targetSystems, 'brief');
+  qbrPack = _dfAppendCfg(qbrPack, targetSystems, 'brief');
+  mspReport = _dfAppendCfg(mspReport, targetSystems, 'brief');
+  handoverBrief = _dfAppendCfg(handoverBrief, targetSystems, 'brief');
+  riskRemediationBrief = _dfAppendCfg(riskRemediationBrief, targetSystems, 'full');
+  securityBrief = _dfAppendCfg(securityBrief, targetSystems, 'full');
+
   // ── Inject fleet-relevant enrichment KB references into all deliverables ──
   // Vendor knowledge-base reference lists belong in the documents an engineer works from (change tickets, implementation plans, security and risk briefs);
   // the customer, sales, QBR, handover and service-report documents do not repeat them.
@@ -32354,7 +32570,7 @@ Reference: mysupport.netapp.com/matrix (NetApp Interoperability Matrix Tool)
     { const _en = _dfBlock('FORECAST POWER AND CARBON (Active IQ)', _dfEnergyForecastText(targetSystems)); if (_en) sustainabilityReport = sustainabilityReport.replace(/\s*$/, '') + '\n\n' + _en; }
     { const _fu = _dfBlock('FEATURE USAGE (Active IQ)', _dfFeatureUsageText(targetSystems)); if (_fu) salesProposals = _dfInsertNcf(salesProposals, /(-{20,}\n)?COMMERCIAL CONTEXT/, _fu); }
   }
-  return {
+  const _deliverables = {
     problemStatements,
     customerComms,
     changeTickets,
@@ -32383,6 +32599,8 @@ Reference: mysupport.netapp.com/matrix (NetApp Interoperability Matrix Tool)
     _fleetSignals: _fleetSignals,
     _firmwareSummary: fw
   };
+  _deliverables.customerReport = _dfAppendCfg(_dfAppendUnowned(_deliverables.customerReport, targetSystems, 'brief'), targetSystems, 'brief');
+  return _deliverables;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -44167,6 +44385,7 @@ function switchTab(tabId) {
     renderChangesCard();
     renderKevCard();
     renderUnownedCard();
+    renderCfgReviewCard();
     renderSnapMirrorCard();
     renderOverviewTable();
     renderCharts();

@@ -1,6 +1,6 @@
 # ARIA — Active IQ Risk Intelligence Advisor
 
-[![Version](https://img.shields.io/badge/version-5.6.341-0066cc)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.6.342-0066cc)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-3776AB?logo=python&logoColor=white)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
@@ -154,6 +154,7 @@ In a single sync, the tool harvests your complete fleet telemetry from the Activ
 - **Known exploited vulnerabilities (CISA KEV)** — each KEV CVE that NetApp has an advisory for, listed against a system only on evidence (Active IQ reported it, or NetApp's advisory publishes a fixed release for the product and the installed release is below it). The CVEs not counted are listed with the reason. Overview card and Security Posture Brief section.
 - **Security hardening scorecard** — ten controls (ransomware protection, snapshots on all data volumes, Vscan, open NFS export rules, self-encrypting drive locking, cluster peering encryption, remote configuration backups, NTP and DNS redundancy, open critical or high advisories) plus three for the automatic-update settings (a notify-only system is a gap, an automatic one is not, one that reports nothing is *not reported*), each tied to the Active IQ check that evidences a gap, worded exactly: *no gap raised* is not *confirmed*. Controls Active IQ does not report are listed with the command that shows them on the array.
 - **SnapMirror health** — Active IQ's API gives only the number of relationships per cluster, so health is built from the findings it raises, in four classes — updates failing, destination disrupted, MetroCluster, and cluster peering or intercluster network — never from invented lag figures.
+- **Configuration review** — the configuration problems that sit beside unowned drives, grouped with what to do and the command that shows each: a card in an unsupported slot, shelf cabling, takeover not possible, automatic giveback off, cluster LIFs and ports, intercluster LIFs, a Service Processor with no address, AutoSupport over SMTP or plain HTTP. Most are Active IQ findings; three are *ARIA comparisons* of the inventory Active IQ reports (HA partners with different cards in the same slot, ports of one broadcast domain with different MTUs, AutoSupport over HTTP), labelled as such and to be confirmed on the array. Overview card and a section in the documents.
 - **Unowned drives**, **What changed** (newly raised risks, and a comparison of daily snapshots with the coverage it can honestly claim), and **automatic update settings** per system.
 - **Minimum safe release per ONTAP line**, one upgrade target per system on the line it already runs, and findings that Active IQ still shows although the installed release contains the fix, reported as one *check in Active IQ* action instead of upgrade work.
 - **Success Plans drafted and kept current** — a complete, measurable plan with milestones, dated actions, stakeholders and notes, written to Active IQ and updated after every harvest (see [Success Plan Management](#success-plan-management)).
@@ -431,7 +432,7 @@ The **Risk Trend** chart (critical and high findings over time, from the snapsho
 
 The **Official AIQ Health Score** KPI tile shows Active IQ's own real score — scoped to whichever single customer is selected in the sidebar (falling back to an honestly-labeled fleet-wide figure when no single customer is in scope) — displayed alongside, never in place of, this tool's own risk-based scoring elsewhere in the app.
 
-The inventory table has **one row per ONTAP cluster, StorageGRID grid or E-Series array** (badges tell them apart; a grid or array is never called a cluster) and a click on a multi-node row lists its nodes. Cards on the Overview, each folded to a header and one summary line (the choice is remembered): **What changed** (7 to 90 days), **Known exploited vulnerabilities (CISA KEV)**, **Unowned drives**, and **SnapMirror health**.
+The inventory table has **one row per ONTAP cluster, StorageGRID grid or E-Series array** (badges tell them apart; a grid or array is never called a cluster) and a click on a multi-node row lists its nodes. Cards on the Overview, each folded to a header and one summary line (the choice is remembered): **What changed** (7 to 90 days), **Known exploited vulnerabilities (CISA KEV)**, **Unowned drives**, **Configuration review** and **SnapMirror health**.
 
 **Light and dark theme.** The sun/moon button in the header switches theme; Settings > Connection > Appearance offers Dark, Light or Match system. Charts are recoloured when it changes.
 
