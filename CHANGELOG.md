@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.349 (2026-10-17)
+
+### Fixed
+- Model names on screen: every tab shows the name a system is sold under instead of the code Active IQ reports ('AFF-A800' is 'AFF A800', 'FDvM300' is 'ONTAP Select (FDvM300)', 'CDvM200' is 'Cloud Volumes ONTAP (CDvM200)', an E-Series array reported as '2806' or '5700' is 'NetApp E2800' or 'NetApp E5700'), including tooltips. Cluster and host names that contain a model (for example a cluster called after its AFF model) are left as they are, in the tabs and in the documents; the document rewrite had been changing them.
+
 ## 5.6.348 (2026-10-17)
 
 ### Fixed

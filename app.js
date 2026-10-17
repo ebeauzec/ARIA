@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.348";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.349";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.349",
+    date: "2026-10-17",
+    title: "Marketing names on every tab; host names that contain a model are left alone",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Model names on screen: every tab shows the name a system is sold under instead of the code Active IQ reports ('AFF-A800' is 'AFF A800', 'FDvM300' is 'ONTAP Select (FDvM300)', 'CDvM200' is 'Cloud Volumes ONTAP (CDvM200)', an E-Series array reported as '2806' or '5700' is 'NetApp E2800' or 'NetApp E5700'), including tooltips. Cluster and host names that contain a model (for example a cluster called after its AFF model) are left as they are, in the tabs and in the documents; the document rewrite had been changing them.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.348",
     date: "2026-10-17",
@@ -16938,7 +16953,7 @@ function renderTAMTab() {
           <td colspan="3" style="padding:12px 14px;">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
               <span style="font-weight:700;font-size:0.92rem;color:var(--text-primary);">${grp.systemName}</span>${_UNIT_BADGE[grp.unitKind] ? ` <span style="font-size:0.64rem;font-weight:600;color:var(--text-muted);border:1px solid var(--border-color);border-radius:8px;padding:1px 6px;">${_UNIT_BADGE[grp.unitKind]}</span>` : ''}${grp.nodeCount > 1 ? ` <span style="font-size:0.72rem;color:var(--text-muted);">${grp.nodeCount} nodes</span>` : ''}
-              ${grp.platform ? `<span style="font-size:0.72rem;color:var(--text-muted);font-family:monospace;">${grp.platform}</span>` : ''}
+              ${grp.platform ? `<span style="font-size:0.72rem;color:var(--text-muted);font-family:monospace;">${/^\d{3,4}$/.test(String(grp.platform)) ? _marketingModel(grp.platform) : grp.platform}</span>` : ''}
               ${grp.version  ? `<span style="font-size:0.72rem;color:var(--text-muted);">${grp.osLabel || 'ONTAP'} ${grp.version}</span>` : ''}
               <div style="display:flex;gap:5px;flex-wrap:wrap;">${pills.join('')}</div>
             </div>
@@ -40360,14 +40375,41 @@ function _marketingModel(code, platformType) {
 function _dfMarketingNames(text) {
   if (typeof text !== 'string') return text;
   return text
-    .replace(/\b(AFF|ASA)-([A-Z]?\d{2,4}\w?)\b/g, (a, f, n) => `${f} ${n}`)
+    .replace(/(?<![\w-])(AFF|ASA)-([A-Z]?\d{2,4}\w?)(?![\w-])/g, (a, f, n) => `${f} ${n}`)
     // E-Series arrays reported as a bare model number: in a model column of a table, after 'Platform:' or as a line label ('- 600: 4')
     .replace(/(\[E-Series\] \| )(\d{3,4})(?= \|)/g, (a, pre, n) => pre + _marketingModel(n))
     .replace(/(Platform: )(\d{3,4})\b/g, (a, pre, n) => pre + _marketingModel(n))
     .replace(/^(\s*- )(\d{3,4})(?=: \d)/gm, (a, pre, n) => pre + _marketingModel(n))
-    .replace(/(^|[^\w(])FDvM(\d+)\b(?! ?\()/g, (a, pre, n) => `${pre}ONTAP Select (FDvM${n})`)
-    .replace(/(^|[^\w(])CDvM(\d+)\b(?! ?\()/g, (a, pre, n) => `${pre}Cloud Volumes ONTAP (CDvM${n})`);
+    .replace(/(^|[^\w(-])FDvM(\d+)(?![\w-])(?! ?\()/g, (a, pre, n) => `${pre}ONTAP Select (FDvM${n})`)
+    .replace(/(^|[^\w(-])CDvM(\d+)(?![\w-])(?! ?\()/g, (a, pre, n) => `${pre}Cloud Volumes ONTAP (CDvM${n})`);
 }
+// the same names on screen: every text node and tooltip that is added to the page is rewritten, so no tab shows the raw code
+function _domMarketingNames(t) {
+  if (!t || !/AFF-|ASA-|FDvM|CDvM|E-Series \d/.test(t)) return t;
+  return _dfMarketingNames(t).replace(/\bE-Series (\d{3,4})(?= SANtricity|$)/g, (a, n) => (/ SANtricity/.test(t.slice(t.indexOf(a))) || _E_SERIES_NAMES[n]) ? _marketingModel(n) : a);
+}
+function _domRename(root) {
+  if (!root) return;
+  if (root.nodeType === 3) { const v = root.nodeValue, w = _domMarketingNames(v); if (w !== v) root.nodeValue = w; return; }
+  if (root.nodeType !== 1 || /^(SCRIPT|STYLE|TEXTAREA|INPUT)$/.test(root.tagName) || root.isContentEditable) return;
+  if (root.hasAttribute && root.hasAttribute('title')) { const v = root.getAttribute('title'), w = _domMarketingNames(v); if (w !== v) root.setAttribute('title', w); }
+  const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: n => n.nodeType === 1 && /^(SCRIPT|STYLE|TEXTAREA|INPUT)$/.test(n.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  let n; while ((n = tw.nextNode())) {
+    if (n.nodeType === 3) { const v = n.nodeValue, w = _domMarketingNames(v); if (w !== v) n.nodeValue = w; }
+    else if (n.hasAttribute('title')) { const v = n.getAttribute('title'), w = _domMarketingNames(v); if (w !== v) n.setAttribute('title', w); }
+  }
+}
+(function _domNamesStart() {
+  if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return;
+  const start = () => {
+    let queue = [], timer = null;
+    const flush = () => { timer = null; const q = queue; queue = []; obs.disconnect(); try { q.forEach(_domRename); } catch (e) { /* display only */ } obs.observe(document.body, cfg); };
+    const cfg = { childList: true, subtree: true, characterData: true };
+    const obs = new MutationObserver(ms => { ms.forEach(m => { if (m.type === 'characterData') queue.push(m.target); else m.addedNodes.forEach(n => queue.push(n)); }); if (!timer) timer = setTimeout(flush, 60); });
+    _domRename(document.body); obs.observe(document.body, cfg);
+  };
+  if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+})();
 function _dfUnbrand(text) {
   if (typeof text !== 'string') return text;
   let t = _dfMarketingNames(text);
