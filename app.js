@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.361";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.362";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.362",
+    date: "2026-10-17",
+    title: "Heading capitalisation",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Word headings and the table of contents no longer leave small words such as \"as\" in capitals (\"Findings Left Out as Not Applicable\").",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.361",
     date: "2026-10-17",
@@ -39938,7 +39953,7 @@ function _mdToPlain(t) { return t.replace(/\*\*(.+?)\*\*/g, '$1').replace(/(^|[\
 const _DX = { NAVY: '2A4D82', ACC: '3D6BB3', GREY: '5B6577', RULE: 'C9D3E3', BAND: 'F4F7FB', KV: 'EAF0F8', W: 9638 };   // W: A4 portrait, 2 cm margins -> usable width in twips
 const _DX_ACRONYMS = new Set(['ontap', 'cve', 'cves', 'arp', 'qbr', 'msp', 'tam', 'csp', 'esg', 'cli', 'dr', 'ha', 'svm', 'svms', 'lif', 'lifs', 'cisa', 'kev', 'nas', 'san', 'sla', 'os', 'fw', 'sp', 'bmc', 'raid', 'nist', 'sans', 'itil', 'cab', 'cvss', 'ems', 'dqp', 'hw', 'aff', 'fas', 'iq', 'raci', 'sam', 'asup', 'eosa', 'fru', 'csm', 'ntap', 'api', 'nfs', 'smb', 'cifs', 'iscsi', 'fc', 'ip', 'dns', 'ntp', 'ssh', 'tls', 'ssl', 'ai', 'it', 'coi', 'rbac', 'mfa', 'sso', 'imt', 'eoa', 'eos', 'ilm', 'nic', 'crc', 'cpu', 'vm']);
 const _DX_SPECIAL = { autosupport: 'AutoSupport', storagegrid: 'StorageGRID', netapp: 'NetApp', 'e-series': 'E-Series', snapmirror: 'SnapMirror', metrocluster: 'MetroCluster', snapshot: 'Snapshot', santricity: 'SANtricity', flexgroup: 'FlexGroup' };
-const _DX_SMALL = new Set(['and', 'of', 'the', 'to', 'in', 'for', 'on', 'a', 'an', 'or', 'vs', 'with', 'by', 'at', '&']);
+const _DX_SMALL = new Set(['and', 'of', 'the', 'to', 'in', 'for', 'on', 'a', 'an', 'or', 'vs', 'with', 'by', 'at', 'as', 'is', 'be', 'if', 'from', 'into', 'via', 'per', '&']);
 function _dxAllCaps(s) { const l = String(s).replace(/[^A-Za-z]/g, ''); return l.length >= 3 && l === l.toUpperCase(); }
 function _dxTitleCase(s) {
   return String(s).split(' ').map((w, i) => {

@@ -1,8 +1,8 @@
 {
-  "version": "5.6.361",
+  "version": "5.6.362",
   "major": 5,
   "minor": 6,
-  "patch": 361,
+  "patch": 362,
   "date": "2026-10-17",
-  "notes": "Only public NetApp information is used; the commit, push, procedure and document checks enforce it"
+  "notes": "Small words such as as, is, be and from stay lower case in Word headings"
 }

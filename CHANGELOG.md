@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.362 (2026-10-17)
+
+### Fixed
+- Word headings and the table of contents no longer leave small words such as "as" in capitals ("Findings Left Out as Not Applicable").
+
 ## 5.6.361 (2026-10-17)
 
 ### Added
