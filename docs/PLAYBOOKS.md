@@ -13,6 +13,10 @@ After every load of the fleet the front end counts the findings that got no proc
 
 ARIA never writes a procedure itself and never fetches one at run time; it runs unchanged where no AI and no internet are allowed. Procedures are written by a person or by the maintenance job from NetApp's documentation. They are approved automatically (the owner's standing instruction): a draft becomes approved as soon as it passes every automatic check below (valid, and every command and menu path checked against NetApp's documentation); one that fails stays a draft, with the reasons.
 
+### Only public information
+
+A procedure may cite and quote only pages that anyone can open without an account (docs.netapp.com, kb.netapp.com, security.netapp.com and the like). Nothing from NetApp's customer-only areas goes into a procedure, a document, the library or a commit message: no bulletin, customer-notice or engineering-change ids, no links into the support portal, no wording that points to customer-only content. `tools/guard_compliance.py` holds the rules; `validate()` refuses a procedure that breaks them, the commit and push checks (`tools/guard_sensitive.py`) stop any file or commit message that does, the library sync removes such links, and every generated document drops the ids. Where a finding itself carries such a reference, the procedure says "read the corrective action in the finding".
+
 ## Adding one
 
 1. Open the `playbook-gap` item in the review queue (or Settings > Data & Sync > Procedure coverage) for the finding, and the NetApp page it links.

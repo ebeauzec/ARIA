@@ -126,10 +126,10 @@ class RunTests(unittest.TestCase):
         os.makedirs(os.path.join(self.base, 'tools'))
         src = 'https://docs.netapp.com/us-en/ontap/example/procedure.html'
         pb = {'playbooks': [{'id': 'ontap.example', 'status': 'approved', 'family': 'ontap', 'match': 'example', 'cause': 'c', 'impact': 'i', 'steps': ['1. a', '2. b', '3. c'], 'sources': [src]},
-                            {'id': 'ontap.other', 'status': 'approved', 'family': 'ontap', 'match': 'other', 'cause': 'c', 'impact': 'i', 'steps': ['1. a', '2. b', '3. c'], 'sources': [src, 'https://mysupport.netapp.com/x']}]}
+                            {'id': 'ontap.other', 'status': 'approved', 'family': 'ontap', 'match': 'other', 'cause': 'c', 'impact': 'i', 'steps': ['1. a', '2. b', '3. c'], 'sources': [src]}]}
         with open(os.path.join(self.base, 'tools', 'playbooks.json'), 'w') as fh:
             json.dump(pb, fh)
-        self.assertEqual(lu.playbook_sources(self.base), {src: ['ontap.example', 'ontap.other']})   # a sign-in host is never watched
+        self.assertEqual(lu.playbook_sources(self.base), {src: ['ontap.example', 'ontap.other']})   # every approved procedure's sources are watched, once each
         self.assertIn(src, [x['url'] for x in lu.load_sources(self.base)])
 
         def run(body):

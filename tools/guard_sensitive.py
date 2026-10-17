@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import guard_compliance  # noqa: E402
 TERMS_PATH = ROOT / ".aria_guard_terms.json"
 FICTIONAL_PATH = ROOT / "tools" / "guard_fictional.txt"   # committed: fictional demo values that may appear in the repository
 ALLOW_PATH = ROOT / ".aria_guard_allow.txt"      # optional, git-ignored: one term per line that must never count (for example your own company name)
@@ -240,6 +242,9 @@ def scan_text(label, text, matcher):
                 if (kind == "serial number" and m.group(1) in _FICTIONAL) or (kind == "private address" and m.group(0) in _FICTIONAL):
                     continue
                 findings.append((label, i, kind, _mask(m.group(0))))
+        if not guard_compliance.exempt(label):
+            for kind, hit in guard_compliance.scan_line(line):
+                findings.append((label, i, 'COMPLIANCE: ' + kind, _mask(hit)))
         for m in EMAIL.finditer(line):
             dom = m.group(1).lower()
             local = m.group(0).split("@")[0].lower()
@@ -294,6 +299,8 @@ def report(findings):
             print(f"  ... and {len(findings) - seen} more", file=sys.stderr)
             break
     print("Fix or remove the data (use placeholders such as Customer A, host-01, 100000000001) and try again. Never bypass this check.", file=sys.stderr)
+    if any(str(k).startswith('COMPLIANCE') for _f, _l, k, _e in findings):
+        print('COMPLIANCE: customer-only NetApp information (bulletin, notice or change ids, pages behind a NetApp sign-in) must never be written into the code, the documents, the library or a commit message. Remove it, or cite a page anyone can open. See tools/guard_compliance.py.', file=sys.stderr)
     return 1
 
 

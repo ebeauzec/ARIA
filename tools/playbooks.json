@@ -1341,7 +1341,7 @@
    "cause": "Drives in {node} run firmware older than the release NetApp lists for them. The finding says: {detail}",
    "impact": "Older drive firmware can carry known faults (media errors, failures, emissions limits) that a later firmware fixes; some are listed by NetApp as a risk of data loss or an outage.",
    "steps": [
-    "1. Note the drive models the finding names. Read the advisory or bug page the finding links for the firmware version that fixes them.",
+    "1. Note the drive models the finding names. Read the page the finding links for the firmware version that fixes them.",
     "2. Before starting: back up the data (disk-to-disk backup, volume copy to a volume group not affected, or a remote mirror); the array and all drives must be Optimal; no configuration change may be running. If a drive can only be upgraded offline, stop I/O to the volumes that use it.",
     "3. Download the new drive firmware files from the NetApp Support site and unzip them. Files are named like D_HUC101212CSS600_30602291_MS01_2800_0002 with the extension .dlp.",
     "4. In System Manager select Support > Upgrade center, and under Drive firmware upgrade click Begin drive firmware upgrade. Click Browse and choose the files (up to four, one at a time; two files for the same drive model is a conflict, so keep one). Click Next.",

@@ -16,7 +16,7 @@ What the maintenance routine used to do by hand, ARIA now does itself:
   6. Library.   Entries in the library's CHANGELOG that ARIA has not seen are read for ids and versions and cross-checked the same way; an entry
                 that says "no material changes" and names nothing ARIA lacks is recorded as handled.
 
-Only public pages are read. Pages not public (mysupport, IMT, library.netapp.com) are never requested. A compatibility range, a prose
+Only public pages are read. The support portal, IMT and library.netapp.com are never requested. A compatibility range, a prose
 best-practice change or a new kind of check is never written by this module: those go to the review queue for a person.
 """
 import difflib
@@ -344,7 +344,7 @@ def load_sources(base_dir, library_root=None):
         h = urllib.parse.urlsplit(url).netloc.lower()
         if url in seen or h in NEVER_HOSTS or h not in ALLOWED_HOSTS:
             return
-        if h == 'kb.netapp.com' and not key:   # individual KB articles are not public wall; only the index is read
+        if h == 'kb.netapp.com' and not key:   # individual KB articles are not read; only the index is
             return
         seen.add(url)
         out.append({'url': url, 'category': cat, 'title': title, 'key': key})
@@ -419,7 +419,7 @@ def kb_stub(kb_id, page_title, page_url, today):
     """A rules-file stub for a known-issue article id. Nothing is invented: the summary is left for the reader to fill from the article."""
     comp = {'CFBMC': 'BMC', 'CFSP': 'SP', 'CFDIAGS': 'CARD', 'CFNSM': 'SHELF', 'CFIOM': 'SHELF', 'CFHWD': 'DISK'}.get(kb_id.split('-')[0], '')
     return {'id': kb_id, 'component': comp or '(set from the article)', 'families': [], 'versions': [], 'summary': '(read the article: what the issue is)',
-            'url': f'https://kb.netapp.com/on-prem/ontap/OHW/OHW-Kbs/{kb_id}', 'source': f'Named on {page_title}' + (f' ({page_url})' if page_url else '') + f'; recorded by the ARIA reference updater on {today}; article body is not public'}
+            'url': f'https://kb.netapp.com/on-prem/ontap/OHW/OHW-Kbs/{kb_id}', 'source': f'Named on {page_title}' + (f' ({page_url})' if page_url else '') + f'; recorded by the ARIA reference updater on {today}; article body not read'}
 
 
 def load_queue(data_dir):
@@ -567,7 +567,7 @@ def run_update(base_dir, cfg=None, fetch=http_get, budget=30, log=print, sleep=t
             failed.append({'url': url, 'title': src['title'], 'error': rec['lastError']})
             if rec['failures'] == 3:
                 iid = _item_id('unreachable', url)
-                queue.setdefault(iid, {'id': iid, 'kind': 'source-unreachable', 'title': src['title'], 'detail': f'Not readable on {rec["failures"]} runs in a row ({rec["lastError"]}). The page may have moved or sits not public.', 'url': url, 'category': src['category'], 'firstSeen': today, 'status': 'open'})
+                queue.setdefault(iid, {'id': iid, 'kind': 'source-unreachable', 'title': src['title'], 'detail': f'Not readable on {rec["failures"]} runs in a row ({rec["lastError"]}). The page may have moved or is no longer public.', 'url': url, 'category': src['category'], 'firstSeen': today, 'status': 'open'})
             continue
         rec['failures'] = 0
         rec.pop('lastError', None)

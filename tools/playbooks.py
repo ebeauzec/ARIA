@@ -24,7 +24,9 @@ QUEUE_NAME = 'library_update_queue.json'
 QUEUE_LIMIT = 25            # gap items kept in the review queue at once
 FAMILIES = ('ontap', 'eseries', 'storagegrid', 'any')
 STATUSES = ('approved', 'draft', 'rejected')
-OFFICIAL_HOSTS = {'docs.netapp.com', 'kb.netapp.com', 'security.netapp.com', 'www.netapp.com', 'mysupport.netapp.com', 'imt.netapp.com', 'hwu.netapp.com', 'library.netapp.com'}
+import guard_compliance  # noqa: E402
+
+OFFICIAL_HOSTS = {'docs.netapp.com', 'kb.netapp.com', 'security.netapp.com', 'www.netapp.com', 'imt.netapp.com', 'hwu.netapp.com', 'library.netapp.com'}
 _ONTAP_CLI = re.compile(r'\b(?:cluster image|vserver [a-z-]+|storage (?:aggregate|failover|disk|shelf)|network (?:interface|port|route)|volume (?:efficiency|snapshot|modify|show)|system node|snapmirror (?:show|create))\b')
 KNOWN_VARS = {'cluster', 'node', 'svm', 'policy', 'version', 'model', 'target', 'ref', 'recommended', 'advisory', 'cve', 'detail', 'finding', 'bug', 'what', 'fixes', 'recommendation', 'scope',
               'metrocluster', 'target2Note', 'sameLineNote', 'lineNote'}
@@ -89,6 +91,15 @@ def validate(e):
         host = re.match(r'https://([^/]+)/', str(u))
         if not host or not (host.group(1).lower() in OFFICIAL_HOSTS):
             bad.append(f'source {str(u)[:60]} is not a NetApp page (allowed: ' + ', '.join(sorted(OFFICIAL_HOSTS)) + ')')
+        elif guard_compliance.gated_source(u):
+            bad.append(f'source {str(u)[:60]} is ' + guard_compliance.gated_source(u) + ': only pages anyone can open may be cited')
+    for k in ('cause', 'impact', 'thirdParty', 'note'):
+        for kind, hit in guard_compliance.scan_line(str(e.get(k) or '')):
+            bad.append(f'{k} contains {kind} ({hit}): customer-only NetApp information is not allowed')
+    for k in ('steps', 'options'):
+        for t in e.get(k) or []:
+            for kind, hit in guard_compliance.scan_line(str(t)):
+                bad.append(f'{k} contain {kind} ({hit}): customer-only NetApp information is not allowed')
     if e.get('family') in ('eseries', 'storagegrid'):
         for s in e.get('steps') or []:
             if _ONTAP_CLI.search(str(s)):

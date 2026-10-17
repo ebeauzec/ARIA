@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.6.361 (2026-10-17)
+
+### Added
+- A compliance guard: only information that anyone can open without an account is used. tools/guard_compliance.py holds the rules (no support-bulletin, customer-notice or engineering-change ids, no links into customer-only areas, no wording that points to customer-only content). The commit and push checks stop any file or commit message that breaks them, a procedure that cites or quotes such information is refused when it is loaded, the library sync removes such links and sentences, and every generated document drops those ids.
+- The appliance end-of-availability finding for StorageGRID grids was removed, because its dates were only available from a customer-only source.
+
 ## 5.6.360 (2026-10-17)
 
 ### Added
@@ -17,7 +23,7 @@
 ## 5.6.358 (2026-10-17)
 
 ### Added
-- Two more procedures, written from NetApp's own pages: the E-Series configuration database (DBM) corruption (the array is exposed after a controller reboot or a drive failure in a disk pool; the procedure covers reading the bulletin, opening a case, avoiding reboots, collecting the configuration database when support asks, upgrading to the fixed release, and what to do if the controllers are already locked down) and StorageGRID object retention in the active ILM policy (how retention and precedence work, finding the rules, cloning the rule and the policy instead of editing the active ones, simulating, and activating with the confirmation StorageGRID asks for). The procedure does not quote the fixed release; it sends the reader to the corrective action in the finding instead of guessing it.
+- Two more procedures, written from NetApp's own pages: the E-Series configuration database (DBM) corruption (the array is exposed after a controller reboot or a drive failure in a disk pool; the procedure covers reading the corrective action in the finding, opening a case, avoiding reboots, collecting the configuration database when support asks, upgrading to the fixed release, and what to do if the controllers are already locked down) and StorageGRID object retention in the active ILM policy (how retention and precedence work, finding the rules, cloning the rule and the policy instead of editing the active ones, simulating, and activating with the confirmation StorageGRID asks for). The procedure does not quote the fixed release; it sends the reader to the corrective action in the finding instead of guessing it.
 - New procedures are approved automatically. A draft in a playbook file (data/playbooks_local.json, or tools/playbooks.json for the shipped set) becomes approved as soon as it passes every automatic check: the entry is valid (NetApp pages as sources only, placeholders declared, no ONTAP commands in an E-Series or StorageGRID procedure, no tool name) and every command and menu path in it is verified against NetApp's documentation, with nothing wrong and nothing unchecked. `python tools/playbook_verify.py --promote` does it, the maintenance run at every session start and the weekly job run it, and the entry records how it was approved. A draft that fails stays a draft and the command says why. The cited pages are read at once when they are not cached yet, so a new procedure can be checked straight away.
 - Coverage on the large test fleet: 31,093 of 32,948 findings (94.4%); 65 procedures, 241 commands and menu paths checked, none wrong.
 
@@ -48,7 +54,7 @@
 
 ### Added
 - SANtricity (E-Series) and StorageGRID procedures, written from NetApp's own documentation pages (read this session) and shipped in tools/playbooks.json: SANtricity OS and NVSRAM upgrade for the advisories a newer controller release fixes (one procedure per array, grouped by target release, with the 11.70.5 prerequisite, the Recovery Guru check, signed-firmware rule, transfer-now/activate-later option and the post-upgrade inventory check); drive firmware upgrade (online and offline, the prerequisites, the errors that stop it); media scan frequency; hot spare coverage; drawer loss protection; Recovery Guru entries; drives past six years (logical replace); remote login (SSH), now written from the page itself. StorageGRID: software upgrade (version check, hotfix first, recovery package, prechecks, primary Admin Node, approving nodes, completion checks), NTP servers, stored object compression (with the FabricPool and range-read cautions), Object Lock for versioned buckets, and site capacity (adding volumes, shelves or nodes).
-- Coverage on the large test fleet: 31,074 of 32,946 findings (94.3%); E-Series 70% (from 0% for most kinds), StorageGRID 42%. The rest are optimisation suggestions (use flash), bugs whose fix is in a support article that is not public (DBM corruption, the SANtricity upgrade-failure bulletin), and a few kinds not yet written; they are listed in Settings > Data & Sync > Procedure coverage.
+- Coverage on the large test fleet: 31,074 of 32,946 findings (94.3%); E-Series 70% (from 0% for most kinds), StorageGRID 42%. The rest are optimisation suggestions (use flash), bugs whose fixed release the finding does not give (DBM corruption, the SANtricity upgrade failure), and a few kinds not yet written; they are listed in Settings > Data & Sync > Procedure coverage.
 - The playbook format gained: {name|text} (a default for a value the finding does not give), built-in values {target} (the release the finding or Active IQ asks for), {finding}, {advisory}, {cve}, {detail}, {recommended}, family 'any', and groupKey / compact / advisoryRef so one upgrade procedure serves all of an array's advisories (SANtricity and StorageGRID, as ONTAP). The Implementation Plans, Change Tickets, Handover Brief and Risk & Remediation Brief say 'systems' instead of 'clusters' for these. Findings the tool raises itself after a system is enriched (StorageGRID site capacity) now get their procedure too.
 
 ## 5.6.353 (2026-10-17)

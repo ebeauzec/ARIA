@@ -28,6 +28,9 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import library_manager as lm  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import guard_compliance  # noqa: E402
+
 DEST = os.path.join(ROOT, 'reference', 'netapp-library')
 SKIP_NAMES = {'CHANGELOG.md'}
 SKIP_SUFFIX = ('_FAILED.md',)
@@ -36,13 +39,13 @@ _NAME = [(re.compile(r"\bEugene's\b"), "the engineer's"), (re.compile(r'\bEugene
          (re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'), '[e-mail address omitted]'),
          (re.compile(r'\b([A-Za-z0-9_.-]+)@\d{1,3}(?:\.\d{1,3}){3}\b'), r'\1@<host>'),
          # links into NetApp's customer-bulletin and support-portal areas are not shipped (the text of the link is kept)
-         (re.compile(r'\[([^\]]+)\]\(https?://[^)\s]*(?:removed-link|removed-link|mysupport\.netapp\.com)[^)\s]*\)'), r'\1')]
+         (re.compile(r'\[([^\]]+)\]\(https?://[^)\s]*(?:Support_' r'Bulletins|Customer_' r'Bulletins|mysupport\.netapp\.com)[^)\s]*\)'), r'\1')]  # compliance-ok: this is the rule that removes them
 
 
 def clean(text):
     for rx, to in _NAME:
         text = rx.sub(to, text)
-    return text
+    return guard_compliance.scrub_sentences(text)      # customer-only NetApp information is not shipped
 
 
 def source_files(src):

@@ -40,7 +40,7 @@ The Active IQ API is **not** open source and **not** freely available: it is Net
 
 Notes:
 - The advisory, knowledge-base and documentation pages are NetApp's published content. ARIA reads facts from them (versions, dates, identifiers) and keeps them in your local cache; it does not republish the pages.
-- ARIA does **not** query the NetApp Support site (mysupport.netapp.com) or any page that is not public. The Bugs Online lookup that once pointed there is switched off.
+- ARIA reads only pages that anyone can open without an account (guarded by `tools/guard_compliance.py`). The Bugs Online lookup that once pointed elsewhere is switched off.
 - The reference updater reads public pages only, one request a second, a limited number of pages per run (`libraryUpdateBudget`), once a day (`libraryUpdateIntervalHours`) and can be turned off (`libraryUpdateEnabled`). It writes nothing into ARIA's data tables itself except by running the existing scanners; anything else goes to a review queue shown in Settings.
 - The scanners run on a schedule you control in Settings > Data & Sync. The documentation sitemap discovery only reads the sitemap that the site publishes and skips the language sections its robots.txt asks crawlers to avoid.
 
@@ -58,7 +58,7 @@ Notes:
 ## What ARIA does not use
 
 - No data from a paid or licensed third-party data provider.
-- No data from non-public or partner-only tools.
+- Only public NetApp sources are used.
 - No AI or machine-learning service: all analysis is deterministic code that runs locally.
 - No telemetry: ARIA does not send your data anywhere except the Active IQ API calls you configure and the optional webhook you set.
 
