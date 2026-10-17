@@ -1,8 +1,8 @@
 {
-  "version": "5.6.350",
+  "version": "5.6.351",
   "major": 5,
   "minor": 6,
-  "patch": 350,
+  "patch": 351,
   "date": "2026-10-17",
-  "notes": "Procedures with exact commands for the most frequent findings, in the remediation window and four deliverables"
+  "notes": "A change ticket per procedure with risk, window, verification and rollback; procedures in the handover brief"
 }

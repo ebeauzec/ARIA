@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.351 (2026-10-17)
+
+### Added
+- The procedures are also in the Change Tickets and the Handover Brief. The Change Tickets end with a ticket per finding type (CHG-P01 and on), each covering every cluster it applies to, with the reason, the risk of the change and the window, the pre-check, the change (commands written for the first cluster), the verification and a rollback: a specific command where ONTAP has one (FIPS, SMB signing, export rules, AES Kerberos, gateways, certificates, cluster peering encryption) and a plain statement where it has not (tamperproof snapshots, encryption conversion, platform refresh). The Handover Brief carries the same procedures as the Implementation Plans, so the team taking over has the commands as well as the findings.
+
 ## 5.6.350 (2026-10-17)
 
 ### Added

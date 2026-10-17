@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.350";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.351";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.351",
+    date: "2026-10-17",
+    title: "Procedures in the change tickets and the handover brief",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "The procedures are also in the Change Tickets and the Handover Brief. The Change Tickets end with a ticket per finding type (CHG-P01 and on), each covering every cluster it applies to, with the reason, the risk of the change and the window, the pre-check, the change (commands written for the first cluster), the verification and a rollback: a specific command where ONTAP has one (FIPS, SMB signing, export rules, AES Kerberos, gateways, certificates, cluster peering encryption) and a plain statement where it has not (tamperproof snapshots, encryption conversion, platform refresh). The Handover Brief carries the same procedures as the Implementation Plans, so the team taking over has the commands as well as the findings.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.350",
     date: "2026-10-17",
@@ -22993,6 +23008,44 @@ function compileConfigReviewMd(systems, scopeTitle) {
 // table of every cluster it applies to with what the finding says about it (the SVM, policy or object), so the same steps can be run on each. kind: 'full'
 // (the steps of every procedure), 'sec' (only security procedures). A document with no matching finding is returned unchanged.
 const _PB_SECURITY = /multi-admin|fips|data-at-rest|export rule|anti-ransomware|smb signing|fpolicy|tamperproof|log forwarding|vscan|cluster peering encryption|certificate|aes kerberos|nse\)/i;
+// Change tickets for the procedures: one ticket per finding type, covering every cluster it applies to, with the pre-check, the change, the verification and
+// the rollback. Risk and window follow what the change does to running service; the rollback is specific where ONTAP has a way back and says so where it has not.
+const _PB_TICKET = [
+  { rx: /multi-admin/i, risk: 'Low', win: 'Any; no outage', back: 'Disable with: security multi-admin-verify modify -enabled false (this itself needs approval once rules exist). Remove a rule with security multi-admin-verify rule delete.' },
+  { rx: /fips/i, risk: 'Medium', win: 'Maintenance window; TLS listeners restart', back: 'security config modify -interface SSL -is-fips-enabled false' },
+  { rx: /export rule/i, risk: 'Medium', win: 'Business hours with the application owner present; a wrong client list blocks access', back: 'Restore the clientmatch recorded in step 1: vserver export-policy rule modify -vserver <svm> -policyname <policy> -ruleindex <n> -clientmatch 0.0.0.0/0' },
+  { rx: /smb signing/i, risk: 'Medium', win: 'Maintenance window; old clients may fail to connect', back: 'vserver cifs security modify -vserver <svm> -is-signing-required false' },
+  { rx: /aes kerberos/i, risk: 'Low', win: 'Any; no outage', back: 'vserver cifs security modify -vserver <svm> -is-aes-encryption-enabled false' },
+  { rx: /data-at-rest|nse\)/i, risk: 'Medium', win: 'Off-peak; conversion runs in the background', back: 'Encryption conversion cannot be undone in place; move the volume to an unencrypted aggregate with volume move start -encrypt-destination false if required.' },
+  { rx: /tamperproof/i, risk: 'Medium', win: 'Any; the compliance clock cannot be reset', back: 'Locked snapshots cannot be removed before their expiry; the compliance clock is permanent. Confirm retention with the data owner before applying.' },
+  { rx: /platform .+ reached end-of-availability/i, risk: 'High', win: 'Planned project; CAB approval and a migration window', back: 'Keep the source controllers and data intact until the new ones are verified; aggregate relocation can be reversed with storage aggregate relocation start in the other direction.' },
+  { rx: /certificate/i, risk: 'Medium', win: 'Maintenance window; clients reconnect', back: 'Re-apply the previous certificate: security ssl modify -vserver <svm> -serial <old-serial> -server-enabled true (before deleting it).' },
+  { rx: /cluster peering encryption/i, risk: 'Medium', win: 'Both clusters in the same window; transfers pause until both agree', back: 'cluster peer modify -cluster <peer> -encryption-protocol-proposed none (both sides).' },
+  { rx: /default gateways/i, risk: 'Medium', win: 'Maintenance window; routing changes briefly', back: 'Recreate the removed route with its recorded gateway and metric: network route create -vserver <svm> -destination 0.0.0.0/0 -gateway <gw> -metric <m>' },
+  { rx: /broadcast domain/i, risk: 'Medium', win: 'Maintenance window; ports change membership', back: 'Move the port back: network port broadcast-domain add-ports / remove-ports with the layout recorded in step 1.' }
+];
+function _dfAppendProcedureTickets(doc, systems) {
+  if (typeof doc !== 'string') return doc;
+  const groups = new Map();
+  (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
+    if (!r.hasPlaybook || !r.remediationPlan) return;
+    const key = String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: r.remediationPlan, sev: r.severity };
+    const u = _unitOf(sys); if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || '') });
+    groups.set(key, g);
+  }));
+  const list = [...groups.values()].sort((a, b) => b.units.size - a.units.size || a.key.localeCompare(b.key));
+  if (!list.length) return doc;
+  const RULE = '='.repeat(80), CAP = 15, shown = list.slice(0, CAP);
+  let o = `\n${RULE}\nCHANGE TICKETS FOR THE PROCEDURES\n${RULE}\n${list.length} change${list.length !== 1 ? 's' : ''}, one per finding type, each covering every cluster it applies to. Take the cluster's configuration backup first (system configuration backup create -node <node> -backup-type cluster), check health before and after (cluster show ; storage failover show ; system health alert show), and follow the change control rules above.\n`;
+  shown.forEach((g, i) => {
+    const names = [...g.units.keys()], t = _PB_TICKET.find(x => x.rx.test(g.key)) || { risk: 'Low', win: 'Any; no outage expected', back: 'Record the current value with the show command in step 1; to roll back, set it back with the same modify command.' };
+    const steps = (g.plan.steps || []).filter(x => /^\d+\./.test(String(x)));
+    o += `\nCHG-P${String(i + 1).padStart(2, '0')}  ${g.key}\n  Clusters (${names.length}): ${names.slice(0, 10).join(', ')}${names.length > 10 ? ', ...' : ''}\n  Reason:   ${g.plan.cause}\n  Risk of the change: ${t.risk}.  Window: ${t.win}.\n  Pre-check: take the configuration backup and run the health commands above; step 1 records the current setting.\n  Change (commands written for ${names[0]}; repeat on each cluster with its own names):\n${steps.map(x => '    ' + x).join('\n')}\n  Verify:   the show command in the last step returns the new setting; the finding clears in Active IQ after the next AutoSupport.\n  Rollback: ${t.back}\n`;
+    if (names.length > 1) o += `  Per cluster:\n` + [...g.units.values()].slice(0, 8).map(u => `    ${u.name} (${u.customer || '-'}): ${String(u.detail).replace(/\s+/g, ' ').slice(0, 180)}`).join('\n') + (names.length > 8 ? `\n    ... and ${names.length - 8} more` : '') + '\n';
+  });
+  if (list.length > shown.length) o += `\n${list.length - shown.length} further finding types have a procedure; the complete procedures are in the Implementation Plans and the Risk & Remediation Brief.\n`;
+  return doc.replace(/\s*$/, '\n') + o;
+}
 function _dfAppendProcedures(doc, systems, kind) {
   if (typeof doc !== 'string') return doc;
   const groups = new Map();
@@ -33069,6 +33122,8 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   // the procedures for the findings on these systems, with the commands for each cluster
   riskRemediationBrief = _dfAppendProcedures(riskRemediationBrief, targetSystems, 'full');
   implementationPlans = _dfAppendProcedures(implementationPlans, targetSystems, 'full');
+  changeTickets = _dfAppendProcedureTickets(changeTickets, targetSystems);
+  handoverBrief = _dfAppendProcedures(handoverBrief, targetSystems, 'full');
   securityBrief = _dfAppendProcedures(securityBrief, targetSystems, 'sec');
   // what changed, and the 30 / 60 / 90 day better-unchanged-worse view, in the documents that report on a period
   problemStatements = _dfAppendProgress(problemStatements, targetSystems, 30);
