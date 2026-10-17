@@ -86,7 +86,7 @@ The review queue (`data/library_update_queue.json`) holds `playbook-gap` items: 
 
 1. Open the NetApp page the item links and the pages it cites. Write the procedure **only from the documentation**: every command, option and menu path must be on the page. If a step cannot be confirmed, write "see the linked page" instead of a guess.
 2. Add an entry to `data/playbooks_local.json` with `"status": "draft"`, in the format of `docs/PLAYBOOKS.md` (family, match, vars, cause, impact, steps, options, ticket with rollback, sources). Keep ONTAP commands out of E-Series and StorageGRID entries.
-3. Run `python tests/run_tests.py`: an invalid entry is reported by `tests/test_playbooks_data.py`. Do not set `"status": "approved"`: a person reads the draft against the page and approves it.
+3. Run `python tests/run_tests.py`: an invalid entry is reported by `tests/test_playbooks_data.py`. Then run `python tools/playbook_verify.py --promote`: a draft that is valid and whose every command and menu path is verified against NetApp's documentation is approved automatically (the owner's standing instruction); one that fails stays a draft and the command says why: fix it from the page.
 4. Say in the report which gap items now have a draft, which could not be written, and why.
 
 ## 3b. Refresh the copy that ships with ARIA

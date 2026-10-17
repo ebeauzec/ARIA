@@ -1,8 +1,8 @@
 {
-  "version": "5.6.357",
+  "version": "5.6.358",
   "major": 5,
   "minor": 6,
-  "patch": 357,
+  "patch": 358,
   "date": "2026-10-17",
-  "notes": "The 13 SANtricity and StorageGRID procedures are approved by the owner"
+  "notes": "E-Series DBM and StorageGRID ILM retention procedures; drafts that pass the checks are approved automatically"
 }

@@ -43,6 +43,6 @@ Git needs `user.name` and `user.email` on the machine (the owner's identity only
 | The playbook page watch | In every sweep | A change to a NetApp page that a playbook cites becomes a review item naming the playbook. |
 | The scheduled Claude job `aria-library-harvest` | Mondays | The same routine, unattended: library entries, source changes, playbook drafts, release. |
 
-The sweep needs the internet; ARIA itself still works without it, and nothing here needs an AI to run. The AI-written part (reading a NetApp page and drafting or correcting a playbook) is done by the Claude session that the hook briefs, and a person approves drafts.
+The sweep needs the internet; ARIA itself still works without it, and nothing here needs an AI to run. The AI-written part (reading a NetApp page and drafting or correcting a playbook) is done by the Claude session that the hook briefs, and a draft is approved automatically once it passes the checks.
 
 To run it by hand: `python tools/dev/maintenance.py sweep` (foreground) or `report` (what is waiting).

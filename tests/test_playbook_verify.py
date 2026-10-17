@@ -129,6 +129,64 @@ class VerifyTests(unittest.TestCase):
         self.assertIn(pv.CLI_BASE + 'storage-failover-show.html', lu.playbook_sources(self.base))
 
 
+class PromoteTests(unittest.TestCase):
+    """New procedures are approved automatically when they pass every check; anything else stays a draft."""
+
+    def setUp(self):
+        self.d = tempfile.TemporaryDirectory()
+        self.base = self.d.name
+        os.makedirs(os.path.join(self.base, 'data'))
+        self.path = os.path.join(self.base, 'data', 'playbooks_local.json')
+        self.fetch = Fetcher({pv.CLI_BASE + 'storage-failover-show.html': cli_html('storage failover show', ['fields', 'node']),
+                              pv.CLI_BASE + 'storage-failover-modify.html': cli_html('storage failover modify', ['node', 'auto-giveback'])})
+
+    def tearDown(self):
+        self.d.cleanup()
+
+    def write(self, entries):
+        with open(self.path, 'w', encoding='utf-8') as fh:
+            json.dump({'playbooks': entries}, fh)
+
+    def read(self):
+        with open(self.path, encoding='utf-8') as fh:
+            return {e['id']: e for e in json.load(fh)['playbooks']}
+
+    def test_a_valid_verified_draft_is_approved_and_the_record_says_how(self):
+        self.write([entry(id='test.good', status='draft')])
+        ok, kept = pv.promote(self.base, None, self.fetch, sleep=lambda s: None, today='2026-10-17')
+        self.assertEqual((ok, kept), (['test.good'], {}))
+        e = self.read()['test.good']
+        self.assertEqual((e['status'], e['approvedAt']), ('approved', '2026-10-17'))
+        self.assertIn('automatic', e['approvedBy'])
+
+    def test_a_wrong_option_an_unofficial_source_or_an_unreadable_page_keeps_a_draft(self):
+        wrong = entry(id='test.wrong', status='draft', steps=['1. Run: storage failover modify -node * -not-an-option true', '2. a', '3. b'])
+        unofficial = entry(id='test.unofficial', status='draft', sources=['https://example.com/x'])
+        self.write([wrong, unofficial, entry(id='test.fine', status='draft')])
+        ok, kept = pv.promote(self.base, None, self.fetch, sleep=lambda s: None)
+        self.assertEqual(ok, ['test.fine'])
+        self.assertIn('param-missing', kept['test.wrong'][0])
+        self.assertIn('not a NetApp page', kept['test.unofficial'][0])
+        self.assertEqual(self.read()['test.wrong']['status'], 'draft')
+
+        def boom(url):
+            return None, 'URLError: offline'
+        import shutil
+        shutil.rmtree(os.path.join(self.base, 'data', 'library_refreshed'), ignore_errors=True)       # nothing cached: the pages must be read
+        self.write([entry(id='test.offline', status='draft')])
+        ok, kept = pv.promote(self.base, None, boom, sleep=lambda s: None)
+        self.assertEqual(ok, [])
+        self.assertIn('unchecked', kept['test.offline'][0])
+
+    def test_menu_paths_are_checked_by_reading_the_cited_page_when_it_is_not_cached(self):
+        src = 'https://docs.netapp.com/us-en/e-series-santricity/sm-support/example.html'
+        page = '<html><head><title>Example</title></head><body><main><p>' + 'From the left panel, select Support > Diagnostics. ' * 6 + '</p><p>' + 'x' * 300 + '</p></main></body></html>'
+        e = {'id': 'test.ui', 'status': 'draft', 'family': 'eseries', 'match': 'x', 'cause': 'c', 'impact': 'i', 'sources': [src], 'steps': ['1. In System Manager select Support > Diagnostics.', '2. b', '3. c']}
+        self.write([e])
+        ok, kept = pv.promote(self.base, None, Fetcher({src: page}), sleep=lambda s: None)
+        self.assertEqual(ok, ['test.ui'], kept)
+
+
 class ShippedPlaybooksTests(unittest.TestCase):
     def test_every_command_in_the_shipped_playbooks_has_a_known_root(self):
         import playbooks as pb

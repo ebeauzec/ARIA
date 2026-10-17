@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.357";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.358";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.358",
+    date: "2026-10-17",
+    title: "DBM and ILM retention procedures; new procedures are approved automatically",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Two more procedures, written from NetApp's own pages: the E-Series configuration database (DBM) corruption that advisory removed-ref describes (the array is exposed after a controller reboot or a drive failure in a disk pool; the procedure covers reading the bulletin, opening a case, avoiding reboots, collecting the configuration database when support asks, upgrading to the fixed release, and what to do if the controllers are already locked down) and StorageGRID object retention in the active ILM policy (how retention and precedence work, finding the rules, cloning the rule and the policy instead of editing the active ones, simulating, and activating with the confirmation StorageGRID asks for). Bulletin removed-ref is not public, so the procedure says what it cannot quote and sends the reader to it instead of guessing the fixed release.",
+          "New procedures are approved automatically. A draft in a playbook file (data/playbooks_local.json, or tools/playbooks.json for the shipped set) becomes approved as soon as it passes every automatic check: the entry is valid (NetApp pages as sources only, placeholders declared, no ONTAP commands in an E-Series or StorageGRID procedure, no tool name) and every command and menu path in it is verified against NetApp's documentation, with nothing wrong and nothing unchecked. `python tools/playbook_verify.py --promote` does it, the maintenance run at every session start and the weekly job run it, and the entry records how it was approved. A draft that fails stays a draft and the command says why. The cited pages are read at once when they are not cached yet, so a new procedure can be checked straight away.",
+          "Coverage on the large test fleet: 31,093 of 32,948 findings (94.4%); 65 procedures, 241 commands and menu paths checked, none wrong.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.357",
     date: "2026-10-17",
@@ -25252,12 +25269,12 @@ async function loadPlaybookCoverage() {
     const gaps = d.gaps || [], hist = d.history || [];
     const trend = hist.length > 1 && hist[0].total ? ` (${(100 * hist[0].covered / hist[0].total).toFixed(0)}% at the first record)` : '';
     box.innerHTML = `<div style="color:var(--text-secondary);">${d.pct == null ? 'No report yet: it is written after the first load of the fleet.' : `<b>${d.pct}%</b> of the findings in the fleet (${(d.covered || 0).toLocaleString()} of ${(d.total || 0).toLocaleString()}) have a procedure written for their own system${_esc(trend)}; ${d.gapTypes || 0} kinds of finding have none. Recorded ${_esc(ago(d.updated))}.`}
-      <br>Playbooks as data: ${pb.approved || 0} in use (${pb.shipped || 0} shipped, ${pb.local || 0} local)${pb.pending ? `, <b>${pb.pending} draft${pb.pending === 1 ? '' : 's'} waiting for approval</b>` : ''}${pb.invalid ? `, <span style="color:var(--status-critical);">${pb.invalid} invalid</span>` : ''}. The rest are written in the program.
+      <br>Playbooks as data: ${pb.approved || 0} in use (${pb.shipped || 0} shipped, ${pb.local || 0} local)${pb.pending ? `, <b>${pb.pending} draft${pb.pending === 1 ? '' : 's'} that ${pb.pending === 1 ? 'has' : 'have'} not passed the checks</b>` : ''}${pb.invalid ? `, <span style="color:var(--status-critical);">${pb.invalid} invalid</span>` : ''}. The rest are written in the program.
       ${(d.verification && d.verification.entries) ? `<br>Checked against NetApp's documentation (${_esc(ago(d.verification.at))}): ${d.verification.totals.verified} commands and menu paths verified in ${d.verification.entriesOk} of ${d.verification.entries} playbooks${(d.verification.totals['param-missing'] + d.verification.totals['not-found']) ? `, <b style="color:var(--status-critical);">${d.verification.totals['param-missing'] + d.verification.totals['not-found']} need a person</b>: ${d.verification.review.slice(0, 4).map(r => _esc(r.id) + ' (' + _esc(r.item) + ')').join('; ')}` : ', none wrong'}.` : ''}
       ${(d.sourceWatch && d.sourceWatch.pages) ? `<br>The NetApp pages the procedures were written from: ${d.sourceWatch.pages} watched by the reference updater, ${d.sourceWatch.read} read so far${d.sourceWatch.changedOpen ? `, <b>${d.sourceWatch.changedOpen} changed since (see the review queue above)</b>` : ', none changed'}.` : ''}</div>`
       + ((d.problems || []).length ? `<div style="margin-top:6px;color:var(--status-critical);">${d.problems.slice(0, 4).map(x => _esc(x.id) + ': ' + _esc(x.problems[0])).join('<br>')}</div>` : '')
       + (gaps.length ? `<details style="margin-top:8px;"><summary style="cursor:pointer;color:var(--text-muted);">Findings with no procedure (largest first)</summary><table style="width:100%;border-collapse:collapse;margin-top:6px;">`
-        + gaps.slice(0, 25).map(g => `<tr style="border-top:1px solid var(--wa-50);"><td style="padding:3px 8px 3px 0;">${_esc(g.key.replace(/^[a-z]+ \| /, ''))}</td><td style="padding:3px 6px;color:var(--text-muted);white-space:nowrap;">${_esc((g.families || []).join(', '))}</td><td style="padding:3px 0;text-align:right;white-space:nowrap;">${g.count} on ${g.systems}</td></tr>`).join('') + `</table><div style="margin-top:6px;color:var(--text-muted);">The largest are in the review queue above. A procedure is added as a playbook entry (docs/PLAYBOOKS.md): a person approves it, and it applies on the next load, with no new release.</div></details>` : '');
+        + gaps.slice(0, 25).map(g => `<tr style="border-top:1px solid var(--wa-50);"><td style="padding:3px 8px 3px 0;">${_esc(g.key.replace(/^[a-z]+ \| /, ''))}</td><td style="padding:3px 6px;color:var(--text-muted);white-space:nowrap;">${_esc((g.families || []).join(', '))}</td><td style="padding:3px 0;text-align:right;white-space:nowrap;">${g.count} on ${g.systems}</td></tr>`).join('') + `</table><div style="margin-top:6px;color:var(--text-muted);">The largest are in the review queue above. A procedure is added as a playbook entry (docs/PLAYBOOKS.md): it is approved automatically once it passes the checks, and it applies on the next load, with no new release.</div></details>` : '');
   } catch (e) { box.textContent = 'Could not load the procedure coverage: ' + e.message; }
 }
 function _remedPlaybook(risk, sys) {

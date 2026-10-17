@@ -2,7 +2,7 @@
 
 A playbook is a procedure for one kind of finding (see docs/PLAYBOOKS.md for the format). The shipped set is tools/playbooks.json; a person or the weekly
 maintenance job adds entries to data/playbooks_local.json, which is never overwritten by an update. Only entries with "status": "approved" are used: a
-draft written from NetApp's documentation waits for a person to read it and change the status.
+draft is approved automatically by `playbook_verify.py --promote` once it is valid and every command and menu path in it is verified against NetApp's documentation.
 
 The front end reports which findings in the fleet it could not give a procedure (record_gaps). That record (data/playbook_gaps.json) is what shows in
 Settings > Data & Sync > Procedure coverage, and the largest gaps are put into the reference updater's review queue so the maintenance job knows what to write.

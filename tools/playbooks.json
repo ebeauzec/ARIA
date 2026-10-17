@@ -1622,6 +1622,82 @@
    ],
    "approvedBy": "owner",
    "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "eseries.dbm-corruption",
+   "status": "approved",
+   "family": "eseries",
+   "match": "dbm \\(storage array configuration\\) corruption may occur",
+   "cause": "Active IQ reports that {node} (SANtricity OS {version}) is exposed to the configuration database (DBM) corruption that NetApp advisory removed-ref describes. The finding says: {detail}",
+   "impact": "The corruption is detected after any controller reboot, or after a drive failure in the same Dynamic Disk Pool (DDP). Once detected, the controllers panic (reboot) and lock down to preserve the data (lockdown codes 0ELt and 0ELF), and NetApp Support has to correct it.",
+   "steps": [
+    "1. Read bulletin removed-ref (https://kb.netapp.com/removed-link). It is not public, so this report cannot quote it: note which SANtricity OS releases are affected, which release fixes it and any workaround NetApp gives.",
+    "2. Open a NetApp support case now, quoting the bulletin removed-ref, the array's serial number and the SANtricity OS release ({version}), and ask whether this array is affected and which release to move to.",
+    "3. Until it is fixed, do not reboot or reset the controllers without agreeing it with NetApp Support: the finding says detection follows any controller reboot or a drive failure in the same DDP. Look at the Recovery Guru regularly (Home > Bell icon > Recover from n problems) and deal with what it lists.",
+    "4. Be ready for support: when NetApp Support or the Recovery Guru tells you to, save the RAID configuration database in System Manager with Support > Diagnostics > Collect Configuration Data > Collect. It writes configurationData-<arrayName>-<dateTime>.7z to the browser's Downloads folder (the same data as the CLI command save storageArray dbmDatabase); send it to support. The file Settings > System > Save Storage Array Configuration produces is a script for replicating settings and is not a backup for disaster recovery.",
+    "5. Upgrade to the release the bulletin names as the fix, with the SANtricity OS upgrade procedure (Support > Upgrade center). Active IQ's recommended release for this array is {target|not reported}: check that it is at or above the fixed release in the bulletin. If this array is the storage controller of a StorageGRID appliance (SG5700, SG6000), upgrade SANtricity OS from the Grid Manager instead: Maintenance > System > Software update > SANtricity OS update, after applying the latest StorageGRID hotfix.",
+    "6. If the controllers are already locked down (the 7-segment display shows 0ELt or 0ELF and System Manager reports Alternate Controller Database Error), contact your NetApp Technical Support Engineer: the lockdown message itself says so, and NetApp's own articles on this lockdown describe a restore of the database that can fail and needs support."
+   ],
+   "options": [
+    "Option A: Upgrade to the release the bulletin names as the fix (recommended once it is known).",
+    "Option B: Stay on the current release with reboots avoided and a support case open, until the upgrade window.",
+    "Option C: Ask NetApp Support whether the array should be moved to the fixed release as an emergency change."
+   ],
+   "thirdParty": "If the array is part of a StorageGRID appliance, tell the grid team before any controller is rebooted: the appliance's storage controllers belong to a Storage Node.",
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; steps 1 to 4 change nothing on the array. The upgrade has its own ticket (the SANtricity upgrade).",
+    "rollback": "Nothing to roll back in steps 1 to 4; the upgrade is not reversed on your own (see the SANtricity upgrade procedure)."
+   },
+   "sources": [
+    "https://kb.netapp.com/removed-link",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-support/collect-configuration-data.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-settings/save-storage-array-configuration.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-support/upgrade-controller-software-and-firmware.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-interface/recover-from-problems-using-recovery-guru.html",
+    "https://docs.netapp.com/us-en/storagegrid-appliances/sg6000/upgrading-santricity-os-on-storage-controllers-using-grid-manager-sg6000.html",
+    "https://kb.netapp.com/on-prem/E-Series/SANtricity-OS-KBs/SANtricity_Controller_Database_Error_after_reboot_from_upgrade_or_manual_reset",
+    "https://kb.netapp.com/on-prem/E-Series/SANtricity-OS-KBs/Unable_to_restore_DBM_on_controllers_in_lockdown_OELt___OELF"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "storagegrid.ilm-retention-period",
+   "status": "approved",
+   "family": "storagegrid",
+   "match": "object retention period configured in active ilm policy",
+   "cause": "The active ILM policy has object placement rules with a limited retention period. The finding says: {detail}",
+   "impact": "StorageGRID stores the objects a rule matches until the last time period of that rule has elapsed, and then deletes them; objects are kept indefinitely only if the placement instructions say forever. If 90 days was not meant to be the end of the data's life, the data is purged automatically.",
+   "steps": [
+    "1. Find out with the data owners whether the limited retention is intended. Know the rules of precedence: a client's delete request always wins over lifecycle and ILM; an S3 bucket lifecycle Expiration action overrides ILM for the objects it matches (an object can outlive its ILM instructions, or be deleted earlier); a version under a legal hold, or before its retain-until-date, cannot be deleted by any method; objects in buckets with S3 Object Lock are kept by ILM forever.",
+    "2. See which rules and which policy do this: ILM > Policies, select the active policy to see its rules and the default rule, then ILM > Rules and select a rule: its details show the retention diagram and placement instructions. The default rule applies to objects no other rule matches.",
+    "3. If the retention is to stay as it is, record it as intended and keep the confirmation you type when a policy is activated (the default rule's number of days, or yes). For data that must not be deleted before a date, use S3 Object Lock (see the Object Lock procedure) instead of relying on ILM alone.",
+    "4. If the retention must be longer or forever, do not edit the active rule: a rule that is used in any policy cannot be edited. Select ILM > Rules, tick the rule and select Clone (the clone needs a new name), and change the time period in the placement instructions of the clone to the retention required (forever keeps the objects indefinitely).",
+    "5. Clone the active policy: ILM > Policies, tick the policy, select Clone, give it a name and a reason for the change, use Select rules to replace the old rule with the new one, keep the default rule last (it cannot use filters; do not use the Make 2 Copies rule as the default in a multi-site grid), drag the other rules into the order they are to be evaluated in (objects are checked from the top), and select Save.",
+    "6. Simulate it before activating: ingest test objects with an S3 client, then ILM > Policies, tick the policy, select Simulate, enter the bucket/object-key of each test object and confirm it was matched by the right rule. A wrong policy can cause unrecoverable data loss.",
+    "7. Think about the effect on existing objects: a new policy manages existing and new objects, and changing where copies are placed can load the grid for a while. A rule with an ingest time filter (Ingest time is on or after a date) applies only to objects ingested after that date.",
+    "8. Activate it: ILM > Policies, tick the policy, select Activate. A warning asks you to confirm: type the number of days if the default rule keeps objects for a limited time, or yes if the default keeps them forever but another rule does not. A change that reduces redundancy takes effect only when all grid nodes are available.",
+    "9. With several active policies (ILM > Policy tags, up to 10 tags) the policy tag on each bucket decides which policy applies; check the tags of the buckets involved."
+   ],
+   "options": [
+    "Option A: Keep the retention and record that it is intended (recommended where the data may be deleted after the period).",
+    "Option B: Extend or remove the limit in a cloned rule and policy, simulate, activate (recommended where the data must be kept).",
+    "Option C: Use S3 Object Lock for data that must be kept until a date, and leave ILM to place the copies."
+   ],
+   "ticket": {
+    "risk": "High",
+    "window": "Planned window after simulation; deletions by ILM are not reversible",
+    "rollback": "ILM deletions cannot be undone: objects already purged have to be restored from a backup or replica. A corrected policy is activated the same way; ILM > Policies > Activation history lists the policies that were active and when."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/storagegrid/ilm/how-object-retention-is-determined.html",
+    "https://docs.netapp.com/us-en/storagegrid/ilm/working-with-ilm-rules-and-ilm-policies.html",
+    "https://docs.netapp.com/us-en/storagegrid/ilm/creating-ilm-policy.html",
+    "https://docs.netapp.com/us-en/storagegrid/ilm/example-6-changing-ilm-policy.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
   }
  ]
 }

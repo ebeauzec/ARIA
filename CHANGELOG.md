@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.358 (2026-10-17)
+
+### Added
+- Two more procedures, written from NetApp's own pages: the E-Series configuration database (DBM) corruption that advisory removed-ref describes (the array is exposed after a controller reboot or a drive failure in a disk pool; the procedure covers reading the bulletin, opening a case, avoiding reboots, collecting the configuration database when support asks, upgrading to the fixed release, and what to do if the controllers are already locked down) and StorageGRID object retention in the active ILM policy (how retention and precedence work, finding the rules, cloning the rule and the policy instead of editing the active ones, simulating, and activating with the confirmation StorageGRID asks for). Bulletin removed-ref is not public, so the procedure says what it cannot quote and sends the reader to it instead of guessing the fixed release.
+- New procedures are approved automatically. A draft in a playbook file (data/playbooks_local.json, or tools/playbooks.json for the shipped set) becomes approved as soon as it passes every automatic check: the entry is valid (NetApp pages as sources only, placeholders declared, no ONTAP commands in an E-Series or StorageGRID procedure, no tool name) and every command and menu path in it is verified against NetApp's documentation, with nothing wrong and nothing unchecked. `python tools/playbook_verify.py --promote` does it, the maintenance run at every session start and the weekly job run it, and the entry records how it was approved. A draft that fails stays a draft and the command says why. The cited pages are read at once when they are not cached yet, so a new procedure can be checked straight away.
+- Coverage on the large test fleet: 31,093 of 32,948 findings (94.4%); 65 procedures, 241 commands and menu paths checked, none wrong.
+
 ## 5.6.357 (2026-10-17)
 
 ### Added

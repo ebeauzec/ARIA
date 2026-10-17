@@ -11,7 +11,7 @@ Procedures live in two places:
 
 After every load of the fleet the front end counts the findings that got no procedure and reports them (`POST /api/library/playbooks/gaps`). They are kept in `data/playbook_gaps.json` and shown in **Settings > Data & Sync > Procedure coverage** (percentage covered, the kinds of finding with none, drafts waiting for approval, entries that are invalid). The 25 largest are also added to the reference updater's review queue as `playbook-gap` items, which is how the weekly maintenance job (`docs/LIBRARY_HARVEST_ROUTINE.md`) learns what to write. A kind of finding that gets a procedure leaves the record and its queue item closes by itself.
 
-ARIA never writes a procedure itself and never fetches one at run time; it runs unchanged where no AI and no internet are allowed. Procedures are written by a person or by the maintenance job from NetApp's documentation, and a person approves them.
+ARIA never writes a procedure itself and never fetches one at run time; it runs unchanged where no AI and no internet are allowed. Procedures are written by a person or by the maintenance job from NetApp's documentation. They are approved automatically (the owner's standing instruction): a draft becomes approved as soon as it passes every automatic check below (valid, and every command and menu path checked against NetApp's documentation); one that fails stays a draft, with the reasons.
 
 ## Adding one
 
@@ -46,14 +46,14 @@ ARIA never writes a procedure itself and never fetches one at run time; it runs 
 }
 ```
 
-3. Read it against the page it cites. Change `"status"` to `"approved"`. It is used from the next load.
+3. Run `python tools/playbook_verify.py --promote`. A draft that is valid and fully verified against NetApp's documentation is approved by itself (`approvedBy` records it) and is used from the next load; one that is not stays a draft and the command prints why. The maintenance run at every session start does this too. You can also set `"status": "approved"` yourself.
 
 ### Fields
 
 | Field | Meaning |
 |---|---|
 | `id` | 3-61 characters: lower-case letters, digits, `.` `-` `_`. A local entry with the id of a shipped one replaces it. |
-| `status` | `approved` (used), `draft` (waits for a person; listed in the coverage card), `rejected` (a local `rejected` entry switches off the shipped one with that id). |
+| `status` | `approved` (used), `draft` (not used yet: it is approved automatically once it passes the checks; the coverage card lists the drafts that have not passed), `rejected` (a local `rejected` entry switches off the shipped one with that id). |
 | `family` | `ontap`, `eseries`, `storagegrid` or `any`. A finding whose category names StorageGRID or E-Series/SANtricity counts as that product's even when its system record is classed by a model code. |
 | `match` | A regular expression (case-insensitive) tested on the finding's title and detail text. Entries are tried in file order, shipped first. |
 | `matchOn` | Optional: `description` tests the title only. |

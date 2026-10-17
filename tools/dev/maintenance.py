@@ -9,7 +9,7 @@ What a session start does (nothing here needs an AI; the AI-written part is what
   1. Starts, detached, `_background`: the reference updater over ALL its sources (release lists, advisories, end-of-availability, what's-new pages, and the NetApp
      pages every playbook was written from), then, when Playwright is installed, a headless load of the fleet that records which findings have no procedure.
      A sweep that started less than 45 minutes ago is not started twice.
-  2. Prints what is waiting: the open review items by kind, the procedure coverage and the largest gaps, drafts waiting for approval, library entries not yet absorbed.
+  2. Prints what is waiting: the open review items by kind, the procedure coverage and the largest gaps, drafts that did not pass the checks, library entries not yet absorbed.
   3. Prints the standing instruction for the session (CLAUDE.md, "Session start"): work the queue before other work.
 
 The state lives in data/ (shared with another workstation when the project folder is synchronised between machines); the run log is data/dev/maintenance.log.
@@ -130,7 +130,13 @@ def background(root=ROOT):
         t = s['totals']
         return f"{s['entriesOk']} of {s['entries']} playbooks fully verified; commands and menu paths: {t['verified']} verified, {t['param-missing']} wrong parameter, {t['not-found']} not found, {t['unchecked']} unchecked"
 
+    def promote():
+        import playbook_verify as pv
+        ok, kept = pv.promote(root)
+        return ('approved: ' + ', '.join(ok) if ok else 'no draft to approve') + ('; still drafts: ' + '; '.join(f'{k} ({v[0][:60]})' for k, v in kept.items()) if kept else '')
+
     step('reference updater sweep (all sources)', sweep)
+    step('approve the drafts that pass the checks', promote)
     step('verify playbook commands against the NetApp command reference', verify)
     step('procedure coverage record (headless)', record)
     st['finishedAt'] = datetime.now(timezone.utc).isoformat()
@@ -166,7 +172,7 @@ def report(root=ROOT, started_note=None):
         import playbooks as pb
         ld = pb.load(p['data'], os.path.join(root, 'tools', 'playbooks.json'))
         w = pb.source_watch(p['data'], ld)
-        out.append(f"Procedures: {ld['counts']['approved']} playbooks in use, {ld['counts']['pending']} draft(s) waiting for approval, {ld['counts']['invalid']} invalid; "
+        out.append(f"Procedures: {ld['counts']['approved']} playbooks in use, {ld['counts']['pending']} draft(s) not approved yet, {ld['counts']['invalid']} invalid; "
                    + (f"coverage {gaps.get('pct')}% ({gaps.get('covered'):,} of {gaps.get('total'):,} findings), recorded {_age(gaps.get('updated'))}" if gaps.get('pct') is not None else 'coverage not recorded on this machine yet')
                    + f"; {w['read']} of {w['pages']} source pages read, {w['changedOpen']} changed since.")
         for g in sorted((gaps.get('gaps') or {}).values(), key=lambda x: -x.get('count', 0))[:6]:
@@ -181,7 +187,7 @@ def report(root=ROOT, started_note=None):
         except Exception:
             pass
         for d in ld['pending'][:5]:
-            out.append(f"  draft waiting for a person: {d['id']}")
+            out.append(f"  draft that has not passed the checks: {d['id']} (python tools/playbook_verify.py --promote says why)")
         for x in ld['problems'][:3]:
             out.append(f"  INVALID playbook {x['id']}: {x['problems'][0]}")
     except Exception as e:
@@ -205,7 +211,7 @@ def report(root=ROOT, started_note=None):
     if work:
         out.append("INSTRUCTION (CLAUDE.md, 'Session start'): before other work, unless the user's first message is urgent, work this queue: (1) library items and new releases/advisories: "
                    "docs/LIBRARY_HARVEST_ROUTINE.md section 2; (2) each `playbook-source-changed` item: read the page (tools/library_updater.http_get + html_to_text; WebFetch gets 403 from docs.netapp.com) "
-                   "and correct the playbook; (3) the largest `playbook-gap` items, up to five this session: write a playbook DRAFT from the NetApp pages only (docs/PLAYBOOKS.md), never from memory; "
+                   "and correct the playbook; (3) the largest `playbook-gap` items, up to five this session: write the playbook as a draft from the NetApp pages only (docs/PLAYBOOKS.md), never from memory, then run `python tools/playbook_verify.py --promote` (new procedures are approved automatically when they pass the checks); "
                    "(4) tests, guard, release and push per CLAUDE.md; then say in one short paragraph what was done. If the user wants something else first, do that and come back to this.")
     else:
         out.append('Nothing in the queue needs doing now.')
