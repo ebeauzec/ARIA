@@ -1,8 +1,8 @@
 {
-  "version": "5.6.347",
+  "version": "5.6.348",
   "major": 5,
   "minor": 6,
-  "patch": 347,
+  "patch": 348,
   "date": "2026-10-17",
-  "notes": "Platform lists label E-Series numbers and virtual platform codes; TAM Success Plan health score is its own sentence"
+  "notes": "E-Series model numbers in tables, platform lines and age lists carry their sold name"
 }

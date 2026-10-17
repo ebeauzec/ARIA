@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.348 (2026-10-17)
+
+### Fixed
+- Model names in the other documents: E-Series arrays that Active IQ reports as a bare number now carry their name in the model column of the system tables ('[E-Series] | 6000' is 'EF600'), after 'Platform:' ('Platform: 2806' is 'E2800') and in the platform age list ('- 600: 4'). Every Action Planner document and deliverable was generated for two customers and scanned for any code that is still unnamed: none is left.
+
 ## 5.6.347 (2026-10-17)
 
 ### Fixed

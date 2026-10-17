@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.347";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.348";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.348",
+    date: "2026-10-17",
+    title: "Marketing names for E-Series models in the tables of every document",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Model names in the other documents: E-Series arrays that Active IQ reports as a bare number now carry their name in the model column of the system tables ('[E-Series] | 6000' is 'EF600'), after 'Platform:' ('Platform: 2806' is 'E2800') and in the platform age list ('- 600: 4'). Every Action Planner document and deliverable was generated for two customers and scanned for any code that is still unnamed: none is left.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.347",
     date: "2026-10-17",
@@ -40346,6 +40361,10 @@ function _dfMarketingNames(text) {
   if (typeof text !== 'string') return text;
   return text
     .replace(/\b(AFF|ASA)-([A-Z]?\d{2,4}\w?)\b/g, (a, f, n) => `${f} ${n}`)
+    // E-Series arrays reported as a bare model number: in a model column of a table, after 'Platform:' or as a line label ('- 600: 4')
+    .replace(/(\[E-Series\] \| )(\d{3,4})(?= \|)/g, (a, pre, n) => pre + _marketingModel(n))
+    .replace(/(Platform: )(\d{3,4})\b/g, (a, pre, n) => pre + _marketingModel(n))
+    .replace(/^(\s*- )(\d{3,4})(?=: \d)/gm, (a, pre, n) => pre + _marketingModel(n))
     .replace(/(^|[^\w(])FDvM(\d+)\b(?! ?\()/g, (a, pre, n) => `${pre}ONTAP Select (FDvM${n})`)
     .replace(/(^|[^\w(])CDvM(\d+)\b(?! ?\()/g, (a, pre, n) => `${pre}Cloud Volumes ONTAP (CDvM${n})`);
 }
