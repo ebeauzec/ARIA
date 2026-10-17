@@ -1,0 +1,78 @@
+# Requirements for Inter-Switch Links (ISLs) on MetroCluster IP configurations
+Source: https://docs.netapp.com/us-en/ontap-metrocluster/install-ip/concept-requirements-isls.html
+Fetched: 2026-07-07
+
+Inter-Switch Links (ISLs) carrying MetroCluster traffic on all MetroCluster IP configurations and network topologies have certain requirements. These requirements apply to all ISLs carrying MetroCluster traffic, regardless of whether the ISLs are direct or shared between customer switches.
+
+## MetroCluster ISL requirements
+
+These requirements apply to ISLs on all MetroCluster IP configurations:
+
+- Both fabrics must have the same number of ISLs.
+- ISLs on one fabric must all be the same speed and length.
+- ISLs in both fabrics must be the same speed and length.
+- The maximum supported difference in distance between fabric 1 and fabric 2 is 20km or 0.2ms.
+- The ISLs must have the same topology (e.g., all direct links, or if using WDM then all must use WDM).
+- The minimum required ISL speed depends on the platform model:
+  - Beginning with ONTAP 9.18.1, platforms with a MetroCluster IP backend port speed of 100Gbps require a minimum ISL link speed of 100Gbps. Using a different ISL speed requires a Feature Policy Variance Request (FPVR) — contact your NetApp sales team to file one.
+
+    > **Caution:** Upgrades to ONTAP 9.18.1 and later on platforms that do not currently meet the 100Gbps ISL requirement are not blocked and can proceed. However, NetApp strongly recommends that customers transition to 100Gbps ISL connectivity to maintain expected performance and availability levels.
+
+  - On all other platforms, the minimum supported ISL link speed is 10Gbps.
+- There must be at least one 10Gbps ISL port per fabric.
+
+### Latency and packet loss limits in the ISLs
+
+The following applies to round-trip traffic between the MetroCluster IP switches at site_A and site_B, with the MetroCluster configuration in steady state operation:
+
+- As the distance between two MetroCluster sites increases, latency increases, usually in the range of 1 ms round-trip delay time per 100 km (62 miles). Latency also depends on the network SLA in terms of ISL bandwidth, packet drop rate, and jitter. Low bandwidth, high jitter, and random packet drops lead to different recovery mechanisms by the switches or the TCP engine on the controller modules, which can increase overall latency. Refer to the [Hardware Universe](https://hwu.netapp.com/) for specific round-trip latency and max distance requirements for your configuration.
+- Any device that contributes to latency must be accounted for.
+- The Hardware Universe provides the distance in km — allocate 1ms for every 100km. The maximum distance is defined by whichever is reached first: the maximum round-trip time (RTT) in ms, or the distance in km. Example: if the Hardware Universe lists a distance of 300km (3ms), your ISL can be no further than 300km AND the max RTT cannot exceed 3ms — whichever is reached first.
+- Packet loss must be ≤ 0.01%. The maximum packet loss is the sum of all loss on all links on the path between the MetroCluster nodes, plus the loss on the local MetroCluster IP interfaces.
+- The supported jitter value is 3ms round trip (or 1.5ms one-way).
+- The network should allocate and maintain the SLA amount of bandwidth required for MetroCluster traffic, regardless of microbursts and spikes in traffic.
+
+## Transceiver and cable considerations
+
+Any SFPs or QSFPs supported by the equipment vendor are supported for the MetroCluster ISLs. SFPs and QSFPs provided by NetApp or the equipment vendor must be supported by the switch and switch firmware.
+
+When connecting the controllers to the switches and the local cluster ISLs, you must use the transceivers and cables provided by NetApp with the MetroCluster.
+
+When you use a QSFP-SFP adapter, whether you configure the port in breakout or native speed mode depends on the switch model and firmware. For example, using a QSFP-SFP adapter with Cisco 9336C switches running NX-OS firmware 9.x or 10.x requires that you configure the port in native speed mode.
+
+> **Note:** If you configure an RCF, verify that you select the correct speed mode or use a port with an appropriate speed mode.
+
+## Using xWDM, TDM, and external encryption devices
+
+When you use xWDM/TDM devices or devices providing encryption in a MetroCluster IP configuration, your environment must meet the following requirements:
+
+- When connecting the MetroCluster IP switches to the xWDM/TDM, the external encryption devices or xWDM/TDM equipment must be certified by the vendor for the switch and firmware. The certification must cover the operating mode (such as trunking and encryption).
+- The overall end-to-end latency and jitter, including the encryption, cannot exceed the maximum amount stated in the IMT and in this documentation.
+
+## Supported number of ISLs and breakout cables
+
+Supported maximum number of ISLs that can be configured on a MetroCluster IP switch using the Reference Configuration File (RCF) configuration:
+
+| MetroCluster IP switch model | Port type | Maximum number of ISLs |
+|---|---|---|
+| Broadcom-supported BES-53248 switches | Native ports | 4 ISLs using 10Gbps or 25Gbps |
+| Broadcom-supported BES-53248 switches | Native ports (Note 1) | 2 ISLs using 40Gbps or 100Gbps |
+| Cisco 3132Q-V | Native ports | 6 ISLs using 40Gbps |
+| Cisco 3132Q-V | Breakout cables | 16 ISLs using 10Gbps |
+| Cisco 3232C | Native ports | 6 ISLs using 40Gbps or 100Gbps |
+| Cisco 3232C | Breakout cables | 16 ISLs using 10Gbps or 25Gbps |
+| Cisco 9336C-FX2 (not connecting NS224 shelves) | Native ports | 6 ISLs using 40Gbps or 100Gbps |
+| Cisco 9336C-FX2 (not connecting NS224 shelves) | Breakout cables | 16 ISLs using 10Gbps or 25Gbps |
+| Cisco 9336C-FX2 (connecting NS224 shelves) | Native ports (Note 2) | 4 ISLs using 40Gbps or 100Gbps |
+| Cisco 9336C-FX2 (connecting NS224 shelves) | Breakout cables (Note 2) | 16 ISLs using 10Gbps or 25Gbps |
+| NVIDIA SN2100 | Native ports (Note 2) | 2 ISLs using 40Gbps or 100Gbps |
+| NVIDIA SN2100 | Breakout cables (Note 2) | 8 ISLs using 10Gbps or 25Gbps |
+
+**Note 1**: Using 40Gbps or 100Gbps ISLs on a BES-53248 switch requires an additional license.
+
+**Note 2**: The same ports are used for native speed and breakout mode. You must choose to use ports in native speed mode or breakout mode when creating the RCF file.
+
+- All ISLs on one MetroCluster IP switch must be the same speed. Using a mix of ISL ports with different speeds concurrently is not supported.
+- For optimum performance, use at least one 40Gbps ISL per network. Do not use a single 10Gbps ISL per network for FAS9000, AFF A700, or other high-capacity platforms.
+
+> **Note:** NetApp recommends configuring a small number of high-bandwidth ISLs, rather than a high number of low-bandwidth ISLs (e.g., one 40Gbps ISL instead of four 10Gbps ISLs). When using multiple ISLs, statistical load-balancing can impact maximum throughput — uneven balancing can reduce throughput to that of a single ISL.

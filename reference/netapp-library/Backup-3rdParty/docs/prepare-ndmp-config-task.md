@@ -1,0 +1,86 @@
+# Prepare ONTAP NDMP configurations
+Source: https://docs.netapp.com/us-en/ontap/ndmp/prepare-ndmp-config-task.html
+Fetched: 2026-07-07
+
+Before you configure tape backup access over Network Data Management Protocol (NDMP), you must verify that the planned configuration is supported, verify that your tape drives are listed as qualified drives on each node, verify that all nodes have intercluster LIFs, and identify whether the backup application supports the Cluster Aware Backup (CAB) extension.
+
+## Steps
+
+1. Refer to your backup application provider's compatibility matrix for ONTAP support (NetApp does not qualify third-party backup applications with ONTAP or NDMP).
+
+   You should verify that the following NetApp components are compatible:
+
+   - The version of ONTAP 9 that is running on the cluster.
+   - The backup application vendor and version: for example, Veritas NetBackup 8.2 or CommVault.
+   - The tape devices details, such as the manufacturer, model, and interface of the tape drives: for example, IBM Ultrium 8 or HPe StoreEver Ultrium 30750 LTO-8.
+   - The platforms of the nodes in the cluster: for example, FAS8700 or A400.
+
+   Note: You can find legacy ONTAP compatibility support matrices for backup applications in the NetApp Interoperability Matrix Tool (https://mysupport.netapp.com/matrix).
+
+2. Verify that your tape drives are listed as qualified drives in each node's built-in tape configuration file:
+
+   1. On the command line-interface, view the built-in tape configuration file by using the `storage tape show-supported-status` command.
+
+```
+cluster1::> storage tape show-supported-status
+
+        Node: cluster1-1
+                                Is
+Tape Drives                     Supported  Support Status
+------------------------------  ---------  -------------------------------
+Certance Ultrium 2              true       Dynamically Qualified
+Certance Ultrium 3              true       Dynamically Qualified
+Digital DLT2000                 true       Qualified
+```
+
+   2. Compare your tape drives to the list of qualified drives in the output.
+
+      Note: The names of the tape devices in the output might vary slightly from the names on the device label or in the Interoperability Matrix. For example, Digital DLT2000 can also be known as DLT2k. You can ignore these minor naming differences.
+
+   3. If a device is not listed as qualified in the output even though the device is qualified according to the Interoperability Matrix, download and install an updated configuration file for the device using the instructions on the NetApp Support Site.
+
+      NetApp Downloads: Tape Device Configuration Files (http://mysupport.netapp.com/NOW/download/tools/tape_config)
+
+      A qualified device might not be listed in the built-in tape configuration file if the tape device was qualified after the node was shipped.
+
+3. Verify that every node in the cluster has an intercluster LIF:
+
+   1. View the intercluster LIFs on the nodes by using the `network interface show -service-policy default-intercluster` command.
+
+```
+cluster1::> network interface show -service-policy default-intercluster
+
+        Logical    Status     Network            Current       Current Is
+Vserver     Interface  Admin/Oper Address/Mask       Node          Port    Home
+----------- ---------- ---------- ------------------ ------------- ------- ----
+cluster1    IC1        up/up      192.0.2.65/24      cluster1-1    e0a     true
+```
+
+      Learn more about `network interface show` in the ONTAP command reference (https://docs.netapp.com/us-en/ontap-cli/network-interface-show.html).
+
+   2. If an intercluster LIF does not exist on any node, create an intercluster LIF by using the `network interface create` command.
+
+```
+cluster1::> network interface create -vserver cluster1 -lif IC2 -service-policy default-intercluster -home-node cluster1-2 -home-port e0b -address 192.0.2.68 -netmask 255.255.255.0 -status-admin up -failover-policy local-only -firewall-policy intercluster
+
+cluster1::> network interface show -service-policy default-intercluster
+
+        Logical    Status     Network            Current       Current Is
+Vserver     Interface  Admin/Oper Address/Mask       Node          Port    Home
+----------- ---------- ---------- ------------------ ------------- ------- ----
+cluster1    IC1        up/up      192.0.2.65/24      cluster1-1    e0a     true
+cluster1    IC2        up/up      192.0.2.68/24      cluster1-2    e0b     true
+```
+
+      Learn more about `network interface create` in the ONTAP command reference (https://docs.netapp.com/us-en/ontap-cli/network-interface-create.html).
+
+      Network management (https://docs.netapp.com/us-en/ontap/networking/networking_reference.html)
+
+4. Identify whether the backup application supports Cluster Aware Backup (CAB) by using the documentation provided with the backup application.
+
+   CAB support is a key factor in determining the type of backup you can perform.
+
+## Related information
+
+- storage tape show (https://docs.netapp.com/us-en/ontap-cli/storage-tape-show.html)
+- storage tape show-supported-status (https://docs.netapp.com/us-en/ontap-cli/storage-tape-show-supported-status.html)

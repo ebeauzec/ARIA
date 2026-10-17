@@ -1,6 +1,6 @@
 # ARIA — Active IQ Risk Intelligence Advisor
 
-[![Version](https://img.shields.io/badge/version-5.6.355-0066cc)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.6.356-0066cc)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-3776AB?logo=python&logoColor=white)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
@@ -1001,6 +1001,7 @@ ARIA/
 ├── dist/            ← Pre-built desktop app (PyInstaller output)
 ├── docs/            ← DEPLOY.md (containers), DATA_SOURCES.md, OFFLINE.md, LIBRARY_HARVEST_ROUTINE.md, images
 ├── deploy/ docker/  ← Kubernetes manifests, container entrypoint (Dockerfile and docker-compose.yml are in the root)
+├── reference/       ← The NetApp Reference Library as it ships with ARIA (190 digests of NetApp's public documentation, each with its source URL); no setup needed
 ├── tests/           ← stdlib unittest suite (python tests/run_tests.py): ASUP parser, library updater, multi-account, StoragePerf, ...
 ├── tools/           ← Runtime tools and developer utilities
 │   ├── library_updater.py  ← The reference updater (stdlib, no AI); library_sources.json is its page list

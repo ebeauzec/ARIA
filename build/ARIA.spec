@@ -46,6 +46,8 @@ web_datas = [
     (os.path.join(SPECPATH, '..', 'data', 'platform_hardware.json'), 'data'),
     # The shipped remediation playbooks (tools/playbooks.json); data/playbooks_local.json beside the exe adds to them
     (os.path.join(SPECPATH, '..', 'tools', 'playbooks.json'), 'tools'),
+    # The NetApp Reference Library that ships with ARIA (a library the user points to is used instead when present)
+    (os.path.join(SPECPATH, '..', 'reference', 'netapp-library'), os.path.join('reference', 'netapp-library')),
 ]
 web_datas = [d for d in web_datas if os.path.exists(d[0])]
 

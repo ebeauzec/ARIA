@@ -53,7 +53,7 @@ def main():
     if git:
         code, top, _ = run('git', 'rev-parse', '--show-toplevel')
         if code != 0:
-            say(BAD, 'this folder is not a git repository (the .git folder did not sync from Google Drive yet?)')
+            say(BAD, 'this folder is not a git repository (the .git folder did not finish synchronising yet?)')
         else:
             hp = run('git', 'config', '--get', 'core.hooksPath')[1]
             if hp == '.githooks':
@@ -68,12 +68,12 @@ def main():
             say(OK, 'git autocrlf = ' + (run('git', 'config', '--get', 'core.autocrlf')[1] or 'unset') + ' (Windows keeps CRLF in the working files; tools/dev/patchlib.py edits either)')
             lock = os.path.join(ROOT, '.git', 'index.lock')
             if os.path.exists(lock):
-                say(BAD, '.git/index.lock exists: another git command is running, or one was cut off (or Google Drive synced a lock from the other machine). If none is running, delete it.')
+                say(BAD, '.git/index.lock exists: another git command is running, or one was cut off (or a sync client copied a lock from the other machine). If none is running, delete it.')
             br = run('git', 'status', '-sb')[1].split('\n')
             say(OK, 'branch: ' + br[0].replace('## ', ''))
             dirty = [l for l in br[1:] if l.strip()]
             if dirty:
-                say(WARN, f'{len(dirty)} changed file(s) not committed (work in progress from another session, or Google Drive still syncing): `git status` then decide; do not start a second change on top without looking')
+                say(WARN, f'{len(dirty)} changed file(s) not committed (work in progress from another session, or the folder still synchronising): `git status` then decide; do not start a second change on top without looking')
             else:
                 say(OK, 'working tree is clean')
             sy = run('git', 'log', '-1', '--format=%h %s')[1]

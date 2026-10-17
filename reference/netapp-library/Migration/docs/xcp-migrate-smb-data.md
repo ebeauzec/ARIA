@@ -1,0 +1,46 @@
+# Migrate SMB data
+Source: https://docs.netapp.com/us-en/xcp/xcp-migrate-smb-data.html
+Fetched: 2026-07-07
+
+After planning the migration with the `show` and `scan` commands, you can migrate the SMB data.
+
+## Copy
+
+The `copy` command scans and copies the entire source directory structure to a destination SMB share. The `copy` command requires having source and destination paths as variables. The scanned and copied files, throughput/speed, and elapsed time details are printed to the console once every five seconds.
+
+Note: During the copy operation, you can use the `-preserve-atime` flag with the `copy` command to preserve access time at the source.
+
+Example:
+```
+C:\xcp>xcp copy \\<IP address or hostname of SMB server>\source_share \\<IP address of SMB destination server>\dest_share
+```
+
+Run `xcp help copy` for more details.
+
+## Sync
+
+The `sync` command scans for changes and modifications in the source and target shares in parallel, and applies the appropriate actions (remove, modify, rename, and so on) to the target to make sure that the target is identical to the source.
+
+The sync command compares data content, time stamps, file attributes, ownership, and security information.
+
+Note: During the sync operation, you can use the `-preserve-atime` flag with the `sync` command to preserve access time at the source.
+
+Example:
+```
+C:\xcp>xcp sync \\<IP address or hostname of SMB server>\source_share \\<IP address of SMB destination server>\dest_share
+```
+
+Run `xcp help sync` for more details.
+
+## Verify
+
+The `verify` command reads both source and target shares and compares them, providing information about what is different. You can use the command on any source and destination, regardless of the tool used to perform the copy or sync.
+
+Note: During the verify operation, you can use the `-preserve-atime` flag with the `verify` command to preserve access time at the source.
+
+Example:
+```
+C:\xcp>xcp verify \\<IP address or hostname of SMB server>\source_share \\<IP address of SMB destination server>\dest_share
+```
+
+Run `xcp help verify` for more details.

@@ -2,8 +2,8 @@
 
 No AI and no network access: this module only reads files on disk. It
 
-  * finds the library folder (config `libraryPath`, env ARIA_LIBRARY_PATH, or the usual cloud-drive locations on
-    Windows and macOS),
+  * finds the library folder (config `libraryPath`, env ARIA_LIBRARY_PATH, or the usual cloud-storage locations on
+    Windows and macOS; failing those, the copy that ships with ARIA in reference/netapp-library/),
   * reports how fresh the library is (INDEX.md "Last compiled", newest CHANGELOG entry, newest file),
   * builds a searchable index of its markdown files and answers keyword searches with snippets,
   * lists how old every reference data file ARIA keeps is, so a stale source is visible instead of silent.
@@ -14,6 +14,7 @@ import glob
 import json
 import os
 import re
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -31,12 +32,12 @@ def _candidate_paths():
     home = os.path.expanduser('~')
     tail = os.path.join('Cowork', 'NetApp', _LIB_NAME)
     out = []
-    # macOS: Google Drive for desktop mounts under ~/Library/CloudStorage/GoogleDrive-<account>/My Drive
+    # macOS: cloud-storage clients mount under ~/Library/CloudStorage/<provider>-<account>/
     out += glob.glob(os.path.join(home, 'Library', 'CloudStorage', 'GoogleDrive-*', 'My Drive', tail))
     out += glob.glob(os.path.join(home, 'Library', 'CloudStorage', 'GoogleDrive-*', 'My Drive', 'Cowork', _LIB_NAME))
     out += [os.path.join(home, 'Google Drive', 'My Drive', tail), os.path.join(home, 'Google Drive', tail),
             os.path.join(home, 'My Drive', tail), os.path.join(home, 'Documents', tail), os.path.join(home, tail)]
-    # Windows: Google Drive is a drive letter (G:\My Drive) or a folder under the profile
+    # Windows: a cloud-storage client uses a drive letter or a folder under the profile
     if os.name == 'nt':
         for letter in 'GHDEFIJKLMNOPQRSTUVWXYZ':
             out.append(f'{letter}:\\My Drive\\{tail}')
@@ -44,8 +45,19 @@ def _candidate_paths():
     return out
 
 
-def find_library(cfg=None):
-    """Return {'path', 'source'} for the library folder, or {'path': '', 'source': 'not found'}."""
+def bundled_paths():
+    """The copy of the library that ships with ARIA (reference/netapp-library/), in the source tree and in a packaged build."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = [os.path.join(here, 'reference', 'netapp-library')]
+    mei = getattr(sys, '_MEIPASS', '')
+    if mei:
+        out.append(os.path.join(mei, 'reference', 'netapp-library'))
+    return out
+
+
+def find_library(cfg=None, include_bundled=True):
+    """Return {'path', 'source'} for the library folder, or {'path': '', 'source': 'not found'}. A library the user points to (or one auto-detected outside ARIA) is
+    preferred, because something maintains it; the copy that ships with ARIA is the fallback, so a bare install always has a library."""
     cfg = cfg or {}
     tried = []
     for src, p in (('config (libraryPath)', (cfg.get('libraryPath') or '').strip()),
@@ -58,6 +70,10 @@ def find_library(cfg=None):
     for p in _candidate_paths():
         if os.path.isfile(os.path.join(p, _LIB_MARKER)):
             return {'path': p, 'source': 'auto-detected'}
+    if include_bundled:
+        for p in bundled_paths():
+            if os.path.isfile(os.path.join(p, _LIB_MARKER)):
+                return {'path': p, 'source': 'bundled with ARIA'}
     return {'path': '', 'source': 'not found', 'tried': tried}
 
 

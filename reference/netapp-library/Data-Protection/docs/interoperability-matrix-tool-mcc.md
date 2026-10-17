@@ -1,0 +1,13 @@
+# Using the Interoperability Matrix Tool to find MetroCluster information
+Source: https://docs.netapp.com/us-en/ontap-metrocluster/maintain/concept_using_the_interoperability_matrix_tool_to_find_mcc_information.html
+Fetched: 2026-07-07
+
+When setting up the MetroCluster configuration, you can use the Interoperability Tool to ensure you are using supported software and hardware versions.
+
+[NetApp Interoperability Matrix Tool](https://mysupport.netapp.com/matrix)
+
+After opening the Interoperability Matrix, you can use the Storage Solution field to select your MetroCluster solution.
+
+You use the **Component Explorer** to select the components and ONTAP version to refine your search.
+
+You can click **Show Results** to display the list of supported configurations that match the criteria.

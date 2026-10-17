@@ -553,7 +553,7 @@ def _init_db():
                 _run_db_schema_setup(db)
                 _db_schema_ready = True
     else:
-        # aiq_cache.db lives in a Google Drive sync folder by design (dark-site
+        # aiq_cache.db may live in a cloud-synchronised folder (dark-site
         # dev setup) -- Drive can replace the file out from under this
         # long-running process on a sync conflict (observed live: harvest_cache
         # survived but harvest_cache_accounts and every reporting_* table
@@ -11459,6 +11459,15 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             elif method == 'GET' and route == '/api/library/playbooks':
                 import playbooks as _pb
                 ld = _pb.load(str(SCRIPT_DIR / 'data'))
+                try:
+                    import playbook_verify as _pv
+                    rec = _pv.load_record(str(SCRIPT_DIR / 'data')).get('entries') or {}
+                except Exception:
+                    rec = {}
+                for e in ld['playbooks']:
+                    v = rec.get(e['id'])
+                    if v:
+                        e['_verified'] = {'ok': bool(v.get('ok')), 'at': v.get('at'), 'counts': v.get('counts')}
                 self._send_json(200, {'playbooks': ld['playbooks'], 'counts': ld['counts']})
             elif method == 'GET' and route == '/api/library/playbooks/status':
                 import playbooks as _pb

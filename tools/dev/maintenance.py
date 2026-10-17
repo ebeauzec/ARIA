@@ -12,7 +12,7 @@ What a session start does (nothing here needs an AI; the AI-written part is what
   2. Prints what is waiting: the open review items by kind, the procedure coverage and the largest gaps, drafts waiting for approval, library entries not yet absorbed.
   3. Prints the standing instruction for the session (CLAUDE.md, "Session start"): work the queue before other work.
 
-The state lives in data/ (shared with the other workstation through the Google Drive folder); the run log is data/dev/maintenance.log.
+The state lives in data/ (shared with another workstation when the project folder is synchronised between machines); the run log is data/dev/maintenance.log.
 """
 import argparse
 import json
@@ -123,7 +123,15 @@ def background(root=ROOT):
         r = subprocess.run([sys.executable, os.path.join(HERE, 'coverage.py'), 'record'], cwd=root, capture_output=True, text=True, timeout=900)
         return (r.stdout or r.stderr or '').strip()[-300:]
 
+    def verify():
+        import playbook_verify as pv
+        pv.run(root)
+        s = pv.summary(p['data'])
+        t = s['totals']
+        return f"{s['entriesOk']} of {s['entries']} playbooks fully verified; commands and menu paths: {t['verified']} verified, {t['param-missing']} wrong parameter, {t['not-found']} not found, {t['unchecked']} unchecked"
+
     step('reference updater sweep (all sources)', sweep)
+    step('verify playbook commands against the NetApp command reference', verify)
     step('procedure coverage record (headless)', record)
     st['finishedAt'] = datetime.now(timezone.utc).isoformat()
     save()
@@ -163,12 +171,27 @@ def report(root=ROOT, started_note=None):
                    + f"; {w['read']} of {w['pages']} source pages read, {w['changedOpen']} changed since.")
         for g in sorted((gaps.get('gaps') or {}).values(), key=lambda x: -x.get('count', 0))[:6]:
             out.append(f"  gap: {g['count']:>5} x {g['key'][:100]}")
+        try:
+            import playbook_verify as pv
+            vs = pv.summary(p['data'])
+            t = vs['totals']
+            out.append(f"  verification against NetApp's documentation ({_age(vs['at'])}): {t['verified']} commands and menu paths verified, {t['param-missing']} with a parameter the page does not have, {t['not-found']} not found, {t['unchecked']} unchecked")
+            for r in vs['review'][:6]:
+                out.append(f"  NEEDS REVIEW {r['id']}: {r['item']} ({r['status']})")
+        except Exception:
+            pass
         for d in ld['pending'][:5]:
             out.append(f"  draft waiting for a person: {d['id']}")
         for x in ld['problems'][:3]:
             out.append(f"  INVALID playbook {x['id']}: {x['problems'][0]}")
     except Exception as e:
         out.append(f'Procedures: could not read ({e}).')
+    try:
+        import sync_library as _sl
+        if _sl.behind():
+            out.append('The library copy that ships with ARIA (reference/netapp-library/) is behind the external library: python tools/dev/sync_library.py, then release.')
+    except Exception:
+        pass
     try:
         import library_manager as lm
         lib = (lm.find_library(_jload(os.path.join(root, 'aiq_config.json'))) or {}).get('path')

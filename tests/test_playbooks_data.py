@@ -54,6 +54,18 @@ class LoadTests(unittest.TestCase):
             self.assertIn(needle, joined)
 
 
+class ComplianceTests(unittest.TestCase):
+    def test_only_netapp_pages_count_as_sources(self):
+        self.assertIn('is not a NetApp page', ' '.join(pb.validate(entry(sources=['https://example.com/how-to']))))
+        self.assertEqual(pb.validate(entry(sources=['https://docs.netapp.com/us-en/ontap/', 'https://kb.netapp.com/x'])), [])
+
+    def test_no_ontap_commands_in_other_products_and_no_tool_name(self):
+        e = entry(family='eseries', steps=['1. Run: cluster image show', '2. b', '3. c'])
+        self.assertIn('ONTAP command in an E-Series', ' '.join(pb.validate(e)))
+        self.assertEqual(pb.validate(entry(family='eseries', steps=['1. Select Support > Upgrade center.', '2. b', '3. c'])), [])
+        self.assertIn('names the tool', ' '.join(pb.validate(entry(cause='ARIA found it'))))
+
+
 class GapTests(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.TemporaryDirectory()

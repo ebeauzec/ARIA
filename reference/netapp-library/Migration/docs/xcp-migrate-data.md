@@ -1,0 +1,79 @@
+# Migrate NFS data
+Source: https://docs.netapp.com/us-en/xcp/xcp-migrate-data.html
+Fetched: 2026-07-07
+
+After planning the migration with the `show` and `scan` commands, you can migrate the NFS data.
+
+## Copy
+
+The `copy` command scans and copies the entire source directory structure to a destination NFSv3 export. The `copy` command requires having source and destination paths as variables. The scanned and copied files, throughput/speed, and elapsed time details are displayed at the end of the copy operation.
+
+Example:
+```
+xcp copy <source_nfs_export_path> <destination_nfs_export_path>
+```
+
+POSIX path example:
+```
+xcp copy -newid <id> file:///mnt/source file:///mnt/dest
+```
+
+Run `xcp help copy` for more details.
+
+## Resume
+
+The `resume` command restarts a previously interrupted copy operation by specifying the catalog index name or number. The catalog index name or number of the previous copy operation is stored in the `<catalog path>:/catalog/indexes` directory.
+
+Example:
+```
+xcp resume -id <catalog_name>
+```
+
+Run `xcp help resume` for more details.
+
+## Sync
+
+The `sync` command scans for changes and modifications performed on a source NFS directory using a catalog index tag name or the number of a previous copy operation. Source incremental changes are copied and applied to the target directory. The old catalog index numbers are replaced with a new one after the sync operation.
+
+Example:
+```
+xcp sync -id <catalog_name>
+```
+
+Run `xcp help sync` for more details.
+
+## Verify
+
+The `verify` command uses a full byte-by-byte data comparison between source and target directories after the copy operation without using a catalog index number. The command checks for modification times and other file or directory attributes, including permissions. The command also reads the files on both sides and compares the data.
+
+Example:
+```
+xcp verify <source_ip_address>:/source_vol <destination_ip_address>:/dest_vol
+```
+
+POSIX path example:
+```
+xcp verify file:///mnt/source file:///mnt/dest
+```
+
+Run `xcp help verify` for more details.
+
+## iSync
+
+The `isync` command compares the source and destination and synchronizes the differences on the target without using the catalog index.
+
+Example:
+```
+xcp isync <source_ip_address>:/src <destination_ip_address>:/dest
+```
+
+You can use `isync` with the `estimate` option to estimate the time it takes for the `isync` command to synchronize the incremental changes. The `-id` parameter specifies the catalog name of a previous copy operation.
+
+Note: If you change more than 25% of the data set size used, the `isync estimate` command might not show the expected results.
+
+Example:
+```
+xcp isync estimate -id <name>
+```
+
+Run `xcp help isync` for more details.

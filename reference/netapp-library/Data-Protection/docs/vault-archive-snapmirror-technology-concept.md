@@ -1,0 +1,51 @@
+# Learn about vault archiving using ONTAP SnapMirror technology
+Source: https://docs.netapp.com/us-en/ontap/data-protection/vault-archive-snapmirror-technology-concept.html
+Fetched: 2026-07-07
+
+SnapMirror vault policies replace SnapVault technology in ONTAP 9.3 and later. You use a SnapMirror vault policy for disk-to-disk snapshot replication for standards compliance and other governance-related purposes. In contrast to a SnapMirror relationship, in which the destination usually contains only the snapshots currently in the source volume, a vault destination typically retains point-in-time snapshots created over a much longer period.
+
+You might want to keep monthly snapshots of your data over a 20-year span, for example, to comply with government accounting regulations for your business. Since there is no requirement to serve data from vault storage, you can use slower, less expensive disks on the destination system.
+
+The figure illustrates SnapMirror vault data protection relationships (image: https://docs.netapp.com/us-en/ontap/media/snapvault-data-protection.gif).
+
+## How vault data protection relationships are initialized
+
+The SnapMirror policy for the relationship defines the contents of the baseline and any updates.
+
+A baseline transfer under the default vault policy `XDPDefault` makes a snapshot of the source volume, then transfers that copy and the data blocks it references to the destination volume. Unlike SnapMirror relationships, a vault backup does not include older snapshots in the baseline.
+
+## How vault data protection relationships are updated
+
+Updates are asynchronous, following the schedule you configure. The rules you define in the policy for the relationship identify which new snapshots to include in updates and how many copies to retain. The labels defined in the policy ("monthly," for example) must match one or more labels defined in the snapshot policy on the source. Otherwise, replication fails.
+
+At each update under the `XDPDefault` policy, SnapMirror transfers snapshots that have been made since the last update, provided they have labels matching the labels defined in the policy rules. In the following output from the `snapmirror policy show` command for the `XDPDefault` policy, note the following:
+
+- `Create Snapshot` is "false", indicating that `XDPDefault` does not create a snapshot when SnapMirror updates the relationship.
+- `XDPDefault` has rules "daily" and "weekly", indicating that all snapshots with matching labels on the source are transferred when SnapMirror updates the relationship.
+
+```
+cluster_dst::> snapmirror policy show -policy XDPDefault -instance
+
+                     Vserver: vs0
+      SnapMirror Policy Name: XDPDefault
+      SnapMirror Policy Type: vault
+                Policy Owner: cluster-admin
+                 Tries Limit: 8
+           Transfer Priority: normal
+   Ignore accesstime Enabled: false
+     Transfer Restartability: always
+ Network Compression Enabled: false
+             Create Snapshot: false
+                     Comment: Default policy for XDP relationships with daily and weekly
+                              rules.
+       Total Number of Rules: 2
+                  Total Keep: 59
+                       Rules: SnapMirror Label     Keep  Preserve Warn Schedule Prefix
+                              ----------------     ----  -------- ---- -------- ------
+                              daily                   7  false       0 -        -
+                              weekly                 52  false       0 -        -
+```
+
+## Related information
+
+- [snapmirror policy show](https://docs.netapp.com/us-en/ontap-cli/snapmirror-policy-show.html)

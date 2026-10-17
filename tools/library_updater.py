@@ -326,6 +326,13 @@ def playbook_sources(base_dir):
                 out.setdefault(str(u), [])
                 if e['id'] not in out[str(u)]:
                     out[str(u)].append(e['id'])
+    try:
+        import playbook_verify as _pv
+        for url, ids in _pv.command_pages(os.path.join(base_dir, 'data')).items():
+            lst = out.setdefault(url, [])
+            lst.extend(i for i in ids if i not in lst)
+    except Exception:
+        pass
     return out
 
 

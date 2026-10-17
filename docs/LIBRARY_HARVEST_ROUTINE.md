@@ -4,7 +4,7 @@ A weekly routine that brings what the NetApp Reference Library (and a few direct
 is a maintenance job, run by Claude Code on the development machine, whose only output is ordinary, reviewable changes to ARIA's data files, rules
 files and code. What ships contains no AI.
 
-Run it from the repository root (`G:\My Drive\AntiGravity\ARIA` on the development machine). Follow `CLAUDE.md` for the release workflow; its rules
+Run it from the repository root. Follow `CLAUDE.md` for the release workflow; its rules
 win over anything here.
 
 ## What ARIA now does by itself (reference updater, `tools/library_updater.py`)
@@ -88,6 +88,10 @@ The review queue (`data/library_update_queue.json`) holds `playbook-gap` items: 
 2. Add an entry to `data/playbooks_local.json` with `"status": "draft"`, in the format of `docs/PLAYBOOKS.md` (family, match, vars, cause, impact, steps, options, ticket with rollback, sources). Keep ONTAP commands out of E-Series and StorageGRID entries.
 3. Run `python tests/run_tests.py`: an invalid entry is reported by `tests/test_playbooks_data.py`. Do not set `"status": "approved"`: a person reads the draft against the page and approves it.
 4. Say in the report which gap items now have a draft, which could not be written, and why.
+
+## 3b. Refresh the copy that ships with ARIA
+
+The NetApp Reference Library ships with ARIA in `reference/netapp-library/`. When the external library (the folder this routine reads) has changed, run `python tools/dev/sync_library.py --check`; if it reports changes, run it without `--check`, then include "library copy refreshed" in the release. The script leaves out the maintenance log and failed-fetch lists, removes a personal first name and e-mail addresses, and the sensitive-data guard checks the result. Never edit `reference/` by hand.
 
 ## 4. Check, release, record
 

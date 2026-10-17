@@ -1,8 +1,8 @@
 {
-  "version": "5.6.355",
+  "version": "5.6.356",
   "major": 5,
   "minor": 6,
-  "patch": 355,
+  "patch": 356,
   "date": "2026-10-17",
-  "notes": "Playbook source pages are watched; dev tools and workstation guide; maintenance runs at every session start"
+  "notes": "Procedures checked against NetApp's command reference; the NetApp Reference Library ships with ARIA"
 }

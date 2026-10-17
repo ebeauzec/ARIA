@@ -24,8 +24,11 @@ QUEUE_NAME = 'library_update_queue.json'
 QUEUE_LIMIT = 25            # gap items kept in the review queue at once
 FAMILIES = ('ontap', 'eseries', 'storagegrid', 'any')
 STATUSES = ('approved', 'draft', 'rejected')
-KNOWN_VARS = {'cluster', 'node', 'svm', 'policy', 'version', 'model', 'target', 'ref', 'recommended', 'advisory', 'cve', 'detail', 'finding'}
-_PLACEHOLDER = re.compile(r'\{([a-zA-Z_][a-zA-Z0-9_]*)(?:\|[^}]*)?\}')
+OFFICIAL_HOSTS = {'docs.netapp.com', 'kb.netapp.com', 'security.netapp.com', 'www.netapp.com', 'mysupport.netapp.com', 'imt.netapp.com', 'hwu.netapp.com', 'library.netapp.com'}
+_ONTAP_CLI = re.compile(r'\b(?:cluster image|vserver [a-z-]+|storage (?:aggregate|failover|disk|shelf)|network (?:interface|port|route)|volume (?:efficiency|snapshot|modify|show)|system node|snapmirror (?:show|create))\b')
+KNOWN_VARS = {'cluster', 'node', 'svm', 'policy', 'version', 'model', 'target', 'ref', 'recommended', 'advisory', 'cve', 'detail', 'finding', 'bug', 'what', 'fixes', 'recommendation', 'scope',
+              'metrocluster', 'target2Note', 'sameLineNote', 'lineNote'}
+_PLACEHOLDER = re.compile(r'\{\??([a-zA-Z_][a-zA-Z0-9_]*)(?:\|[^}]*)?\}')
 
 
 def _jload(path):
@@ -82,6 +85,17 @@ def validate(e):
             bad.append(k + ' is required')
     if not (e.get('sources') or []):
         bad.append('sources (the NetApp pages the procedure was written from) is required')
+    for u in e.get('sources') or []:
+        host = re.match(r'https://([^/]+)/', str(u))
+        if not host or not (host.group(1).lower() in OFFICIAL_HOSTS):
+            bad.append(f'source {str(u)[:60]} is not a NetApp page (allowed: ' + ', '.join(sorted(OFFICIAL_HOSTS)) + ')')
+    if e.get('family') in ('eseries', 'storagegrid'):
+        for s in e.get('steps') or []:
+            if _ONTAP_CLI.search(str(s)):
+                bad.append('an ONTAP command in an E-Series or StorageGRID procedure: ' + str(s)[:70])
+                break
+    if re.search(r'\bARIA\b', json.dumps(e, ensure_ascii=False)):
+        bad.append('the procedure names the tool (documents are an interpretation of data collected from Active IQ and carry no product name)')
     declared = set((e.get('vars') or {}).keys()) | KNOWN_VARS
     texts = [str(e.get('cause') or ''), str(e.get('impact') or '')] + [str(s) for s in (steps or [])] + [str(s) for s in (e.get('options') or [])]
     texts += [str(e.get('groupKey') or ''), str(e.get('advisoryRef') or '')] + [str(x) for x in (e.get('compact') or [])]
@@ -190,5 +204,10 @@ def status(data_dir):
     g = _jload(os.path.join(data_dir, GAPS_NAME))
     ld = load(data_dir)
     gaps = sorted((g.get('gaps') or {}).values(), key=lambda x: (-x.get('count', 0), x.get('key', '')))
-    return {'updated': g.get('updated') or '', 'total': g.get('total'), 'covered': g.get('covered'), 'pct': g.get('pct'), 'history': g.get('history') or [],
+    try:
+        import playbook_verify as _pv
+        verification = _pv.summary(data_dir)
+    except Exception:
+        verification = None
+    return {'verification': verification, 'updated': g.get('updated') or '', 'total': g.get('total'), 'covered': g.get('covered'), 'pct': g.get('pct'), 'history': g.get('history') or [],
             'gaps': gaps[:60], 'gapTypes': len(gaps), 'playbooks': ld['counts'], 'sourceWatch': source_watch(data_dir, ld), 'pending': ld['pending'], 'problems': ld['problems']}

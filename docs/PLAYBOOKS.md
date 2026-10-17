@@ -68,9 +68,21 @@ ARIA never writes a procedure itself and never fetches one at run time; it runs 
 
 Placeholders: `{cluster}`, `{node}`, `{svm}`, `{policy}`, `{version}`, `{model}`, `{ref}` (the advisory link), `{detail}` (the finding's own detail text), `{target}` (the release the finding asks for, "Upgrade to SANtricity 11.90R6", otherwise the release Active IQ recommends for the system), `{recommended}`, `{finding}` (the CVE or the NetApp advisory id), `{cve}`, `{advisory}`, and any name declared in `vars` (a regular expression tested on the finding's title, detail and recommendation). A value ARIA cannot find is printed as `<name>`, never guessed; `{name|text}` prints `text` instead when there is no value. A placeholder that is not declared makes the entry invalid (the coverage card names the problem).
 
+## Checked against NetApp's documentation
+
+`tools/playbook_verify.py` (no AI) reads each approved playbook and checks what it says against NetApp's own pages, and the result (`data/playbook_verification.json`) is used everywhere:
+
+* **ONTAP commands** are looked up in the ONTAP command reference (`docs.netapp.com/us-en/ontap-cli/<command>.html`): the page must exist and every `-parameter` in the step must be on it.
+* **Menu paths** ("Support > Upgrade center") in E-Series and StorageGRID playbooks must occur in the text of the NetApp pages the playbook cites (the reference updater keeps their text).
+* Status per item: `verified`, `param-missing` (the playbook uses an option the page does not have: wrong, or changed), `not-found` (no reference page for that command, or the path is not on the cited pages), `unchecked` (the page could not be read). A playbook is `ok` when nothing is wrong and something was verified.
+* A playbook whose items are all verified says so at the end of its steps ("every command ... checked against NetApp's ONTAP command reference on <date>") instead of asking the reader to confirm the options; Settings > Data & Sync > Procedure coverage shows the totals and what needs a person; the command pages join the page watch, so a change to a command's syntax raises a review item naming the playbook.
+* It runs after every sweep (session start, the weekly job) or by hand: `python tools/playbook_verify.py` (`--refresh` reads the command pages again, `--offline` uses the cache, `--id ID` one playbook).
+
+Entries are also checked when they are loaded (`tools/playbooks.py`, shown in the same card as "invalid"): the sources must be NetApp pages (docs, kb, security, www, support, interoperability and hardware universe hosts), an E-Series or StorageGRID procedure may not contain ONTAP commands, every placeholder must be declared, and the text may not name the tool.
+
 ## Rules for writing one
 
-* Write from NetApp's documentation and put the page in `sources`. Do not write a command from memory without checking it; where a menu path or option name cannot be checked, say "see the linked page" in the step instead.
+* Write from NetApp's documentation and put the page in `sources`. Do not write a command from memory: run `python tools/playbook_verify.py --id YOUR-ID` and fix everything it reports (the first run on the ONTAP procedures written before the check existed found thirteen wrong or missing commands and options, all corrected from the command reference). Where a menu path or option name cannot be checked, say "see the linked page" in the step instead.
 * Commands are for the platform they run on: no ONTAP commands for E-Series or StorageGRID.
 * Gate by release where a feature needs one (`minVersion`).
 * Say how to check the state before changing it, how to change it, how to confirm, and how to go back (`ticket.rollback`), and where there is no way back, say that.
