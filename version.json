@@ -1,8 +1,8 @@
 {
-  "version": "5.6.345",
+  "version": "5.6.346",
   "major": 5,
   "minor": 6,
-  "patch": 345,
+  "patch": 346,
   "date": "2026-10-17",
-  "notes": "Risk trend counts the same systems on comparable days; capacity table shows usable and used/usable; documents unbranded; heading and logistics fixes"
+  "notes": "Remaining Action Planner tabs checked: DR, Contracts, Account Intelligence, Contract Compliance, Feature Adoption, Operational Health, Sustainability"
 }

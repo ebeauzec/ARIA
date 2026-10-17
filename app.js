@@ -45,9 +45,30 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.345";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.346";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.346",
+    date: "2026-10-17",
+    title: "Action Planner tabs corrected: cluster-level counts, no per-node repeats, honest labels",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "Action Planner tabs checked one by one against the same problems found in the earlier documents (a fact that belongs to a cluster repeated for every node, counts that did not agree between tabs, labels that said something other than the figure). Fixed:",
+          "DR and Replication Health: the SnapMirror relationship count is the cluster's total, which every node of the cluster reports, and it was listed once per node (a 2-node cluster with 166 relationships showed 166 twice and the coverage figures counted nodes). One row per ONTAP cluster now, with the largest node figure, and the coverage tiles count clusters.",
+          "Contracts and Lifecycle: a lifecycle event shared by the nodes of a cluster was listed once per node (four identical rows for two clusters), the renewal pipeline had a row with no system name, the tiles counted nodes, and the fourth tile described renewals as 'EOA / EOS milestones'. One row per cluster, grid or array, the tiles count them, an unnamed row shows its serial number, and the tile reads 'Renewals, EOA and EOS milestones'.",
+          "Account Intelligence: the account team was listed once for every node of a StorageGRID grid, and the 'Systems' tile counted nodes. One row per cluster, grid or array, the tile shows the count with the number of nodes beside it, and a replacement character from Active IQ's site data no longer appears in site names.",
+          "Contract Compliance: one row per cluster, grid or array (earliest contract end, worst status, earliest warranty end), warranty and service-tier tiles count them, and the Licensed Feature Adoption table could show more 'confirmed active' than 'licensed' (4 / 2 and 6 / 2) because it counted every license record of every node; it now counts each cluster once (2 / 2).",
+          "Feature Adoption and Operational Health: ransomware protection, SnapMirror and HA are cluster settings and are counted once per cluster (0 of 2 clusters, not 0 of 4 nodes), the recommendation names the clusters, and AutoSupport, which each node sends, stays per node; the per-node matrix says so.",
+          "Sustainability: the whole-account Active IQ score was labelled 'Fleet Sustainability Score' with the explanation only in a tooltip, which a Word document loses. The label and the weekly trend heading now say it is Active IQ's whole-account score, not specific to the scope.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.345",
     date: "2026-10-17",
@@ -32942,14 +32963,22 @@ function _renderContractsLifecycleSection(systems) {
     if (e.daysToEvent < 0) expiredSerials.add(e.serial);
     else if (e.daysToEvent < 90) expiring90Serials.add(e.serial);
   });
-  const expiring90 = { length: expiring90Serials.size };
-  const expired = { length: expiredSerials.size };
-  const activeContracts = systems.filter(s => s.contractActive === true);
+  const _unitOfSerial = new Map(systems.map(s => [s.serialNumber, _unitOf(s).key]));
+  const _uCount = set => new Set([...set].map(sn => _unitOfSerial.get(sn) || sn)).size;
+  const expiring90 = { length: _uCount(expiring90Serials) };
+  const expired = { length: _uCount(expiredSerials) };
+  const activeContracts = { length: _apUnitCount(systems.filter(s => s.contractActive === true)) };
 
   // Lifecycle events across all systems
   const allLC = [];
   systems.forEach(s => (s.lifecycleEvents || []).forEach(le => allLC.push({...le, systemName: s.systemName, serialNumber: s.serialNumber})));
   allLC.sort((a,b) => (a.daysToEvent || 9999) - (b.daysToEvent || 9999));
+  // the nodes of one cluster share their events: one row per cluster, grid or array
+  { const seen = new Map(), nodesOf = new Map(); systems.forEach(s => nodesOf.set(_unitOf(s).key, (nodesOf.get(_unitOf(s).key) || 0) + 1));
+    const bySerial = new Map(systems.map(s => [s.serialNumber, s])), out = [];
+    allLC.forEach(le => { const sy = bySerial.get(le.serialNumber), u = sy ? _unitOf(sy) : null, k = (u ? u.key : le.systemName) + '|' + le.workflowCategory + '|' + le.typeName + '|' + le.daysToEvent;
+      if (seen.has(k)) return; seen.set(k, 1); out.push({ ...le, systemName: u ? u.name + (nodesOf.get(u.key) > 1 ? ` (${nodesOf.get(u.key)} nodes)` : '') : le.systemName }); });
+    allLC.length = 0; out.forEach(x => allLC.push(x)); }
 
   // TAM renewal data — filter to selected scope
   const allRenewals = state.tamRenewals || [];
@@ -32981,7 +33010,7 @@ function _renderContractsLifecycleSection(systems) {
       <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Upcoming hardware or software end-of-availability, end-of-support, or end-of-service lifecycle milestones from the TAM renewal pipeline.">
         <div style="font-size:1.8rem;font-weight:700;color:var(--hx-3b82f6);">${allLC.length}</div>
         <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Lifecycle Events</div>
-        <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">EOA / EOS milestones</div>
+        <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Renewals, EOA and EOS milestones</div>
       </div>
     </div>`;
 
@@ -33011,14 +33040,24 @@ function _renderContractsLifecycleSection(systems) {
   // Build hostname→customer lookup
   const hostCustMap = {};
   systems.forEach(s => { if (s.systemName) hostCustMap[s.systemName.toLowerCase()] = s.customerName || ''; });
-  if (renewals.length > 0) {
-    html += `<h4 style="color:var(--accent-cyan);margin:24px 0 8px;font-size:0.95rem;">Contract Renewal Pipeline (${renewals.length} systems)</h4>
+  // one row per cluster, grid or array and contract: the nodes of a cluster carry the same contract
+  const renewalRows = (() => {
+    const byHost = new Map(systems.map(s => [(s.systemName || '').toLowerCase(), s])), bySn = new Map(systems.map(s => [(s.serialNumber || '').toUpperCase(), s])), nodesOf = new Map(), seen = new Map(), out = [];
+    systems.forEach(s => nodesOf.set(_unitOf(s).key, (nodesOf.get(_unitOf(s).key) || 0) + 1));
+    renewals.forEach(r => { const sy = byHost.get((r.hostName || '').toLowerCase()) || bySn.get((r.serialNumber || '').toUpperCase()), u = sy ? _unitOf(sy) : null, cn = r.contract || {};
+      const k = (u ? u.key : 'x|' + (r.serialNumber || r.hostName || '')) + '|' + (cn.expiryDate || '').substring(0, 10) + '|' + (cn.hardwareServiceLevel || '');
+      if (seen.has(k)) return; seen.set(k, 1);
+      out.push({ ...r, customerName: (sy && sy.customerName) || r.customerName, hostName: u ? u.name + (nodesOf.get(u.key) > 1 ? ` (${nodesOf.get(u.key)} nodes)` : '') : (r.hostName || r.serialNumber || 'serial not reported') }); });
+    return out;
+  })();
+  if (renewalRows.length > 0) {
+    html += `<h4 style="color:var(--accent-cyan);margin:24px 0 8px;font-size:0.95rem;">Contract Renewal Pipeline (${renewalRows.length} cluster${renewalRows.length !== 1 ? 's, grids or arrays' : ', grid or array'})</h4>
     <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="${tblStyle}"><thead><tr>
         ${_sth(thStyle,'System')}${_sth(thStyle,'Customer')}${_sth(thStyle,'Platform')}${_sth(thStyle,'Service')}
         ${_sth(thStyle,'Tech Refresh')}${_sth(thStyle,'Expiry')}${_sth(thStyle,'Level')}${_sth(thStyle,'HW EOA')}${_sth(thStyle,'HW EOS')}
       </tr></thead><tbody>`;
-    renewals.forEach(r => {
+    renewalRows.forEach(r => {
       const cn = r.contract || {};
       const hw = r.hardwareModel || {};
       const refreshColor = {'Lost':'#ef4444','Refresh Quoted Pipeline':'#f59e0b'}[r.techRefreshStatus] || '#6b7280';
@@ -33179,8 +33218,8 @@ function _renderSustainabilitySection(systems) {
   html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
       <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:18px;text-align:center;cursor:help;" title="Latest fleet-wide Active IQ Sustainability score (0–100%). Measures power efficiency, storage utilization, and environmental impact across all systems.">
         <div style="font-size:2.2rem;font-weight:700;color:var(--hx-10b981);">${latest.scorePercentage || '—'}%</div>
-        <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Fleet Sustainability Score</div>
-        <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">AIQ environmental efficiency rating</div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Active IQ Sustainability Score (whole account)</div>
+        <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Active IQ's environmental efficiency rating for every system in the Active IQ account, not only this scope</div>
       </div>
       <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);border-radius:var(--radius-sm);padding:18px;text-align:center;cursor:help;" title="Fleet Sustainability Score this week minus last week, in percentage points -- computed directly from the two scores above so it always reconciles with what's shown. Active IQ's own percentageChange field measures something else internally and doesn't match adjacent weekly scores, so it isn't used here.">
         <div style="font-size:2.2rem;font-weight:700;color:${wowChange === null ? 'var(--text-muted)' : wowChange >= 0 ? '#10b981':'#ef4444'};">${wowChange === null ? '—' : (wowChange >= 0 ? '+':'') + wowChange.toFixed(1) + ' pts'}</div>
@@ -33201,7 +33240,7 @@ function _renderSustainabilitySection(systems) {
 
   // ── Fleet weekly score trend ──────────────────────────────────────────────────
   if (scores.length > 1) {
-    html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Fleet Weekly Score Trend</h4>
+    html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Active IQ Sustainability Score by Week (whole account)</h4>
     <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);padding:12px;">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         <th style="text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;">Week</th>
@@ -33640,9 +33679,9 @@ function _renderAccountIntelligenceSection(systems) {
       <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Locations in scope</div>
     </div>
     <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Total ONTAP storage systems in the selected scope.">
-      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-10b981);">${systems.length}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-10b981);">${_apUnitCount(systems)}</div>
       <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Systems</div>
-      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Storage controllers in scope</div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Clusters, grids and arrays (${systems.length} nodes)</div>
     </div>
   </div>`;
 
@@ -33659,12 +33698,12 @@ function _renderAccountIntelligenceSection(systems) {
       </tr></thead><tbody>`;
     const seen = new Set();
     personnelSystems.forEach(s => {
-      const key = s.clusterName || s.systemName;
+      const key = _unitOf(s).key;   // one row per cluster, grid or array (the nodes of a StorageGRID grid are not rows of their own)
       if (seen.has(key)) return;
       seen.add(key);
       const propColor = {'CRITICAL':'#ef4444','HIGH':'#f59e0b','MEDIUM':'#3b82f6'}[s.propensityCategory] || '#6b7280';
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.systemName}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${_unitOf(s).name}</td>
         <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.salesRepName || '—'}</td>
         <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.csmName || '—'}</td>
         <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.samName || '—'}</td>
@@ -33691,8 +33730,8 @@ function _renderAccountIntelligenceSection(systems) {
       </tr></thead><tbody>`;
     sites.forEach(s => {
       html += `<tr>
-        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.name || ''}</td>
-        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.city || ''}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${String(s.name || '').replace(/\uFFFD/g, '')}</td>
+        <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${String(s.city || '').replace(/\uFFFD/g, '')}</td>
         <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.countryCode || ''}</td>
         <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);">${s.ageInYears != null ? s.ageInYears + 'y' : ''}</td>
         <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);color:${(s.systemsWithCriticalPropensity||0) > 0 ? '#ef4444':'var(--text-secondary)'};">${s.systemsWithCriticalPropensity || 0}</td>
@@ -33705,6 +33744,7 @@ function _renderAccountIntelligenceSection(systems) {
   return html;
 }
 
+const _apUnitCount = list => new Set((list || []).map(x => _unitOf(x).key)).size;
 function _renderLicenseComplianceSection(systems) {
   // Contract compliance (below) is derived from contract status/service tiers/lifecycle
   // events. Feature-license data (per-system licenses[]) is real Active IQ telemetry —
@@ -33722,7 +33762,7 @@ function _renderLicenseComplianceSection(systems) {
   
   // Service tier distribution
   const tierMap = {};
-  systems.forEach(s => {
+  _dfUnitReps(systems).forEach(s => {
     const tier = s.serviceTier || 'Unknown';
     tierMap[tier] = (tierMap[tier] || 0) + 1;
   });
@@ -33734,14 +33774,14 @@ function _renderLicenseComplianceSection(systems) {
   
   let html = `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px;">
     <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Systems still within their original hardware warranty period (separate from support contracts).">
-      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-10b981);">${warrantyActive.length}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-10b981);">${_apUnitCount(warrantyActive)}</div>
       <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Warranty Active</div>
-      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Within HW warranty period</div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Clusters, grids and arrays within the HW warranty period</div>
     </div>
     <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:var(--radius-sm);padding:14px;text-align:center;cursor:help;" title="Systems whose original hardware warranty has expired. Hardware replacements require an active support contract.">
-      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-f59e0b);">${warrantyExpired.length}</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--hx-f59e0b);">${_apUnitCount(warrantyExpired)}</div>
       <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;">Warranty Expired</div>
-      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Past HW warranty end date</div>
+      <div style="font-size:0.65rem;color:var(--text-muted);margin-top:4px;">Clusters, grids and arrays past the HW warranty end date</div>
     </div>
   </div>`;
 
@@ -33753,24 +33793,26 @@ function _renderLicenseComplianceSection(systems) {
     tiers.forEach(([tier, count]) => {
       html += `<div style="background:rgba(0,229,255,0.06);border:1px solid rgba(0,229,255,0.2);border-radius:var(--radius-sm);padding:8px 14px;">
         <span style="font-weight:600;color:var(--accent-cyan);">${tier}</span>
-        <span style="color:var(--text-secondary);margin-left:8px;">${count} systems</span>
+        <span style="color:var(--text-secondary);margin-left:8px;">${count} cluster${count !== 1 ? 's, grids or arrays' : ', grid or array'}</span>
       </div>`;
     });
     html += `</div>`;
   }
 
-  // Contract Compliance Table - show systems with expiring/expired contracts
-  const contractSystems = systems
-    .filter(s => s.contractEndDate || s.contractExpiry)
-    .map(s => {
-      const endDate = s.contractEndDate || s.contractExpiry || '';
-      const daysLeft = endDate ? Math.round((new Date(endDate) - now) / 86400000) : null;
-      return {...s, _endDate: endDate, _daysLeft: daysLeft};
-    })
-    .sort((a,b) => (a._daysLeft || 9999) - (b._daysLeft || 9999));
+  // Contract Compliance Table: one row per cluster, grid or array (the nodes of a cluster carry the same contract); the earliest end date and the worst status of its nodes
+  const contractSystems = (() => {
+    const by = new Map(), nodesOf = new Map(); systems.forEach(s => nodesOf.set(_unitOf(s).key, (nodesOf.get(_unitOf(s).key) || 0) + 1));
+    systems.filter(s => s.contractEndDate || s.contractExpiry).forEach(s => {
+      const u = _unitOf(s), endDate = s.contractEndDate || s.contractExpiry || '', daysLeft = endDate ? Math.round((new Date(endDate) - now) / 86400000) : null;
+      const e = by.get(u.key);
+      if (!e) by.set(u.key, { ...s, systemName: u.name + (nodesOf.get(u.key) > 1 ? ` (${nodesOf.get(u.key)} nodes)` : ''), _endDate: endDate, _daysLeft: daysLeft });
+      else { if (daysLeft != null && (e._daysLeft == null || daysLeft < e._daysLeft)) { e._endDate = endDate; e._daysLeft = daysLeft; } if (s.contractActive === false) e.contractActive = false; if (s.warrantyEndDate && (!e.warrantyEndDate || s.warrantyEndDate < e.warrantyEndDate)) e.warrantyEndDate = s.warrantyEndDate; }
+    });
+    return [...by.values()].sort((a, b) => (a._daysLeft || 9999) - (b._daysLeft || 9999));
+  })();
 
   if (contractSystems.length > 0) {
-    html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Contract Compliance (${contractSystems.length} systems)</h4>
+    html += `<h4 style="color:var(--accent-cyan);margin:16px 0 8px;font-size:0.95rem;">Contract Compliance (${contractSystems.length} cluster${contractSystems.length !== 1 ? 's, grids or arrays' : ', grid or array'})</h4>
     <div style="border:1px solid var(--border-color);border-radius:var(--radius-sm);overflow-x:auto;background:var(--navy-300);">
       <table style="width:100%;border-collapse:collapse;font-size:0.8rem;"><thead><tr>
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','System')}
@@ -33806,14 +33848,14 @@ function _renderLicenseComplianceSection(systems) {
       if (!l || !l.package) return;
       if (!pkgMap[l.package]) pkgMap[l.package] = { description: l.description || l.package, systems: new Set(), enabledCount: 0, checkable: false };
       const entry = pkgMap[l.package];
-      entry.systems.add(s.serialNumber || s.systemName);
+      const uk = _unitOf(s).key; entry.systems.add(uk); entry.enabled = entry.enabled || new Set();   // counted once per cluster, grid or array: a unit with several license records for a package, or several nodes, is still one
       const p = l.package.toLowerCase();
       if (p.includes('ransomware')) {
         entry.checkable = true;
-        if (s.isARPEnabled === true) entry.enabledCount++;
+        if (s.isARPEnabled === true) entry.enabled.add(uk);
       } else if (p.includes('snapmirror') && !p.includes('sync')) {
         entry.checkable = true;
-        if ((s.snapMirrorCount || 0) > 0) entry.enabledCount++;
+        if ((s.snapMirrorCount || 0) > 0) entry.enabled.add(uk);
       }
     });
   });
@@ -33829,9 +33871,9 @@ function _renderLicenseComplianceSection(systems) {
         ${_sth('text-align:left;padding:6px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;','Confirmed Active')}
       </tr></thead><tbody>`;
     pkgRows.forEach(([pkg, d]) => {
-      const gap = d.checkable ? d.systems.size - d.enabledCount : null;
+      const gap = d.checkable ? d.systems.size - (d.enabled ? d.enabled.size : 0) : null;
       const activeCell = d.checkable
-        ? `${d.enabledCount} / ${d.systems.size}` + (gap > 0 ? ` <span style="color:var(--hx-f59e0b);font-weight:600;">(${gap} licensed, not confirmed active)</span>` : '')
+        ? `${d.enabled ? d.enabled.size : 0} / ${d.systems.size}` + (gap > 0 ? ` <span style="color:var(--hx-f59e0b);font-weight:600;">(${gap} licensed, not confirmed active)</span>` : '')
         : '<span style="color:var(--text-muted);">Not tracked</span>';
       html += `<tr>
         <td style="padding:5px 10px;border-bottom:1px solid var(--wa-40);font-weight:600;">${pkg}</td>
@@ -34086,7 +34128,7 @@ function _renderMonthlySLASection(systems) {
   // ARP (Anti-Ransomware Protection) status
   // ARP is an ONTAP feature: E-Series/StorageGRID are excluded rather than counted
   // as 'Not Reported' (which read as a data gap on a platform that has no ARP).
-  const _arpPool = systems.filter(s => _platformFamily(s) === 'ontap');
+  const _arpPool = _dfUnitReps(systems.filter(s => _platformFamily(s) === 'ontap'));   // a cluster setting: counted once per cluster
   const arpEnabled = _arpPool.filter(s => s.isARPEnabled === true).length;
   const arpDisabled = _arpPool.filter(s => s.isARPEnabled === false).length;
   const arpUnknown = _arpPool.length - arpEnabled - arpDisabled;
@@ -34206,11 +34248,17 @@ function _renderMonthlySLASection(systems) {
 
 function _renderDRReplicationSection(allSystems) {
   // SnapMirror / MetroCluster / SyncMirror / HA pairs are ONTAP constructs.
-  const systems = allSystems.filter(s => _platformFamily(s) === 'ontap');
+  const _smN = s => s.snapmirrorCount || s.snapMirrorCount || (s.snapmirror && s.snapmirror.totalCount) || 0;
+  // one entry per ONTAP cluster: the relationship count is the cluster's total, which every node reports, so it is the largest node figure and never their sum
+  const systems = getClusters(allSystems.filter(s => _platformFamily(s) === 'ontap')).map(u => {
+    const nodes = u.nodes, rep = nodes.slice().sort((a, b) => _smN(b) - _smN(a))[0], n = Math.max(0, ...nodes.map(_smN));
+    return { ...rep, systemName: u.name + (u.nodeCount > 1 ? ` (${u.nodeCount} nodes)` : ''), snapmirrorCount: n, snapMirrorCount: n,
+      isMetroCluster: nodes.some(x => x.isMetroCluster), isSyncMirror: nodes.some(x => x.isSyncMirror), haConfigured: nodes.some(x => x.haConfigured || x.isHAConfigured) ? true : rep.haConfigured };
+  });
   if (systems.length === 0) {
     return `<div style="font-size:0.85rem;color:var(--text-muted);line-height:1.5;">Not applicable &mdash; SnapMirror, MetroCluster, SyncMirror and HA pairs are ONTAP features and no ONTAP systems are in this scope. Replication for E-Series (Asynchronous/Synchronous Mirroring) is configured in their own consoles. StorageGRID ILM rules and grid topology are reported by Active IQ (see the StorageGRID tab); cross-grid replication and E-Series mirroring state are not.</div>`;
   }
-  const _drExcluded = allSystems.length - systems.length;
+  const _drExcluded = getClusters(allSystems).length - systems.length;
   const tblStyle = 'width:100%;border-collapse:collapse;font-size:0.8rem;';
   const thStyle = 'text-align:left;padding:8px 10px;border-bottom:2px solid var(--border-color);color:var(--accent-cyan);font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;';
   const tdStyle = 'padding:6px 10px;border-bottom:1px solid var(--wa-40);font-size:0.8rem;';
@@ -34223,7 +34271,7 @@ function _renderDRReplicationSection(allSystems) {
   const haSys = systems.filter(s => _hasHA(s));
   const unprotectedSys = systems.filter(s => _smCount(s) === 0 && !s.isMetroCluster && !s.isSyncMirror);
 
-  let html = (_drExcluded > 0 ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;">Showing the ${systems.length} ONTAP system(s); ${_drExcluded} E-Series/StorageGRID system(s) are excluded (these are ONTAP-only features).</div>` : '') + `
+  let html = (_drExcluded > 0 ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;">Showing the ${systems.length} ONTAP cluster(s); ${_drExcluded} E-Series array(s) and StorageGRID grid(s) are excluded (these are ONTAP-only features).</div>` : '') + `
     <div style="display:flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
       <div style="flex:1; min-width: 200px; background: var(--wa-20); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--wa-50);">
         <h4 style="margin:0 0 8px 0; color:var(--text-secondary); font-size:0.75rem; text-transform:uppercase;">Protection Coverage</h4>
@@ -35129,7 +35177,7 @@ function _renderFeatureAdoptionSection(systems) {
   const featureStats = featureDefs.map(f => {
     let enabled = 0, disabled = 0, unknown = 0;
     // ONTAP-only features are evaluated against ONTAP systems only.
-    const _pool = f.ontapOnly ? systems.filter(s => _platformFamily(s) === 'ontap') : systems;
+    const _pool = f.ontapOnly ? _dfUnitReps(systems.filter(s => _platformFamily(s) === 'ontap')) : systems;   // one per cluster for the cluster settings; AutoSupport is counted per node
     _pool.forEach(s => {
       const v = f.get(s);
       if (v === true) enabled++;
@@ -35182,13 +35230,14 @@ function _renderFeatureAdoptionSection(systems) {
   }).join('');
 
   // Optimization recommendations — only for CONFIRMED disabled features, not unknown ones
+  const _arpSeen = new Set();   // ARP is a cluster setting: one recommendation per cluster, not one per node
   const recs = systems.map(s => {
     const missing = [];
-    if (_platformFamily(s) === 'ontap' && s.isARPEnabled === false) missing.push('ARP (ONTAP 9.16.1+ ARP/AI: Instant active protection via pre-trained ML models — no learning period required. Older versions: 30-day learning period in dry-run mode recommended. `security anti-ransomware volume enable`)');
+    if (_platformFamily(s) === 'ontap' && s.isARPEnabled === false && !_arpSeen.has(_unitOf(s).key) && _arpSeen.add(_unitOf(s).key)) missing.push('ARP (ONTAP 9.16.1+ ARP/AI: Instant active protection via pre-trained ML models — no learning period required. Older versions: 30-day learning period in dry-run mode recommended. `security anti-ransomware volume enable`)');
     if (_getAsupConfiguredState(s) === false) missing.push('AutoSupport (Proactive risk detection, upgrade recommendations, and this tool\'s own health scoring all depend on it. `system node autosupport modify -node * -state enable`)');
     
     if (missing.length === 0) return '';
-    return `<li><strong>${s.systemName || s.serialNumber}:</strong> Enable ${missing.join(', ')}</li>`;
+    return `<li><strong>${(missing.length === 1 && /^ARP/.test(missing[0])) ? _unitOf(s).name : (s.systemName || s.serialNumber)}:</strong> Enable ${missing.join(', ')}</li>`;
   }).filter(Boolean).slice(0, 10);
 
   // Count how many features have unknown state
@@ -35224,7 +35273,7 @@ function _renderFeatureAdoptionSection(systems) {
       </div>
     </div>
 
-    <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 24px 0 8px 0;">Per-System Feature Matrix</h3>
+    <h3 style="font-size: 0.9rem; color: var(--text-primary); margin: 24px 0 8px 0;">Per-Node Feature Matrix <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">(ARP, SnapMirror and HA are cluster settings, so the nodes of a cluster show the same; AutoSupport is sent by each node)</span></h3>
     <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">✅ = Confirmed enabled &nbsp;&nbsp; ❌ = Confirmed disabled &nbsp;&nbsp; — = Not reported by API (verify on-cluster)</div>
     <div class="tam-table-wrapper" style="overflow-x:auto; background:var(--bk-200); border:1px solid var(--wa-100); border-radius:var(--radius-md); padding:16px;">
       <table style="${tblStyle}">

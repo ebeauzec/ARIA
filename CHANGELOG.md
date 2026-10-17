@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.6.346 (2026-10-17)
+
+### Fixed
+- Action Planner tabs checked one by one against the same problems found in the earlier documents (a fact that belongs to a cluster repeated for every node, counts that did not agree between tabs, labels that said something other than the figure). Fixed:
+- DR and Replication Health: the SnapMirror relationship count is the cluster's total, which every node of the cluster reports, and it was listed once per node (a 2-node cluster with 166 relationships showed 166 twice and the coverage figures counted nodes). One row per ONTAP cluster now, with the largest node figure, and the coverage tiles count clusters.
+- Contracts and Lifecycle: a lifecycle event shared by the nodes of a cluster was listed once per node (four identical rows for two clusters), the renewal pipeline had a row with no system name, the tiles counted nodes, and the fourth tile described renewals as 'EOA / EOS milestones'. One row per cluster, grid or array, the tiles count them, an unnamed row shows its serial number, and the tile reads 'Renewals, EOA and EOS milestones'.
+- Account Intelligence: the account team was listed once for every node of a StorageGRID grid, and the 'Systems' tile counted nodes. One row per cluster, grid or array, the tile shows the count with the number of nodes beside it, and a replacement character from Active IQ's site data no longer appears in site names.
+- Contract Compliance: one row per cluster, grid or array (earliest contract end, worst status, earliest warranty end), warranty and service-tier tiles count them, and the Licensed Feature Adoption table could show more 'confirmed active' than 'licensed' (4 / 2 and 6 / 2) because it counted every license record of every node; it now counts each cluster once (2 / 2).
+- Feature Adoption and Operational Health: ransomware protection, SnapMirror and HA are cluster settings and are counted once per cluster (0 of 2 clusters, not 0 of 4 nodes), the recommendation names the clusters, and AutoSupport, which each node sends, stays per node; the per-node matrix says so.
+- Sustainability: the whole-account Active IQ score was labelled 'Fleet Sustainability Score' with the explanation only in a tooltip, which a Word document loses. The label and the weekly trend heading now say it is Active IQ's whole-account score, not specific to the scope.
+
 ## 5.6.345 (2026-10-17)
 
 ### Fixed
