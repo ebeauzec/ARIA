@@ -1,8 +1,8 @@
 {
-  "version": "5.6.349",
+  "version": "5.6.350",
   "major": 5,
   "minor": 6,
-  "patch": 349,
+  "patch": 350,
   "date": "2026-10-17",
-  "notes": "On-screen model names; cluster names no longer rewritten"
+  "notes": "Procedures with exact commands for the most frequent findings, in the remediation window and four deliverables"
 }

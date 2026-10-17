@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.350 (2026-10-17)
+
+### Added
+- Remediation procedures written for the system: the findings that occur most often now carry a documented procedure with the exact ONTAP commands, built from the cluster, node and SVM or policy the finding names (multi-admin verification, configuration backup to a remote server, log forwarding, tamperproof snapshots, native FPolicy, FIPS, data-at-rest encryption and NSE drives, export rules open to 0.0.0.0/0, anti-ransomware, SMB signing and AES Kerberos, default gateways, Vscan, auto giveback, NTP and DNS redundancy, FabricPool certificate validation, intercluster peer addresses, license files, compaction, compression and deduplication, consolidation, end-of-availability platform refresh, Cloud Insights and BlueXP discovery, switch log collection, expired certificates, broadcast domain reachability, cluster peering encryption, continuously-available shares). Commands are gated by release (for example multi-admin verification needs 9.11.1) and left as <placeholders> where the finding does not say; none are invented for E-Series or StorageGRID. Active IQ's own guidance links follow the procedure.
+- Before this, 35% of the risks in a large fleet (11,678 of 32,939) fell back to a generic three-line plan; with the procedures it is 4% (1,404), and 9,866 risks carry a procedure for their own system. The remediation window, the Risk & Remediation Brief, the Implementation Plans and the Security Brief show them: a procedure per finding type with the commands for the first cluster, and a table of every cluster it applies to with what the finding says about each.
+- Tests: tests/test_playbooks.py (5) runs the real function under node: names from the finding, release gate, no template text, not for E-Series.
+
 ## 5.6.349 (2026-10-17)
 
 ### Fixed

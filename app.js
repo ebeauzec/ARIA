@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.349";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.350";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.350",
+    date: "2026-10-17",
+    title: "Remediation procedures with commands written for each system and finding",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Remediation procedures written for the system: the findings that occur most often now carry a documented procedure with the exact ONTAP commands, built from the cluster, node and SVM or policy the finding names (multi-admin verification, configuration backup to a remote server, log forwarding, tamperproof snapshots, native FPolicy, FIPS, data-at-rest encryption and NSE drives, export rules open to 0.0.0.0/0, anti-ransomware, SMB signing and AES Kerberos, default gateways, Vscan, auto giveback, NTP and DNS redundancy, FabricPool certificate validation, intercluster peer addresses, license files, compaction, compression and deduplication, consolidation, end-of-availability platform refresh, Cloud Insights and BlueXP discovery, switch log collection, expired certificates, broadcast domain reachability, cluster peering encryption, continuously-available shares). Commands are gated by release (for example multi-admin verification needs 9.11.1) and left as <placeholders> where the finding does not say; none are invented for E-Series or StorageGRID. Active IQ's own guidance links follow the procedure.",
+          "Before this, 35% of the risks in a large fleet (11,678 of 32,939) fell back to a generic three-line plan; with the procedures it is 4% (1,404), and 9,866 risks carry a procedure for their own system. The remediation window, the Risk & Remediation Brief, the Implementation Plans and the Security Brief show them: a procedure per finding type with the commands for the first cluster, and a table of every cluster it applies to with what the finding says about each.",
+          "Tests: tests/test_playbooks.py (5) runs the real function under node: names from the finding, release gate, no template text, not for E-Series.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.349",
     date: "2026-10-17",
@@ -22972,6 +22989,44 @@ function compileConfigReviewMd(systems, scopeTitle) {
   o += `## What this review does and does not cover\n\n**Covered:** card in an unsupported slot, NS224 shelf cabling, takeover not possible, automatic giveback, two cluster LIFs on one port, a cluster network port offline, intercluster LIFs, a Service Processor with no address, AutoSupport over SMTP or HTTP, unowned drives, MetroCluster mediator and automatic switchover, card firmware with a known issue, the security configuration gaps of the hardening scorecard, and the cards of the two nodes of an HA pair compared slot by slot.\n\n**Not covered, because Active IQ does not report it:** switch and host-side configuration, multipathing and MTU on the customer's network beyond what ONTAP lists, cable-level cabling of controllers, and every setting that is not in the AutoSupport data. Run NetApp Config Advisor on each cluster for a complete cabling and configuration validation, and confirm every ARIA comparison on the array.\n`;
   return o;
 }
+// Procedures for the findings on these systems: the playbook of each finding (see _remedPlaybook), shown once with the first cluster's own names, and a
+// table of every cluster it applies to with what the finding says about it (the SVM, policy or object), so the same steps can be run on each. kind: 'full'
+// (the steps of every procedure), 'sec' (only security procedures). A document with no matching finding is returned unchanged.
+const _PB_SECURITY = /multi-admin|fips|data-at-rest|export rule|anti-ransomware|smb signing|fpolicy|tamperproof|log forwarding|vscan|cluster peering encryption|certificate|aes kerberos|nse\)/i;
+function _dfAppendProcedures(doc, systems, kind) {
+  if (typeof doc !== 'string') return doc;
+  const groups = new Map();
+  (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
+    if (!r.hasPlaybook || !r.remediationPlan) return;
+    if (kind === 'sec' && !_PB_SECURITY.test(String(r.description || ''))) return;
+    const key = String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: null, sev: r.severity };
+    const u = _unitOf(sys); if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || ''), nodes: new Set() });
+    g.units.get(u.name).nodes.add(sys.systemName);
+    if (!g.plan || (g.units.size === 1)) g.plan = r.remediationPlan;
+    groups.set(key, g);
+  }));
+  const list = [...groups.values()].sort((a, b) => b.units.size - a.units.size || a.key.localeCompare(b.key));
+  if (!list.length) return doc;
+  const md = /\n#{1,3} /.test(doc), W = 78, cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  const head = t => md ? `\n## ${t}\n\n` : `\n${'='.repeat(W)}\n${t.toUpperCase()}\n${'='.repeat(W)}\n`;
+  const CAP = 15, shown = list.slice(0, CAP), nUnits = new Set(list.flatMap(g => [...g.units.keys()])).size;
+  let o = head(kind === 'sec' ? 'Hardening procedures for the findings on these systems' : 'Procedures for the findings on these systems');
+  o += `${list.length} finding type${list.length !== 1 ? 's' : ''} on ${nUnits} system${nUnits !== 1 ? 's' : ''} have a documented procedure below, with commands written for the cluster, node and SVM the finding names. They follow NetApp's published procedures and best practice; run them under change control, one cluster at a time, and confirm each against the command reference for the release the cluster runs.\n`;
+  shown.forEach(g => {
+    const names = [...g.units.keys()], pl = g.plan, first = names[0];
+    o += md ? `\n### ${g.key}\n\n` : `\n  ${g.key}\n`;
+    o += `${md ? '**' : ''}Applies to${md ? '**' : ''}: ${names.length} cluster${names.length !== 1 ? 's' : ''} (${names.slice(0, 8).join(', ')}${names.length > 8 ? ', ...' : ''}). Commands below are written for ${first}.\n`;
+    o += `${md ? '**' : ''}Why it matters${md ? '**' : ''}: ${pl.impact}\n\n${md ? '**' : ''}Steps${md ? '**' : ''}\n` + (pl.steps || []).map(x => `${md ? '' : '  '}${x}`).join(md ? '\n\n' : '\n') + '\n';
+    if (names.length > 1) {
+      const rows = [...g.units.values()].slice(0, 12);
+      o += md ? `\n| Cluster | Customer | Nodes | What the finding says |\n|---|---|---|---|\n` + rows.map(u => `| ${cell(u.name)} | ${cell(u.customer)} | ${u.nodes.size} | ${cell(u.detail).slice(0, 200)} |`).join('\n') + '\n'
+        : `\n  Cluster / customer / nodes / what the finding says\n` + rows.map(u => `    ${u.name} / ${u.customer || '-'} / ${u.nodes.size} / ${cell(u.detail).slice(0, 200)}`).join('\n') + '\n';
+      if (names.length > rows.length) o += `... and ${names.length - rows.length} more cluster${names.length - rows.length !== 1 ? 's' : ''}; each is listed in the Risk & Remediation Brief.\n`;
+    }
+  });
+  if (list.length > shown.length) o += `\n${list.length - shown.length} further finding type${list.length - shown.length !== 1 ? 's' : ''} with a procedure (${list.slice(CAP).map(g => g.key.slice(0, 60)).slice(0, 12).join('; ')}${list.length - CAP > 12 ? '; ...' : ''}): the Risk & Remediation Brief and the Action Planner (Risk Remediation tab) carry the procedure for each.\n`;
+  return doc.replace(/\s*$/, '\n') + o;
+}
 // The review in the documents. kind: 'brief' (a table of the checks with the recommendation, and the evidence of ARIA's own comparisons), 'full' (also every
 // cluster), 'cli' (the commands). Markdown or plain text, following the document. A document with nothing to report is returned unchanged.
 function _dfAppendCfg(doc, systems, kind) {
@@ -23945,6 +24000,16 @@ function enrichSystemTelemetry(s) {
     if (!normRisk.remediationPlan) {
       normRisk.remediationPlan = generateDynamicRemediationPlan(normRisk, { clusterName: cluster });
     }
+    // a specific procedure for this finding on this system (its cluster, node, SVM and version) leads; Active IQ's own guidance links follow it
+    try {
+      const _pb = _remedPlaybook(normRisk, Object.assign({}, s, { ontapVersion: osVer || s.ontapVersion, clusterName: s.clusterName || cluster }));
+      if (_pb) {
+        const _links = ((normRisk.remediationPlan && normRisk.remediationPlan.steps) || []).filter(x => /https?:\/\//.test(String(x)) && !_pb.steps.some(y => String(y).includes(String(x).replace(/^\d+\.\s*/, '').split(' — ').pop())));
+        normRisk.remediationPlan = { ...(normRisk.remediationPlan || {}), cause: _pb.cause, impact: _pb.impact, options: _pb.options, thirdParty: _pb.thirdParty || (normRisk.remediationPlan && normRisk.remediationPlan.thirdParty) || '',
+          steps: _pb.steps.concat(_links.length ? ['Active IQ guidance for this finding:'].concat(_links) : []) };
+        normRisk.hasPlaybook = true;
+      }
+    } catch (e) { /* the general plan stays */ }
 
     // ── Clean up generic "See Security Advisory" recommendation text ───────────
     const recIsGeneric = (normRisk.recommendation || '').match(/See (?:the )?Security Advisory/i);
@@ -24907,6 +24972,257 @@ function enrichSystemTelemetry(s) {
   };
 }
 
+// ── Remediation playbooks ─────────────────────────────────────────────────────────────────────────────────────────────
+// Specific procedures for the findings that occur most often, written to NetApp's documented procedures and best practice. Each builds its commands from the
+// system the finding is on: the cluster and node names, and the SVM, policy or object the finding itself names (Active IQ's riskDetail says "SVM x has Export
+// Policy y"). What a command needs that the finding does not say stays as <placeholder>, so nothing is guessed. A playbook returns null when it does not
+// apply (a version that lacks the feature, another platform), and the general engine then carries on.
+function _rvVer(sys) { const m = String((sys && sys.ontapVersion) || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/); return m ? [+m[1], +m[2], +(m[3] || 0)] : null; }
+function _rvAtLeast(sys, a, b, c) { const v = _rvVer(sys); if (!v) return true; return v[0] > a || (v[0] === a && (v[1] > b || (v[1] === b && v[2] >= (c || 0)))); }
+function _rvCtx(risk, sys) {
+  const d = String((risk && (risk.riskDetail || '')) || '') + ' ' + String((risk && risk.description) || '');
+  const pick = rx => { const m = d.match(rx); return m ? m[1].replace(/[.,;]+$/, '') : ''; };
+  const cluster = (sys && (sys.clusterName || sys.systemName)) || '<cluster>';
+  return { cluster, node: (sys && sys.systemName) || '<node>', ver: (sys && sys.ontapVersion) || '', model: (sys && sys.platform) || '',
+    svm: pick(/\b(?:SVM|Vserver|vserver)\s+([A-Za-z0-9_.-]+)/) || '<svm>', policy: pick(/Export Policy\s+([A-Za-z0-9_.-]+)/i) || '<policy>' };
+}
+function _remedPlaybook(risk, sys) {
+  if (!risk || !sys || (typeof _platformFamily === 'function' && _platformFamily(sys) !== 'ontap')) return null;
+  const t = String(risk.description || risk.title || ''), c = _rvCtx(risk, sys), vs = c.svm, ref = risk.advisoryUrl ? `Reference: ${risk.advisoryUrl}` : '';
+  const out = (cause, impact, steps, options, thirdParty) => ({ cause, impact, steps: steps.concat([`Syntax is from the ONTAP 9 command reference; confirm option names for ${c.ver || 'this release'} with the command's help (<command> ?) before running, and run changes under change control.`]).concat(ref ? [ref] : []), options, thirdParty: thirdParty || '' });
+  const verify = 'Confirm the finding clears in Active IQ after the next AutoSupport (within about a day).';
+  if (/multi-admin verification not enabled/i.test(t)) {
+    if (!_rvAtLeast(sys, 9, 11, 1)) return out(`Multi-admin verification needs ONTAP 9.11.1 or later; ${c.cluster} runs ${c.ver}.`, 'A single compromised or mistaken administrator can delete volumes, snapshots or the cluster configuration with no second approval.',
+      [`1. Plan the upgrade of ${c.cluster} to a release that supports multi-admin verification (9.11.1 or later, 9.12.1 or later recommended).`, '2. Enable it once the cluster is upgraded (steps below).'], ['Option A: Upgrade, then enable.', 'Option B: Restrict the admin role set and review audit logs until the upgrade.']);
+    return out('Multi-admin verification (MAV) is off, so one administrator can run destructive commands alone.', 'Ransomware or an insider can delete snapshots, volumes or the configuration backup without a second person approving it.', [
+      `1. Pick two or more administrators who will approve (never the requester alone) and confirm their e-mail addresses for notification.`,
+      `2. On ${c.cluster}, create the approval group: security multi-admin-verify approval-group create -name mav-approvers -approvers <admin1>,<admin2> -email <approvers@example.com>`,
+      `3. Turn MAV on with the group and the number of approvals needed: security multi-admin-verify modify -approval-groups mav-approvers -required-approvers 1 -enabled true`,
+      `4. Protect the destructive operations, for example: security multi-admin-verify rule create -operation "volume delete" ; security multi-admin-verify rule create -operation "volume snapshot delete" ; security multi-admin-verify rule create -operation "snapmirror delete"`,
+      `5. Check: security multi-admin-verify show ; security multi-admin-verify rule show ; then test with a non-critical volume so the approval flow is known before it is needed.`,
+      `6. ${verify}`], ['Option A: Enable now with at least two approvers (recommended).', 'Option B: Start with fewer protected operations (volume delete, snapshot delete) and add the rest after the first month.'], 'Automation that deletes volumes or snapshots (backup software, scripts) will wait for approval once a rule covers the operation; list those accounts first.');
+  }
+  if (/cluster config(?:uration)? backups are not being pushed remotely/i.test(t))
+    return out('The cluster configuration backups are written only to the cluster itself.', `If ${c.cluster} is lost or its root volume corrupted, there is no off-cluster copy to rebuild the configuration from.`, [
+      `1. Choose an HTTP(S), FTP or SCP-capable server that is not on ${c.cluster} (a hardened backup host).`,
+      `2. Set the destination: system configuration backup settings modify -destination https://<backup-server>/<path> -username <user>  (it prompts for the password).`,
+      `3. Check the setting and the schedule: system configuration backup settings show ; system configuration backup show`,
+      `4. Take one now and confirm it arrives: system configuration backup create -node ${c.node} -backup-type cluster ; then list it on the backup server.`,
+      `5. Keep at least one copy off-site and test a restore procedure once (docs.netapp.com, "Back up and restore cluster configurations").`,
+      `6. ${verify}`], ['Option A: HTTPS or SCP destination (recommended).', 'Option B: FTP only if the network is isolated; credentials are sent in clear.']);
+  if (/cluster log forwarding not configured/i.test(t))
+    return out('Audit and event logs stay on the cluster only.', 'Logs cannot be correlated centrally and are lost with the cluster or on rollover; an attacker with admin access could remove local evidence.', [
+      `1. Choose the syslog/SIEM collector and protocol (tcp-encrypted is recommended; it needs the server certificate chain installed with: security certificate install -type server-ca -vserver ${c.cluster}).`,
+      `2. On ${c.cluster}: cluster log-forwarding create -destination <siem-host> -port 6514 -protocol tcp-encrypted -facility user -verify-server true`,
+      `3. Check: cluster log-forwarding show`,
+      `4. Make sure audit events you need are generated (for example: security audit show ; vserver audit show -vserver ${vs}).`,
+      `5. ${verify}`], ['Option A: tcp-encrypted with server verification (recommended).', 'Option B: udp-unencrypted only on an isolated management network.']);
+  if (/tamperproof snapshot not enabled/i.test(t)) {
+    if (!_rvAtLeast(sys, 9, 12, 1)) return out(`Tamperproof snapshots need ONTAP 9.12.1 or later; ${c.cluster} runs ${c.ver}.`, 'Snapshots can be deleted by an administrator (or malware with admin access) before their retention ends.', [`1. Plan the upgrade of ${c.cluster} to 9.12.1 or later.`, '2. Then lock the snapshots of critical volumes (steps below).'], ['Option A: Upgrade, then enable.']);
+    return out('Snapshots are not locked, so they can be deleted before they expire.', 'A compromised administrator account can remove every recovery point.', [
+      `1. Initialise the SnapLock Compliance clock once per node (it cannot be reset afterwards): snaplock compliance-clock initialize -node ${c.node}  (repeat for each node; check: snaplock compliance-clock show)`,
+      `2. For each critical volume, enable snapshot locking: volume modify -vserver ${vs} -volume <volume> -snapshot-locking-enabled true`,
+      `3. Create snapshots with a retention lock: volume snapshot create -vserver ${vs} -volume <volume> -snapshot <name> -snaplock-expiry-time "<yyyy-mm-dd hh:mm:ss>"  (or set a policy that applies it).`,
+      `4. Check: volume show -vserver ${vs} -volume <volume> -fields snapshot-locking-enabled ; volume snapshot show -vserver ${vs} -volume <volume> -fields snaplock-expiry-time`,
+      `5. Keep capacity headroom: locked snapshots cannot be deleted to free space.`,
+      `6. ${verify}`], ['Option A: Lock the snapshots of the most critical volumes first (recommended).', 'Option B: Replicate to a SnapLock vault instead (SnapVault to a Compliance volume).'], 'Backup software that prunes snapshots will fail on locked ones; align its retention with the lock.');
+  }
+  if (/native fpolicy is not enabled/i.test(t))
+    return out('Native FPolicy is not enabled on the SVMs that serve NAS protocols.', 'Known ransomware file extensions and unwanted file types are not blocked at the storage layer.', [
+      `1. Create the event for the SMB operations to watch (on SVM ${vs}): vserver fpolicy policy event create -vserver ${vs} -event-name block-events -protocol cifs -file-operations create,rename,write -filters first-write`,
+      `2. Create the native policy: vserver fpolicy policy create -vserver ${vs} -policy-name native-block -events block-events -engine native -is-mandatory false`,
+      `3. Define what to block: vserver fpolicy policy scope create -vserver ${vs} -policy-name native-block -volumes-to-include "*" -file-extensions-to-include "<comma-separated extensions>"`,
+      `4. Enable it: vserver fpolicy enable -vserver ${vs} -policy-name native-block -sequence-number 1`,
+      `5. Check: vserver fpolicy show -vserver ${vs} ; vserver fpolicy policy show -vserver ${vs}`,
+      `6. Repeat for every SVM that serves NAS. ${verify}`], ['Option A: Native FPolicy for blocking by extension (recommended starting point).', 'Option B: External FPolicy engine with a partner product for deeper inspection.'], 'Tell backup and migration teams: a blocked extension fails the write for them as well.');
+  if (/fips 140-2 (?:compliance )?is disabled/i.test(t))
+    return out('FIPS 140-2 mode for SSL/TLS is not enabled on the cluster.', 'Management and data services may negotiate algorithms that are not FIPS-approved; regulated customers may fail an audit.', [
+      `1. Check clients first: FIPS mode disables TLS 1.0/1.1 and non-approved ciphers, so list the management tools and integrations that connect to ${c.cluster}.`,
+      `2. See the current setting: security config show -interface SSL`,
+      `3. Enable in a change window: security config modify -interface SSL -is-fips-enabled true  (review the confirmation; some services restart their TLS listeners).`,
+      `4. Test the management interfaces, Active IQ Unified Manager, SnapCenter, backup and monitoring connections.`,
+      `5. ${verify}`], ['Option A: Enable now if no client needs older TLS (recommended for regulated data).', 'Option B: Upgrade or reconfigure the old clients first, then enable.']);
+  if (/data-at-rest encryption is not enabled/i.test(t))
+    return out('Data at rest is not encrypted by NetApp Volume Encryption or self-encrypting drives.', 'Removed drives or shelves, and returned or decommissioned media, can be read.', [
+      `1. Choose the key manager: onboard (security key-manager onboard enable) or an external KMIP server (security key-manager external enable -vserver ${c.cluster} -key-servers <kmip-host>:5696 -client-cert <cert> -server-ca-certs <ca>).`,
+      `2. With the onboard manager, store the passphrase and immediately back it up: security key-manager onboard show-backup  (keep it off the cluster).`,
+      `3. Encrypt new volumes: volume create ... -encrypt true. Convert existing volumes in place: volume encryption conversion start -vserver ${vs} -volume <volume>, check with volume encryption conversion show.`,
+      `4. Check: volume show -fields encrypt ; security key-manager key query`,
+      `5. ${verify}`], ['Option A: NVE on all volumes with an external key manager (recommended).', 'Option B: NVE with the onboard key manager where no KMIP server exists.'], 'Deduplication savings across volumes are unchanged for NVE from 9.6, but plan a brief performance check on very latency-sensitive volumes.');
+  if (/export rule is using a client match of 0\.0\.0\.0\/0/i.test(t))
+    return out(`Export policy ${c.policy} on SVM ${vs} allows every client address.`, 'Any host on a reachable network can mount the data; this is one of the most common causes of unintended NFS exposure.', [
+      `1. List the rules: vserver export-policy rule show -vserver ${vs} -policyname ${c.policy} -fields ruleindex,clientmatch,rorule,rwrule,superuser`,
+      `2. Identify the real clients (the application owners, or NFS client addresses from: network connections active show -vserver ${vs} ; statistics may help).`,
+      `3. Narrow the rule: vserver export-policy rule modify -vserver ${vs} -policyname ${c.policy} -ruleindex <n> -clientmatch <client-subnet-or-hostgroup> -rorule sys -rwrule sys -superuser none`,
+      `4. Add rules for each client group instead of one open rule: vserver export-policy rule create -vserver ${vs} -policyname ${c.policy} -clientmatch <subnet> -rorule sys -rwrule sys -superuser none -protocol nfs`,
+      `5. Test a mount from an allowed and a blocked host, and check: vserver export-policy check-access -vserver ${vs} -volume <volume> -client-ip <ip> -authentication-method sys -protocol nfs3 -access-type read`,
+      `6. Repeat for the other policies the finding names on this SVM. ${verify}`], ['Option A: Replace 0.0.0.0/0 with the client subnets (recommended).', 'Option B: Keep the rule read-only with root squash if clients cannot be listed yet, and record an exception.']);
+  if (/enable ontap anti-ransomware/i.test(t)) {
+    if (!_rvAtLeast(sys, 9, 10, 1)) return out(`Autonomous Ransomware Protection needs ONTAP 9.10.1 or later; ${c.cluster} runs ${c.ver}.`, 'Encryption-based attacks are not detected at the storage layer.', [`1. Plan the upgrade of ${c.cluster} to 9.10.1 or later (9.13.1 or later turns learning on automatically for new volumes).`], ['Option A: Upgrade, then enable.']);
+    return out('Autonomous Ransomware Protection (ARP) is not enabled on the volumes.', 'A ransomware encryption wave is not detected or answered with an automatic snapshot.', [
+      `1. ARP needs a license (included in ONTAP One): system license show -package *`,
+      `2. Start in learning mode on a volume: security anti-ransomware volume dry-run -vserver ${vs} -volume <volume>  (9.10.1 to 9.12.1: volume modify -vserver ${vs} -volume <volume> -anti-ransomware-state dry-run)`,
+      `3. After 30 days of normal workload (or as ONTAP advises), switch to active: security anti-ransomware volume enable -vserver ${vs} -volume <volume>`,
+      `4. Check: security anti-ransomware volume show -vserver ${vs} ; and add an alert path: event notification destination show`,
+      `5. ${verify}`], ['Option A: Learn for 30 days, then enable active mode (recommended).', 'Option B: Enable active mode at once on volumes with stable, well-known workloads.']);
+  }
+  if (/smb signing and encryption not enabled/i.test(t))
+    return out(`SMB signing and encryption are not required on SVM ${vs}.`, 'SMB traffic can be tampered with or read in transit (relay and man-in-the-middle attacks).', [
+      `1. Check clients: Windows 7/2008 R2 and older, and some appliances, cannot sign with SMB 3 encryption. Inventory with: vserver cifs session show -vserver ${vs} -fields protocol-version,windows-user,address`,
+      `2. Require signing: vserver cifs security modify -vserver ${vs} -is-signing-required true`,
+      `3. Allow AES encryption (SMB 3): vserver cifs security modify -vserver ${vs} -is-aes-encryption-enabled true ; to force encryption on a share: vserver cifs share modify -vserver ${vs} -share-name <share> -share-properties encrypt-data`,
+      `4. Check: vserver cifs security show -vserver ${vs} -fields is-signing-required,is-aes-encryption-enabled`,
+      `5. ${verify}`], ['Option A: Require signing everywhere; require encryption on sensitive shares (recommended).', 'Option B: Require signing only, if old clients cannot use SMB 3 encryption.']);
+  if (/vserver has multiple default gateways with the same metric/i.test(t))
+    return out(`SVM ${vs} has two or more default routes with the same metric.`, 'ONTAP cannot choose a gateway, so DNS and other name-service lookups can fail intermittently.', [
+      `1. List the routes: network route show -vserver ${vs} -destination 0.0.0.0/0`,
+      `2. Decide which gateway is primary. Give the secondary a higher metric: network route delete -vserver ${vs} -destination 0.0.0.0/0 -gateway <secondary-gw> ; network route create -vserver ${vs} -destination 0.0.0.0/0 -gateway <secondary-gw> -metric 30`,
+      `3. Keep the primary at a lower metric (for example 20): network route modify -vserver ${vs} -destination 0.0.0.0/0 -gateway <primary-gw> -metric 20`,
+      `4. Check: network route show -vserver ${vs} ; and a name lookup: vserver services name-service dns check -vserver ${vs}`,
+      `5. ${verify}`], ['Option A: One default gateway, or two with different metrics (recommended).']);
+  if (/vscan is not enabled/i.test(t))
+    return out(`Virus scanning (Vscan) is not enabled on SVM ${vs}.`, 'Files written over SMB are not scanned on access.', [
+      `1. Have the antivirus (AV) servers with the NetApp-supported connector ready, and an SMB account they use.`,
+      `2. Create a scanner pool: vserver vscan scanner-pool create -vserver ${vs} -scanner-pool vscan-pool -hostnames <av-server1>,<av-server2> -privileged-users <domain\\avuser> -scanner-policy primary`,
+      `3. Apply a policy and enable: vserver vscan scanner-pool apply-policy -vserver ${vs} -scanner-pool vscan-pool -scanner-policy primary ; vserver vscan on-access-policy create -vserver ${vs} -policy-name default-cifs -protocol CIFS -scan-files-with-no-ext true ; vserver vscan enable -vserver ${vs}`,
+      `4. Check: vserver vscan connection-status show -vserver ${vs} ; vserver vscan show -vserver ${vs}`,
+      `5. ${verify}`], ['Option A: On-access scanning with two AV servers (recommended).', 'Option B: On-demand scanning only, scheduled off-hours.'], 'Size the AV servers: scan latency adds to file open time.');
+  if (/auto giveback is not enabled/i.test(t))
+    return out('Automatic giveback is off.', `After a takeover the node (${c.node}) stays down until someone gives it back, leaving the pair without redundancy.`, [
+      `1. Check: storage failover show -fields auto-giveback,possible`,
+      `2. Enable: storage failover modify -node * -auto-giveback true`,
+      `3. Confirm: storage failover show -fields auto-giveback`,
+      `4. ${verify}`], ['Option A: Enable on all nodes (recommended).']);
+  if (/ntp servers are not redundant|one or more ntp servers are not responding/i.test(t))
+    return out(/not responding/i.test(t) ? 'An NTP server configured on the cluster does not answer.' : 'Fewer than two external NTP servers are configured.', 'Cluster time can drift, which breaks Kerberos/AD authentication, certificates, log correlation and SnapMirror schedules.', [
+      `1. Check: cluster time-service ntp server show ; cluster time-service ntp status show`,
+      /not responding/i.test(t) ? `2. Test reachability from the cluster network (UDP 123): network ping -lif <mgmt-lif> -vserver ${c.cluster} -destination <ntp-server>; remove a dead server: cluster time-service ntp server delete -server <dead-ntp>` : `2. Add at least a second, independent source: cluster time-service ntp server create -server <ntp-server-2>`,
+      `3. Use three or more servers where possible so a faulty source can be outvoted; prefer internal stratum 2-3 servers.`,
+      `4. Check: cluster time-service ntp status show ; date`,
+      `5. ${verify}`], ['Option A: Three NTP servers, two internal and one external (recommended).']);
+  if (/vserver has a single dns server configured/i.test(t))
+    return out(`SVM ${vs} has one DNS server.`, 'If it is unavailable, name resolution, AD authentication and SMB/NFS access fail.', [
+      `1. Check: vserver services name-service dns show -vserver ${vs}`,
+      `2. Add the second server (keep the existing one first): vserver services name-service dns modify -vserver ${vs} -domains <domain> -name-servers <dns1>,<dns2>`,
+      `3. Check: vserver services name-service dns check -vserver ${vs}`,
+      `4. ${verify}`], ['Option A: Two or more DNS servers in different locations (recommended).']);
+  if (/certificate validation is set to false for fabricpool/i.test(t))
+    return out('The FabricPool object store accepts any certificate.', 'Tiered data could be sent to an impostor endpoint (man-in-the-middle).', [
+      `1. Check: storage aggregate object-store config show -fields server,ssl-enabled,is-certificate-validation-enabled`,
+      `2. Install the CA that signed the object store certificate: security certificate install -type server-ca -vserver ${c.cluster}`,
+      `3. Turn validation on: storage aggregate object-store config modify -object-store-name <object-store> -is-certificate-validation-enabled true`,
+      `4. Check the tiering still works: storage aggregate object-store show-space ; storage aggregate show -fields tiering-policy`,
+      `5. ${verify}`], ['Option A: Install the CA and enable validation (recommended).']);
+  if (/intercluster peer remote ip address configuration/i.test(t))
+    return out('A cluster peer lists too few remote intercluster addresses.', 'If that one address or node is down, replication to this cluster stops.', [
+      `1. Check: cluster peer show -instance ; cluster peer show -fields peer-addresses,availability`,
+      `2. On the remote cluster list every node's intercluster LIF: network interface show -role intercluster -fields address,home-node`,
+      `3. Add one address per remote node: cluster peer modify -cluster <peer-cluster> -peer-addrs <ip-node1>,<ip-node2>,<ip-node3>,<ip-node4>`,
+      `4. Check: cluster peer show -fields peer-addresses,availability ; cluster peer health show`,
+      `5. ${verify}`], ['Option A: List one intercluster LIF per remote node (recommended).']);
+  if (/system has not converted to either netapp license fi?le \(nlf\)/i.test(t))
+    return out('The cluster still has 28-character license keys instead of NetApp license files.', 'Old keys are no longer issued; capacity and feature changes need NLF, and entitlement checks can fail after an upgrade.', [
+      `1. List what is installed: system license show -fields package,type,expiration`,
+      `2. Sign in to the NetApp Support Site (My Support, Software Licenses), enter the cluster serial numbers (system node show -fields serialnumber for ${c.cluster}) and download the NLF for each.`,
+      `3. Install: system license add -license-code <contents of the NLF>  (one per serial number).`,
+      `4. Check: system license show-status`,
+      `5. ${verify}`], ['Option A: Install NLF for every node serial (recommended).']);
+  if (/enable (?:compaction|compression) to support more workloads/i.test(t)) {
+    const comp = /compaction/i.test(t);
+    return out(`${comp ? 'Data compaction' : 'Compression'} is not enabled on volumes that would benefit.`, 'Less effective capacity than the system can provide; earlier than necessary capacity purchase.', [
+      `1. Check: volume efficiency show -vserver ${vs} -fields state,compression,inline-compression,data-compaction`,
+      comp ? `2. Enable (all-flash and Flash Pool aggregates): volume efficiency modify -vserver ${vs} -volume <volume> -data-compaction true` : `2. Enable inline and background compression: volume efficiency modify -vserver ${vs} -volume <volume> -compression true -inline-compression true`,
+      `3. Apply to existing data in the background: volume efficiency start -vserver ${vs} -volume <volume> -scan-old-data true`,
+      `4. Check savings after the scan: volume efficiency show -vserver ${vs} -volume <volume> -fields progress ; volume show -vserver ${vs} -volume <volume> -fields sis-space-saved`,
+      `5. ${verify}`], ['Option A: Enable on all general-purpose volumes (recommended).', 'Option B: Skip volumes that already hold compressed or encrypted data.']);
+  }
+  if (/nse\) drives or self encrypting drives \(sed\) are present but not/i.test(t) || /netapp storage encryption \(nse\) drives/i.test(t))
+    return out('Self-encrypting drives are installed but their encryption is not activated.', 'The drives encrypt nothing until a key manager supplies authentication keys; removed drives remain readable.', [
+      `1. Check: storage encryption disk show -fields data-key-id,fips-key-id`,
+      `2. Set up a key manager if none exists: security key-manager external enable (KMIP) or security key-manager onboard enable.`,
+      `3. Take ownership of the drives with an authentication key: storage encryption disk modify -disk * -data-key-id <key-id>  (the key manager creates the ID).`,
+      `4. Check: storage encryption disk show -fields data-key-id ; security key-manager key query`,
+      `5. ${verify}`], ['Option A: External key manager (recommended).', 'Option B: Onboard key manager when no KMIP server exists.']);
+  if (/consolidate storage to reduce the number of nodes or shelves|low capacity utilization for production system/i.test(t))
+    return out('The system runs well below its capacity and performance limits.', 'Power, cooling, support and licensing are paid for equipment that is mostly idle.', [
+      `1. Measure real use over time: storage aggregate show -fields size,usedsize,percent-used ; statistics show-periodic -object node -instance ${c.node} -interval 5 -iterations 12`,
+      `2. Decide what can move: volume move start -vserver ${vs} -volume <volume> -destination-aggregate <aggr> (non-disruptive) to free nodes or shelves, or retire the system in a refresh.`,
+      `3. Review contracts before changing hardware: the support end date and the cost per shelf are in the Contracts section.`,
+      `4. ${verify}`], ['Option A: Consolidate at the next refresh.', 'Option B: Keep as is where the headroom is deliberate growth capacity.']);
+  if (/platform .+ reached end-of-availability/i.test(t)) {
+    const dates = t.match(/\bon (\d{4}-\d{2}-\d{2}).*?end-of-support \(eos\) on (\d{4}-\d{2}-\d{2})/i), eoa = dates ? dates[1] : '', eos = dates ? dates[2] : '';
+    return out(`${c.model || 'This platform'} is no longer sold${eoa ? ` (end of availability ${eoa})` : ''}${eos ? ` and NetApp support ends ${eos}` : ''}.`, 'Spare parts, support and new ONTAP releases stop at end of support; a hardware failure after that date may not be repairable under contract.', [
+      `1. Record what is installed on ${c.cluster}: system node show -fields model,serialnumber,uptime ; storage shelf show -fields model ; and the support end dates in the Contracts section of this report.`,
+      `2. Choose the replacement in the same family with NetApp's Hardware Universe (hwu.netapp.com), sized from current use: storage aggregate show -fields size,usedsize ; statistics show-periodic -object node -interval 5 -iterations 12.`,
+      `3. Check the target ONTAP release supports both the old and the new controllers (needed for a non-disruptive swap) in the NetApp Interoperability Matrix.`,
+      `4. Keep the existing shelves where the new controllers support them, and move the data without downtime: controller upgrade by aggregate relocation (ARL) with storage aggregate relocation start -node ${c.node} -destination <new-node> -aggregate-list <aggr>, or volume move start -vserver <svm> -volume <vol> -destination-aggregate <new-aggr> to a new cluster in the same cluster peer.`,
+      `5. ${eos ? `Plan to finish before ${eos}; if that is not possible, extend support while the migration is under way and keep the quote date in the change record.` : 'Extend support while the migration is under way.'}`,
+      `6. ${verify}`], ['Option A: Replace the controllers, keep shelves where supported (ARL).', 'Option B: Move the workload to a new cluster with SnapMirror and retire this one.', 'Option C: Extend support for a bounded period when the refresh is already budgeted.']);
+  }
+  if (/enable real-time power consumption reporting through netapp cloud insights|data infrastructure insights/i.test(t))
+    return out('Cluster power use is estimated, not measured.', 'Sustainability reporting shows modelled figures, so energy savings cannot be proven.', [
+      `1. Create a read-only account for the collector on ${c.cluster}: security login create -vserver ${c.cluster} -user-or-group-name insights-ro -application http -authentication-method password -role readonly ; security login create -vserver ${c.cluster} -user-or-group-name insights-ro -application ontapi -authentication-method password -role readonly`,
+      `2. In NetApp Data Infrastructure Insights (Cloud Insights) add an acquisition unit on a host that can reach the cluster management LIF, then add the ONTAP data collector for ${c.cluster} with that account.`,
+      `3. Allow the collector through the firewall: HTTPS (443) to the cluster management LIF.`,
+      `4. Check after the first poll: the cluster shows measured power in Data Infrastructure Insights and the finding clears in Active IQ.`], ['Option A: Data Infrastructure Insights collector (recommended).', 'Option B: Active IQ Digital Advisor sustainability estimates only.']);
+  if (/discover the cluster in bluexp/i.test(t))
+    return out('The cluster is not added to NetApp BlueXP.', 'Sustainability and carbon figures are not available for it.', [
+      `1. In BlueXP choose Storage > Canvas > Add working environment > On-premises ONTAP > Discover, and enter ${c.cluster}'s management address.`,
+      `2. Use an account with the admin role for discovery, or a read-only account for monitoring only: security login create -vserver ${c.cluster} -user-or-group-name bluexp-ro -application http -authentication-method password -role readonly`,
+      `3. Install a BlueXP Connector in the network that can reach the cluster management LIF (HTTPS 443).`,
+      `4. ${verify}`], ['Option A: Discover with a read-only account (recommended).']);
+  if (/enable cluster switch log collection/i.test(t))
+    return out('Log collection from the cluster switches is off.', 'Switch problems (CRC errors, link flaps, firmware faults) are not reported to NetApp and are harder to diagnose.', [
+      `1. List the switches ONTAP monitors: system switch ethernet show`,
+      `2. For each, set the collection password: system switch ethernet log setup-password -switch-name <switch>  (a switch user with the required rights).`,
+      `3. Turn it on: system switch ethernet log modify -device <switch> -log-request true  and enable collection: system switch ethernet log enable-collection`,
+      `4. Check: system switch ethernet log show ; system switch ethernet show -fields is-monitoring-enabled-operational`,
+      `5. ${verify}`], ['Option A: Enable on all cluster and storage switches (recommended).']);
+  if (/enable cifs aes kerberos encryption/i.test(t))
+    return out('The CIFS servers still allow RC4 for Kerberos.', 'Microsoft is retiring RC4 support in Active Directory; machine accounts without AES will fail to authenticate once it is enforced.', [
+      `1. Check: vserver cifs security show -vserver ${vs} -fields kerberos-clock-skew,is-aes-encryption-enabled,kerberos-ticket-age`,
+      `2. Enable AES: vserver cifs security modify -vserver ${vs} -is-aes-encryption-enabled true`,
+      `3. In Active Directory, make sure the SVM's computer account supports AES: Get-ADComputer <cifs-server> -Properties msDS-SupportedEncryptionTypes (24 or 28 includes AES128 and AES256) and fix with Set-ADComputer if needed.`,
+      `4. Test an SMB mount from a Windows client and check the session: vserver cifs session show -vserver ${vs} -fields auth-mechanism`,
+      `5. ${verify}`], ['Option A: Enable AES now (recommended).']);
+  if (/detect expired certificates|certificate.*expired|expired certificate/i.test(t))
+    return out('One or more certificates on the cluster have expired or are about to.', 'TLS clients, management tools and replication peers reject an expired certificate; the failure is sudden.', [
+      `1. Find them: security certificate show -vserver * -fields common-name,type,expiration,serial -expiration <"mm/dd/yyyy">  (use today's date plus 60 days), and security certificate show-truststore for the trusted CAs.`,
+      `2. Create a request: security certificate generate-csr -common-name <fqdn> -size 3072 -hash-function SHA256 ; have your CA sign it.`,
+      `3. Install: security certificate install -type server -vserver ${vs === '<svm>' ? c.cluster : vs} (paste the signed certificate and chain).`,
+      `4. Use it: security ssl modify -vserver ${vs === '<svm>' ? c.cluster : vs} -common-name <fqdn> -server-enabled true -serial <new-serial> -ca <ca-name>`,
+      `5. Remove the expired one once nothing references it: security certificate delete -vserver ${vs === '<svm>' ? c.cluster : vs} -common-name <fqdn> -ca <ca> -type server -serial <old-serial>`,
+      `6. ${verify}`], ['Option A: Replace with CA-signed certificates and set a calendar reminder 60 days before expiry (recommended).']);
+  if (/broadcast domain (?:contains ports from multiple vlans|has non-optimal layer two reachability)|ipspace configuration check/i.test(t))
+    return out(`A broadcast domain on ${c.cluster} contains ports that cannot reach each other at layer 2.`, 'LIF failover to a port without the same network leaves the LIF unreachable.', [
+      `1. See the layout: network port broadcast-domain show ; network port show -fields broadcast-domain,mtu,vlan-id`,
+      `2. Check what ONTAP sees: network port reachability show -detail`,
+      `3. Let ONTAP repair the membership, one port at a time: network port reachability repair -node ${c.node} -port <port>  (review the planned change first).`,
+      `4. For ports on different VLANs, use one broadcast domain per VLAN: network port broadcast-domain create -broadcast-domain <name> -mtu 1500 -ports ${c.node}:<port>`,
+      `5. Check failover works: network interface show -failover ; network interface revert -vserver * -lif *`,
+      `6. ${verify}`], ['Option A: Repair with ONTAP reachability, then verify failover (recommended).']);
+  if (/enable deduplication to support more workloads/i.test(t))
+    return out('Deduplication is not enabled on volumes that would benefit.', 'Less effective capacity than the system can provide.', [
+      `1. Check: volume efficiency show -vserver ${vs} -fields state,policy,schedule`,
+      `2. Enable: volume efficiency on -vserver ${vs} -volume <volume> ; volume efficiency modify -vserver ${vs} -volume <volume> -policy auto`,
+      `3. Run on existing data: volume efficiency start -vserver ${vs} -volume <volume> -scan-old-data true`,
+      `4. Check: volume efficiency show -vserver ${vs} -volume <volume> ; volume show -vserver ${vs} -volume <volume> -fields sis-space-saved`,
+      `5. ${verify}`], ['Option A: Enable on all general-purpose volumes (recommended).']);
+  if (/cluster peering encryption not enabled/i.test(t))
+    return out('Replication traffic between the clusters is not encrypted.', 'SnapMirror data and metadata cross the network in clear text.', [
+      `1. Check: cluster peer show -fields encryption-protocol-proposed,encryption-protocol,auth-status-admin`,
+      `2. Enable on this cluster: cluster peer modify -cluster <peer-cluster> -auth-status-admin use-authentication -encryption-protocol-proposed tls-psk  (do the same on the peer; the passphrase is generated and exchanged for you in 9.6 and later).`,
+      `3. Check: cluster peer show -fields encryption-protocol ; snapmirror show -fields status`,
+      `4. ${verify}`], ['Option A: TLS-PSK on every peer relationship (recommended).'], 'Do the change on both clusters in the same window; a mismatch stops transfers until both agree.');
+  if (/continuously-available cifs share property configured/i.test(t))
+    return out('The continuously-available property is set on a share that does not need it.', 'It is for Hyper-V and SQL Server over SMB; on ordinary shares it adds state and can slow failover.', [
+      `1. List shares with it: vserver cifs share show -vserver ${vs} -fields share-properties`,
+      `2. For shares that do not host Hyper-V or SQL Server workloads: vserver cifs share properties remove -vserver ${vs} -share-name <share> -share-properties continuously-available`,
+      `3. Check: vserver cifs share show -vserver ${vs} -share-name <share> -fields share-properties`,
+      `4. ${verify}`], ['Option A: Remove it except for Hyper-V and SQL over SMB shares (recommended).']);
+  return null;
+}
+
 function generateDynamicRemediationPlan(risk, sys) {
   const desc = (risk.description || "").toLowerCase();
   const cat  = risk.category || "General";
@@ -24972,6 +25288,9 @@ function generateDynamicRemediationPlan(risk, sys) {
     };
   }
 
+  // specific procedures for the findings that occur most often
+  const _playbook = _remedPlaybook(risk, sys);
+  if (_playbook) return _playbook;
 
   // ════════════════════════════════════════════════════════════════════════════
   // STORAGEGRID
@@ -32747,6 +33066,10 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   handoverBrief = _dfAppendCfg(handoverBrief, targetSystems, 'brief');
   riskRemediationBrief = _dfAppendCfg(riskRemediationBrief, targetSystems, 'full');
   securityBrief = _dfAppendCfg(securityBrief, targetSystems, 'full');
+  // the procedures for the findings on these systems, with the commands for each cluster
+  riskRemediationBrief = _dfAppendProcedures(riskRemediationBrief, targetSystems, 'full');
+  implementationPlans = _dfAppendProcedures(implementationPlans, targetSystems, 'full');
+  securityBrief = _dfAppendProcedures(securityBrief, targetSystems, 'sec');
   // what changed, and the 30 / 60 / 90 day better-unchanged-worse view, in the documents that report on a period
   problemStatements = _dfAppendProgress(problemStatements, targetSystems, 30);
   customerSuccessPlan = _dfAppendProgress(customerSuccessPlan, targetSystems, 30);
