@@ -45,6 +45,17 @@ class PlaybookTests(unittest.TestCase):
         self.assertNotIn('approval-group create', '\n'.join(old['steps']))
         self.assertIn('approval-group create', '\n'.join(new['steps']))
 
+    def test_security_advisory_gets_an_upgrade_procedure(self):
+        r = {'description': 'CVE-2099-0001 Example Vulnerability in NetApp Products', 'riskDetail': 'ONTAP 9 has been determined to have a version or configuration exposed to a vulnerability. Advisory ID: NTAP-20990101-0001.',
+             'recommendation': 'Upgrade to ONTAP 9.16.1P16 which includes the patch for this vulnerability.', 'advisoryUrl': 'https://security.netapp.com/advisory/ntap-20990101-0001/'}
+        out = run([{'risk': r, 'sys': sysr('9.15.1P17')}])[0]
+        text = ' '.join(out['steps'])
+        self.assertIn('cluster image update -version 9.16.1P16', text)
+        self.assertIn('different release line', text)
+        same = run([{'risk': r, 'sys': sysr('9.16.1P4')}])[0]
+        self.assertIn('same release line', ' '.join(same['steps']))
+        self.assertNotIn('undefined', json.dumps(out))
+
     def test_not_for_eseries_or_unknown_findings(self):
         self.assertIsNone(run([{'risk': {'description': 'Auto giveback is not enabled'}, 'sys': sysr(platform='2806')}])[0])
         self.assertIsNone(run([{'risk': {'description': 'Something nobody wrote a procedure for'}, 'sys': sysr()}])[0])
@@ -55,7 +66,11 @@ class PlaybookTests(unittest.TestCase):
                  'Enable ONTAP anti-ransomware', 'SMB Signing and Encryption not enabled', 'Vserver has multiple default gateways with the same metric', 'Vscan is not enabled.',
                  'Auto giveback is not enabled', 'NTP servers are not redundant', 'Vserver has a single DNS server configured', 'Intercluster peer remote ip address configuration',
                  'Platform AFF-A300 reached End-of-Availability (EOA) on 2021-05-01, with End-of-Support (EOS) on 2026-05-31', 'Detect expired certificates', 'Cluster Peering encryption not enabled',
-                 'Enable cluster switch log collection', 'Enable CIFS AES Kerberos Encryption due to MS deprecating RCN support']
+                 'Enable cluster switch log collection', 'Enable CIFS AES Kerberos Encryption due to MS deprecating RCN support',
+                 'Enable cold data monitoring for potential tiering recommendations', 'Enable tiering to reduce on-prem storage needs', 'Enable FlexCache to reduce the need for data replication',
+                 'DQP package downrev', 'Maximum limit reached for inflight operations', 'Do not leave the bootarg.login.allowdiag flag set in the environment.',
+                 'Snapshots are not enabled on all data volumes to aid in ransomware defense', 'Volume is hitting the default full threshold of 90%', 'Disk firmware is not on the latest revision',
+                 'SP/BMC is not running the latest firmware version', 'Shelf Modules with out-of-date firmware']
         outs = run([{'risk': {'description': d}, 'sys': sysr()} for d in descs])
         for d, o in zip(descs, outs):
             self.assertIsNotNone(o, d)

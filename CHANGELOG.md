@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.352 (2026-10-17)
+
+### Added
+- More procedures: security advisories and bugs that a newer ONTAP release fixes (the largest group, about 15,000 findings on a large fleet) now carry the full upgrade procedure for the cluster: read the fix, choose the target release (a patch on the same release line where one contains the fix, which is flagged when the advisory's target is on another line), check health, load the image, validate and estimate, rolling update, watch, confirm, with a MetroCluster variant. In the documents one cluster is in one upgrade group, for the highest release any of its advisories asks for, with the list of advisories that upgrade closes, so a cluster with forty advisories gets one procedure, not forty.
+- Also covered now: inactive data reporting and FabricPool tiering, FlexCache, FlexClone, the disk qualification package, NFS in-flight operation limits (the client addresses from the finding and the slot-table setting for Linux clients), inline efficiency on the named volumes, a second intercluster LIF, 64-bit NFSv3 identifiers for FlexGroup SVMs, the diagnostic-login boot argument, snapshots on every data volume, volumes near full, disk, service processor and shelf firmware, switch monitoring, and releases past end of engineering support.
+- End-of-availability and version-range advisory findings that the tool builds from its reference data now get the same procedure as the findings Active IQ reports (they did not before). Coverage on the large test fleet: 30,410 of 32,945 findings (92%) carry a procedure written for their own system, up from 9,866 (30%); the generic fallback is 846 findings (2.6%).
+- The per-system sections of the Change Tickets and Implementation Plans show a one-line upgrade for an advisory and point at the group procedure, so the documents do not repeat the upgrade steps for every advisory. The procedure sections list up to 30 procedures, then name the rest.
+
 ## 5.6.351 (2026-10-17)
 
 ### Added

@@ -1,8 +1,8 @@
 {
-  "version": "5.6.351",
+  "version": "5.6.352",
   "major": 5,
   "minor": 6,
-  "patch": 351,
+  "patch": 352,
   "date": "2026-10-17",
-  "notes": "A change ticket per procedure with risk, window, verification and rollback; procedures in the handover brief"
+  "notes": "Upgrade procedure per cluster and more finding types: 92% of findings carry a procedure for their own system"
 }

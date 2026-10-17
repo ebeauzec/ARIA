@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.351";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.352";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.352",
+    date: "2026-10-17",
+    title: "Procedures for the advisories fixed by an ONTAP upgrade and the next findings",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "More procedures: security advisories and bugs that a newer ONTAP release fixes (the largest group, about 15,000 findings on a large fleet) now carry the full upgrade procedure for the cluster: read the fix, choose the target release (a patch on the same release line where one contains the fix, which is flagged when the advisory's target is on another line), check health, load the image, validate and estimate, rolling update, watch, confirm, with a MetroCluster variant. In the documents one cluster is in one upgrade group, for the highest release any of its advisories asks for, with the list of advisories that upgrade closes, so a cluster with forty advisories gets one procedure, not forty.",
+          "Also covered now: inactive data reporting and FabricPool tiering, FlexCache, FlexClone, the disk qualification package, NFS in-flight operation limits (the client addresses from the finding and the slot-table setting for Linux clients), inline efficiency on the named volumes, a second intercluster LIF, 64-bit NFSv3 identifiers for FlexGroup SVMs, the diagnostic-login boot argument, snapshots on every data volume, volumes near full, disk, service processor and shelf firmware, switch monitoring, and releases past end of engineering support.",
+          "End-of-availability and version-range advisory findings that the tool builds from its reference data now get the same procedure as the findings Active IQ reports (they did not before). Coverage on the large test fleet: 30,410 of 32,945 findings (92%) carry a procedure written for their own system, up from 9,866 (30%); the generic fallback is 846 findings (2.6%).",
+          "The per-system sections of the Change Tickets and Implementation Plans show a one-line upgrade for an advisory and point at the group procedure, so the documents do not repeat the upgrade steps for every advisory. The procedure sections list up to 30 procedures, then name the rest.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.351",
     date: "2026-10-17",
@@ -23007,10 +23025,11 @@ function compileConfigReviewMd(systems, scopeTitle) {
 // Procedures for the findings on these systems: the playbook of each finding (see _remedPlaybook), shown once with the first cluster's own names, and a
 // table of every cluster it applies to with what the finding says about it (the SVM, policy or object), so the same steps can be run on each. kind: 'full'
 // (the steps of every procedure), 'sec' (only security procedures). A document with no matching finding is returned unchanged.
-const _PB_SECURITY = /multi-admin|fips|data-at-rest|export rule|anti-ransomware|smb signing|fpolicy|tamperproof|log forwarding|vscan|cluster peering encryption|certificate|aes kerberos|nse\)/i;
+const _PB_SECURITY = /ontap upgrade to|ontap upgrade for|multi-admin|fips|data-at-rest|export rule|anti-ransomware|smb signing|fpolicy|tamperproof|log forwarding|vscan|cluster peering encryption|certificate|aes kerberos|nse\)/i;
 // Change tickets for the procedures: one ticket per finding type, covering every cluster it applies to, with the pre-check, the change, the verification and
 // the rollback. Risk and window follow what the change does to running service; the rollback is specific where ONTAP has a way back and says so where it has not.
 const _PB_TICKET = [
+  { rx: /ontap upgrade/i, risk: 'Medium', win: 'Planned maintenance window; rolling upgrade, no outage for HA pairs', back: 'Going back to the previous release is possible only in the cases NetApp documents (system node revert-to, with Support) and is not offered for every pair of releases; so validate and estimate first, keep the previous image on the nodes (system node image show), and do not use features of the new release until the cluster is confirmed healthy.' },
   { rx: /multi-admin/i, risk: 'Low', win: 'Any; no outage', back: 'Disable with: security multi-admin-verify modify -enabled false (this itself needs approval once rules exist). Remove a rule with security multi-admin-verify rule delete.' },
   { rx: /fips/i, risk: 'Medium', win: 'Maintenance window; TLS listeners restart', back: 'security config modify -interface SSL -is-fips-enabled false' },
   { rx: /export rule/i, risk: 'Medium', win: 'Business hours with the application owner present; a wrong client list blocks access', back: 'Restore the clientmatch recorded in step 1: vserver export-policy rule modify -vserver <svm> -policyname <policy> -ruleindex <n> -clientmatch 0.0.0.0/0' },
@@ -23024,56 +23043,79 @@ const _PB_TICKET = [
   { rx: /default gateways/i, risk: 'Medium', win: 'Maintenance window; routing changes briefly', back: 'Recreate the removed route with its recorded gateway and metric: network route create -vserver <svm> -destination 0.0.0.0/0 -gateway <gw> -metric <m>' },
   { rx: /broadcast domain/i, risk: 'Medium', win: 'Maintenance window; ports change membership', back: 'Move the port back: network port broadcast-domain add-ports / remove-ports with the layout recorded in step 1.' }
 ];
+// A cluster is upgraded once, to the highest release any of its advisories asks for, so each cluster belongs to one upgrade group: the one for that release.
+function _pbVerKey(k) { const m = String(k).match(/(\d+)\.(\d+)\.(\d+)(?:P(\d+))?/); return m ? ((+m[1] * 1000 + +m[2]) * 1000 + +m[3]) * 1000 + (+m[4] || 0) : 0; }
+function _pbBestUpgrade(systems) {
+  const best = new Map();
+  (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
+    const k = r.hasPlaybook && r.remediationPlan && r.remediationPlan.groupKey;
+    if (!k || !/^ONTAP upgrade to /.test(k)) return;
+    const n = _unitOf(sys).name, cur = best.get(n);
+    if (!cur || _pbVerKey(k) > _pbVerKey(cur)) best.set(n, k);
+  }));
+  return best;
+}
+// the plan of one advisory, rewritten for the group: a single upgrade closes all of a cluster's advisories
+function _pbUpgradeText(plan) {
+  const st = (plan.fullSteps || plan.steps || []).slice();
+  if (st.length) st[0] = '1. Read the advisories this upgrade fixes (listed per cluster below; each is at https://security.netapp.com/advisory/): note the affected and fixed releases and any mitigation NetApp lists.';
+  return { ...plan, impact: 'The installed ONTAP release contains vulnerabilities and bugs that a newer release fixes; until the cluster is upgraded the advisories listed per cluster stay open.', fullSteps: st, steps: st };
+}
+function _pbSortGroups(a, b) { const ua = /^ONTAP upgrade/.test(a.key) ? 0 : 1, ub = /^ONTAP upgrade/.test(b.key) ? 0 : 1; return ua - ub || b.units.size - a.units.size || a.key.localeCompare(b.key); }
 function _dfAppendProcedureTickets(doc, systems) {
   if (typeof doc !== 'string') return doc;
-  const groups = new Map();
+  const groups = new Map(), best = _pbBestUpgrade(systems);
   (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
     if (!r.hasPlaybook || !r.remediationPlan) return;
-    const key = String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: r.remediationPlan, sev: r.severity };
-    const u = _unitOf(sys); if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || '') });
+    const u = _unitOf(sys), gk = r.remediationPlan.groupKey, up = /^ONTAP upgrade to /.test(gk || ''), eff = up ? (best.get(u.name) || gk) : gk;
+    const key = eff || String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: null, sev: r.severity };
+    if (!g.plan && (!up || gk === eff)) g.plan = r.remediationPlan;
+    if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || ''), refs: new Set() }); if (r.remediationPlan.advisoryRef) g.units.get(u.name).refs.add(r.remediationPlan.advisoryRef);
     groups.set(key, g);
   }));
-  const list = [...groups.values()].sort((a, b) => b.units.size - a.units.size || a.key.localeCompare(b.key));
+  const list = [...groups.values()].filter(g => g.plan).sort(_pbSortGroups);
   if (!list.length) return doc;
-  const RULE = '='.repeat(80), CAP = 15, shown = list.slice(0, CAP);
+  const RULE = '='.repeat(80), CAP = 30, shown = list.slice(0, CAP);
   let o = `\n${RULE}\nCHANGE TICKETS FOR THE PROCEDURES\n${RULE}\n${list.length} change${list.length !== 1 ? 's' : ''}, one per finding type, each covering every cluster it applies to. Take the cluster's configuration backup first (system configuration backup create -node <node> -backup-type cluster), check health before and after (cluster show ; storage failover show ; system health alert show), and follow the change control rules above.\n`;
   shown.forEach((g, i) => {
     const names = [...g.units.keys()], t = _PB_TICKET.find(x => x.rx.test(g.key)) || { risk: 'Low', win: 'Any; no outage expected', back: 'Record the current value with the show command in step 1; to roll back, set it back with the same modify command.' };
-    const steps = (g.plan.steps || []).filter(x => /^\d+\./.test(String(x)));
-    o += `\nCHG-P${String(i + 1).padStart(2, '0')}  ${g.key}\n  Clusters (${names.length}): ${names.slice(0, 10).join(', ')}${names.length > 10 ? ', ...' : ''}\n  Reason:   ${g.plan.cause}\n  Risk of the change: ${t.risk}.  Window: ${t.win}.\n  Pre-check: take the configuration backup and run the health commands above; step 1 records the current setting.\n  Change (commands written for ${names[0]}; repeat on each cluster with its own names):\n${steps.map(x => '    ' + x).join('\n')}\n  Verify:   the show command in the last step returns the new setting; the finding clears in Active IQ after the next AutoSupport.\n  Rollback: ${t.back}\n`;
-    if (names.length > 1) o += `  Per cluster:\n` + [...g.units.values()].slice(0, 8).map(u => `    ${u.name} (${u.customer || '-'}): ${String(u.detail).replace(/\s+/g, ' ').slice(0, 180)}`).join('\n') + (names.length > 8 ? `\n    ... and ${names.length - 8} more` : '') + '\n';
+    const gp = /^ONTAP upgrade/.test(g.key) ? _pbUpgradeText(g.plan) : g.plan, steps = (gp.fullSteps || gp.steps || []).filter(x => /^\d+\./.test(String(x)));
+    o += `\nCHG-P${String(i + 1).padStart(2, '0')}  ${g.key}\n  Clusters (${names.length}): ${names.slice(0, 10).join(', ')}${names.length > 10 ? ', ...' : ''}\n  Reason:   ${/^ONTAP upgrade/.test(g.key) ? 'The installed ONTAP release has security advisories and bugs that a newer release fixes (listed per cluster below).' : g.plan.cause}\n  Risk of the change: ${t.risk}.  Window: ${t.win}.\n  Pre-check: take the configuration backup and run the health commands above; step 1 records the current setting.\n  Change (commands written for ${names[0]}; repeat on each cluster with its own names):\n${steps.map(x => '    ' + x).join('\n')}\n  Verify:   the show command in the last step returns the new setting; the finding clears in Active IQ after the next AutoSupport.\n  Rollback: ${t.back}\n`;
+    if (names.length > 1) o += `  Per cluster:\n` + [...g.units.values()].slice(0, 8).map(u => `    ${u.name} (${u.customer || '-'}): ${u.refs.size ? u.refs.size + ' finding' + (u.refs.size !== 1 ? 's' : '') + ' fixed: ' + [...u.refs].slice(0, 4).join(', ') : String(u.detail).replace(/\s+/g, ' ').slice(0, 180)}`).join('\n') + (names.length > 8 ? `\n    ... and ${names.length - 8} more` : '') + '\n';
   });
   if (list.length > shown.length) o += `\n${list.length - shown.length} further finding types have a procedure; the complete procedures are in the Implementation Plans and the Risk & Remediation Brief.\n`;
   return doc.replace(/\s*$/, '\n') + o;
 }
 function _dfAppendProcedures(doc, systems, kind) {
   if (typeof doc !== 'string') return doc;
-  const groups = new Map();
+  const groups = new Map(), best = _pbBestUpgrade(systems);
   (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
     if (!r.hasPlaybook || !r.remediationPlan) return;
-    if (kind === 'sec' && !_PB_SECURITY.test(String(r.description || ''))) return;
-    const key = String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: null, sev: r.severity };
-    const u = _unitOf(sys); if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || ''), nodes: new Set() });
-    g.units.get(u.name).nodes.add(sys.systemName);
-    if (!g.plan || (g.units.size === 1)) g.plan = r.remediationPlan;
+    if (kind === 'sec' && !_PB_SECURITY.test(String(r.remediationPlan.groupKey || r.description || ''))) return;
+    const u = _unitOf(sys), gk = r.remediationPlan.groupKey, up = /^ONTAP upgrade to /.test(gk || ''), eff = up ? (best.get(u.name) || gk) : gk;
+    const key = eff || String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: null, sev: r.severity };
+    if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || ''), nodes: new Set(), refs: new Set() });
+    g.units.get(u.name).nodes.add(sys.systemName); if (r.remediationPlan.advisoryRef) g.units.get(u.name).refs.add(r.remediationPlan.advisoryRef);
+    if (!up || gk === eff) { if (!g.plan || g.units.size === 1) g.plan = r.remediationPlan; }
     groups.set(key, g);
   }));
-  const list = [...groups.values()].sort((a, b) => b.units.size - a.units.size || a.key.localeCompare(b.key));
+  const list = [...groups.values()].filter(g => g.plan).sort(_pbSortGroups);
   if (!list.length) return doc;
   const md = /\n#{1,3} /.test(doc), W = 78, cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
   const head = t => md ? `\n## ${t}\n\n` : `\n${'='.repeat(W)}\n${t.toUpperCase()}\n${'='.repeat(W)}\n`;
-  const CAP = 15, shown = list.slice(0, CAP), nUnits = new Set(list.flatMap(g => [...g.units.keys()])).size;
+  const CAP = 30, shown = list.slice(0, CAP), nUnits = new Set(list.flatMap(g => [...g.units.keys()])).size;
   let o = head(kind === 'sec' ? 'Hardening procedures for the findings on these systems' : 'Procedures for the findings on these systems');
   o += `${list.length} finding type${list.length !== 1 ? 's' : ''} on ${nUnits} system${nUnits !== 1 ? 's' : ''} have a documented procedure below, with commands written for the cluster, node and SVM the finding names. They follow NetApp's published procedures and best practice; run them under change control, one cluster at a time, and confirm each against the command reference for the release the cluster runs.\n`;
   shown.forEach(g => {
-    const names = [...g.units.keys()], pl = g.plan, first = names[0];
+    const names = [...g.units.keys()], first = names[0], pl = /^ONTAP upgrade/.test(g.key) ? _pbUpgradeText(g.plan) : g.plan;
     o += md ? `\n### ${g.key}\n\n` : `\n  ${g.key}\n`;
     o += `${md ? '**' : ''}Applies to${md ? '**' : ''}: ${names.length} cluster${names.length !== 1 ? 's' : ''} (${names.slice(0, 8).join(', ')}${names.length > 8 ? ', ...' : ''}). Commands below are written for ${first}.\n`;
-    o += `${md ? '**' : ''}Why it matters${md ? '**' : ''}: ${pl.impact}\n\n${md ? '**' : ''}Steps${md ? '**' : ''}\n` + (pl.steps || []).map(x => `${md ? '' : '  '}${x}`).join(md ? '\n\n' : '\n') + '\n';
+    o += `${md ? '**' : ''}Why it matters${md ? '**' : ''}: ${pl.impact}\n\n${md ? '**' : ''}Steps${md ? '**' : ''}\n` + (pl.fullSteps || pl.steps || []).map(x => `${md ? '' : '  '}${x}`).join(md ? '\n\n' : '\n') + '\n';
     if (names.length > 1) {
       const rows = [...g.units.values()].slice(0, 12);
-      o += md ? `\n| Cluster | Customer | Nodes | What the finding says |\n|---|---|---|---|\n` + rows.map(u => `| ${cell(u.name)} | ${cell(u.customer)} | ${u.nodes.size} | ${cell(u.detail).slice(0, 200)} |`).join('\n') + '\n'
-        : `\n  Cluster / customer / nodes / what the finding says\n` + rows.map(u => `    ${u.name} / ${u.customer || '-'} / ${u.nodes.size} / ${cell(u.detail).slice(0, 200)}`).join('\n') + '\n';
+      const say = u => u.refs.size ? `${u.refs.size} finding${u.refs.size !== 1 ? 's' : ''} fixed by this release: ${[...u.refs].slice(0, 4).join(', ')}${u.refs.size > 4 ? ', ...' : ''}` : cell(u.detail).slice(0, 200);
+      o += md ? `\n| Cluster | Customer | Nodes | What the finding says |\n|---|---|---|---|\n` + rows.map(u => `| ${cell(u.name)} | ${cell(u.customer)} | ${u.nodes.size} | ${say(u)} |`).join('\n') + '\n'
+        : `\n  Cluster / customer / nodes / what the finding says\n` + rows.map(u => `    ${u.name} / ${u.customer || '-'} / ${u.nodes.size} / ${say(u)}`).join('\n') + '\n';
       if (names.length > rows.length) o += `... and ${names.length - rows.length} more cluster${names.length - rows.length !== 1 ? 's' : ''}; each is listed in the Risk & Remediation Brief.\n`;
     }
   });
@@ -24053,16 +24095,6 @@ function enrichSystemTelemetry(s) {
     if (!normRisk.remediationPlan) {
       normRisk.remediationPlan = generateDynamicRemediationPlan(normRisk, { clusterName: cluster });
     }
-    // a specific procedure for this finding on this system (its cluster, node, SVM and version) leads; Active IQ's own guidance links follow it
-    try {
-      const _pb = _remedPlaybook(normRisk, Object.assign({}, s, { ontapVersion: osVer || s.ontapVersion, clusterName: s.clusterName || cluster }));
-      if (_pb) {
-        const _links = ((normRisk.remediationPlan && normRisk.remediationPlan.steps) || []).filter(x => /https?:\/\//.test(String(x)) && !_pb.steps.some(y => String(y).includes(String(x).replace(/^\d+\.\s*/, '').split(' — ').pop())));
-        normRisk.remediationPlan = { ...(normRisk.remediationPlan || {}), cause: _pb.cause, impact: _pb.impact, options: _pb.options, thirdParty: _pb.thirdParty || (normRisk.remediationPlan && normRisk.remediationPlan.thirdParty) || '',
-          steps: _pb.steps.concat(_links.length ? ['Active IQ guidance for this finding:'].concat(_links) : []) };
-        normRisk.hasPlaybook = true;
-      }
-    } catch (e) { /* the general plan stays */ }
 
     // ── Clean up generic "See Security Advisory" recommendation text ───────────
     const recIsGeneric = (normRisk.recommendation || '').match(/See (?:the )?Security Advisory/i);
@@ -24084,6 +24116,9 @@ function enrichSystemTelemetry(s) {
       }
       // advisoryUrl is now always set for CVEs — no need to append it as text
     }
+
+    // a specific procedure for this finding on this system (its cluster, node, SVM and version) leads; Active IQ's own guidance links follow it
+    _applyRemedPlaybook(normRisk, Object.assign({}, s, { ontapVersion: osVer || s.ontapVersion, clusterName: s.clusterName || cluster }));
 
     return normRisk;
   });
@@ -24714,6 +24749,9 @@ function enrichSystemTelemetry(s) {
     : (contracts ? contracts.daysRemaining > 0 && contracts.status !== 'expired' : false);
 
   // ── Feature flags: tri-state (true = confirmed on, false = confirmed off, null = unknown) ──
+  // findings built above from reference data (end of availability, version-range advisories) get their procedure too
+  risks.forEach(r => { if (!r.hasPlaybook) _applyRemedPlaybook(r, Object.assign({}, s, { ontapVersion: osVer || s.ontapVersion, clusterName: s.clusterName || cluster })); });
+
   // The Active IQ GraphQL API exposes isARPEnabled via the ONTAPSystem fragment.
   // null = "not reported by API" — displayed as '—' in the UI, not counted as disabled.
   const _isARPEnabled = s.isARPEnabled != null ? s.isARPEnabled : null;
@@ -25039,9 +25077,21 @@ function _rvCtx(risk, sys) {
   return { cluster, node: (sys && sys.systemName) || '<node>', ver: (sys && sys.ontapVersion) || '', model: (sys && sys.platform) || '',
     svm: pick(/\b(?:SVM|Vserver|vserver)\s+([A-Za-z0-9_.-]+)/) || '<svm>', policy: pick(/Export Policy\s+([A-Za-z0-9_.-]+)/i) || '<policy>' };
 }
+// Put the playbook of a finding on the finding's remediation plan: the procedure leads, Active IQ's own guidance links follow it.
+function _applyRemedPlaybook(risk, sysLike) {
+  try {
+    const pb = _remedPlaybook(risk, sysLike);
+    if (!pb) return false;
+    const links = ((risk.remediationPlan && risk.remediationPlan.steps) || []).filter(x => /https?:\/\//.test(String(x)) && !pb.steps.some(y => String(y).includes(String(x).replace(/^\d+\.\s*/, '').split(' — ').pop())));
+    risk.remediationPlan = { ...(risk.remediationPlan || {}), cause: pb.cause, impact: pb.impact, options: pb.options, thirdParty: pb.thirdParty || (risk.remediationPlan && risk.remediationPlan.thirdParty) || '', groupKey: pb.groupKey || '', advisoryRef: pb.advisoryRef || '',
+      steps: (pb.compact || pb.steps).concat(links.length ? ['Active IQ guidance for this finding:'].concat(links) : []), fullSteps: pb.compact ? pb.steps : null };
+    risk.hasPlaybook = true;
+    return true;
+  } catch (e) { return false; /* the general plan stays */ }
+}
 function _remedPlaybook(risk, sys) {
   if (!risk || !sys || (typeof _platformFamily === 'function' && _platformFamily(sys) !== 'ontap')) return null;
-  const t = String(risk.description || risk.title || ''), c = _rvCtx(risk, sys), vs = c.svm, ref = risk.advisoryUrl ? `Reference: ${risk.advisoryUrl}` : '';
+  const t = String(risk.description || risk.title || ''), td = t + ' ' + String(risk.riskDetail || ''), c = _rvCtx(risk, sys), vs = c.svm, ref = risk.advisoryUrl ? `Reference: ${risk.advisoryUrl}` : '';
   const out = (cause, impact, steps, options, thirdParty) => ({ cause, impact, steps: steps.concat([`Syntax is from the ONTAP 9 command reference; confirm option names for ${c.ver || 'this release'} with the command's help (<command> ?) before running, and run changes under change control.`]).concat(ref ? [ref] : []), options, thirdParty: thirdParty || '' });
   const verify = 'Confirm the finding clears in Active IQ after the next AutoSupport (within about a day).';
   if (/multi-admin verification not enabled/i.test(t)) {
@@ -25119,7 +25169,7 @@ function _remedPlaybook(risk, sys) {
       `4. Check: security anti-ransomware volume show -vserver ${vs} ; and add an alert path: event notification destination show`,
       `5. ${verify}`], ['Option A: Learn for 30 days, then enable active mode (recommended).', 'Option B: Enable active mode at once on volumes with stable, well-known workloads.']);
   }
-  if (/smb signing and encryption not enabled/i.test(t))
+  if (/smb signing and encryption not enabled|smb signing is disabled/i.test(td))
     return out(`SMB signing and encryption are not required on SVM ${vs}.`, 'SMB traffic can be tampered with or read in transit (relay and man-in-the-middle attacks).', [
       `1. Check clients: Windows 7/2008 R2 and older, and some appliances, cannot sign with SMB 3 encryption. Inventory with: vserver cifs session show -vserver ${vs} -fields protocol-version,windows-user,address`,
       `2. Require signing: vserver cifs security modify -vserver ${vs} -is-signing-required true`,
@@ -25224,7 +25274,7 @@ function _remedPlaybook(risk, sys) {
       `2. Use an account with the admin role for discovery, or a read-only account for monitoring only: security login create -vserver ${c.cluster} -user-or-group-name bluexp-ro -application http -authentication-method password -role readonly`,
       `3. Install a BlueXP Connector in the network that can reach the cluster management LIF (HTTPS 443).`,
       `4. ${verify}`], ['Option A: Discover with a read-only account (recommended).']);
-  if (/enable cluster switch log collection/i.test(t))
+  if (/enable cluster switch log collection|switch is not setup for periodic data collection/i.test(t))
     return out('Log collection from the cluster switches is off.', 'Switch problems (CRC errors, link flaps, firmware faults) are not reported to NetApp and are harder to diagnose.', [
       `1. List the switches ONTAP monitors: system switch ethernet show`,
       `2. For each, set the collection password: system switch ethernet log setup-password -switch-name <switch>  (a switch user with the required rights).`,
@@ -25273,6 +25323,149 @@ function _remedPlaybook(risk, sys) {
       `2. For shares that do not host Hyper-V or SQL Server workloads: vserver cifs share properties remove -vserver ${vs} -share-name <share> -share-properties continuously-available`,
       `3. Check: vserver cifs share show -vserver ${vs} -share-name <share> -fields share-properties`,
       `4. ${verify}`], ['Option A: Remove it except for Hyper-V and SQL over SMB shares (recommended).']);
+  // ── a security advisory, or a bug, that a newer ONTAP release fixes ──
+  if (/cve-\d{4}-\d+|vulnerabilit|advisory id: ntap|ntap-\d{8}-\d{4}|susceptible to bug|\bCONTAP-\d+|passed the end of engineering/i.test(td)) {
+    const rec = String(risk.recommendation || ''), tgt = (rec.match(/(?:upgrade to|ontap)\s+(?:ONTAP\s+)?(9\.\d+\.\d+(?:P\d+)?)/i) || [])[1] || (String(sys.recommendedOSVersion || '').match(/9\.\d+\.\d+(?:P\d+)?/) || [])[0] || '', tgt2 = (rec.match(/or\s+(9\.\d+\.\d+(?:P\d+)?)\+?/i) || [])[1] || '';
+    const adv = (td.match(/NTAP-\d{8}-\d{4}/i) || [])[0] || '', cve = (td.match(/CVE-\d{4}-\d+/i) || [])[0] || '', bug = (td.match(/\bCONTAP-\d+/i) || [])[0] || '';
+    const cur = c.ver, curLine = (cur.match(/^(9\.\d+\.\d+)/) || [])[1] || '', tLine = (tgt.match(/^(9\.\d+\.\d+)/) || [])[1] || '';
+    const sameLine = curLine && tLine && curLine === tLine, mc = !!(sys.isMetroCluster || /metrocluster/i.test(String(sys.platformType || '') + ' ' + td));
+    const what = bug ? `bug ${bug}` : (cve || adv || (/end of engineering/i.test(td) ? 'the end of engineering support of this release' : 'the advisory'));
+    const steps = [
+      `1. Read the fix details: ${risk.advisoryUrl || (adv ? `https://security.netapp.com/advisory/${adv.toLowerCase()}/` : 'the advisory linked below')}. Note the affected and fixed releases and any mitigation NetApp lists for ${what}.`,
+      tgt ? `2. Target release: ${tgt}${tgt2 ? ` (or ${tgt2} or later on its line)` : ''}. ${c.cluster} runs ${cur || 'an unknown release'}.${sameLine ? ' This is a patch on the same release line, which is the smallest change.' : curLine && tLine ? ` That is a different release line from ${curLine}: if a patch of ${curLine} that contains the fix exists (the advisory's fixed-versions table lists them), prefer it and stay on your line; otherwise follow the upgrade path Upgrade Advisor gives (some moves need intermediate releases).` : ''}` : `2. Target release: the first release that fixes ${what}; the advisory or bug page below lists it. Prefer a patch on the release line ${c.cluster} runs (${cur || 'unknown'}).`,
+      `3. Plan it in Active IQ Digital Advisor: Upgrade Advisor creates the plan and lists what to resolve for ${c.cluster}${c.node ? ` (${c.node} and its partner)` : ''}.`,
+      `4. Check health first: cluster show ; storage failover show ; system health status show ; network interface show -is-home false ; snapmirror show -status Transferring ; volume move show ; system node image show`,
+      `5. Load the image on ${c.cluster}: cluster image package get -url http://<web-server>/<ontap-image>.tgz ; cluster image package show-repository`,
+      `6. Validate and estimate: cluster image validate -version ${tgt || '<target>'} ; cluster image update -version ${tgt || '<target>'} -estimate-only true ; resolve every error it reports.`,
+      mc ? `7. This is a MetroCluster: follow NetApp's MetroCluster upgrade procedure (check with metrocluster check run and metrocluster check show before and after; do not start while a switchover is in effect).` : `7. Update (rolling, one HA partner at a time, no outage for HA pairs): cluster image update -version ${tgt || '<target>'}`,
+      `8. Watch it: cluster image show-update-progress ; cluster image show-update-log`,
+      `9. Confirm: cluster image show (every node on ${tgt || 'the target'}) ; storage failover show ; network interface revert -vserver * -lif * ; system health status show ; event log show -severity error`,
+      `10. ${verify}`];
+    const o = out(`${what} affects the ONTAP release installed on ${c.cluster} (${cur || 'release not reported'}); the fix is in a newer release.`, risk.recommendation || 'See the advisory for the impact.', steps,
+      [`Option A: Upgrade to ${tgt || 'the fixed release'} in a planned window (recommended).`, 'Option B: If an upgrade cannot happen soon, apply the mitigation in the advisory (restrict access to the affected service on the management network) and record a time-limited exception.'],
+      'Check the NetApp Interoperability Matrix for host, backup and hypervisor integrations on the target release before the window.');
+    o.compact = [`1. Upgrade ${c.cluster} to ${tgt || 'the release that contains the fix'}${sameLine ? ' (a patch on the release line it runs)' : ''}: cluster image validate -version ${tgt || '<target>'} ; cluster image update -version ${tgt || '<target>'}. One upgrade fixes every finding in the group "${tgt ? `ONTAP upgrade to ${tgt}` : 'ONTAP upgrade'}"; the full procedure is in the Implementation Plans.`];
+    o.groupKey = tgt ? `ONTAP upgrade to ${tgt} (fixes ${bug ? 'a bug' : 'security advisories'})` : `ONTAP upgrade for ${bug}`;
+    o.advisoryRef = cve || adv || bug;
+    return o;
+  }
+  if (/enable cold data monitoring|inactive data reporting/i.test(t)) {
+    const aggr = (td.match(/aggregate\s+([A-Za-z0-9_.-]+)/i) || [])[1] || '<aggregate>';
+    return out(`Inactive data reporting is off for aggregate ${aggr}.`, 'The system cannot show how much data is cold, so the saving from tiering (FabricPool) cannot be sized.', [
+      `1. Check: storage aggregate show -aggregate ${aggr} -fields is-inactive-data-reporting-enabled`,
+      `2. Enable it (no outage, small background cost): storage aggregate modify -aggregate ${aggr} -is-inactive-data-reporting-enabled true`,
+      `3. Wait about 31 days for the first full picture, then read it per volume: volume show -vserver <svm> -volume <volume> -fields performance-tier-inactive-user-data,performance-tier-inactive-user-data-percent`,
+      `4. Use the numbers to decide which volumes to tier (see the tiering procedure).`], ['Option A: Enable on all SSD aggregates (recommended).']);
+  }
+  if (/enable tiering to reduce on-prem storage|not using the fabricpool feature/i.test(td))
+    return out(`${c.cluster} does not tier cold data to object storage.`, 'Premium flash holds data nobody reads, which costs space, power and a refresh earlier than necessary.', [
+      `1. Size it first: enable inactive data reporting (storage aggregate modify -aggregate <aggr> -is-inactive-data-reporting-enabled true) and read the cold share per volume after 31 days.`,
+      `2. Add the object store (StorageGRID, S3 or a cloud): storage aggregate object-store config create -object-store-name tier1 -provider-type <StorageGRID|AWS_S3|Azure_Cloud|GoogleCloud> -server <endpoint> -container-name <bucket> -access-key <key> -secret-password <secret> -ssl-enabled true -is-certificate-validation-enabled true`,
+      `3. Attach it to the aggregate: storage aggregate object-store attach -aggregate <aggr> -object-store-name tier1  (an attach is permanent for the aggregate).`,
+      `4. Tier chosen volumes: volume modify -vserver <svm> -volume <volume> -tiering-policy auto -tiering-minimum-cooling-days 31  (snapshot-only for backup data).`,
+      `5. Check: storage aggregate object-store show-space ; volume show -fields tiering-policy,performance-tier-inactive-user-data`], ['Option A: StorageGRID as the tier (recommended where available).', 'Option B: Public cloud object storage.'], 'Network: the cluster intercluster LIFs must reach the object store; plan bandwidth for the first tier-out.');
+  if (/enable flexcache to reduce/i.test(t))
+    return out('FlexCache is not used for data that is read from many places.', 'Remote sites and busy clients read the same data over the WAN or from one overloaded volume.', [
+      `1. Pick the volume that is read widely and rarely changed (software distribution, reference data, home directories read from several sites).`,
+      `2. If the cache is on another cluster, peer first: cluster peer create -peer-addrs <ic-lif-ips> ; vserver peer create -vserver ${vs} -peer-vserver <origin-svm> -peer-cluster <origin-cluster> -applications flexcache`,
+      `3. Create the cache: volume flexcache create -vserver ${vs} -volume <cache-volume> -aggr-list <aggr> -size <size> -origin-vserver <origin-svm> -origin-volume <origin-volume> -junction-path /<path>`,
+      `4. Check: volume flexcache show ; volume flexcache origin show-caches -vserver <origin-svm> -origin-volume <origin-volume>`,
+      `5. Point the clients at the cache path and compare latency before and after.`], ['Option A: A cache per remote site for read-mostly data (recommended).', 'Option B: Leave it; this is an optimisation, not a defect.'], 'FlexCache is an opportunity, not a fault; apply it where a measurable read problem exists.');
+  if (/flexclone license installed but never used|instantly replicate data files, luns/i.test(td))
+    return out('The FlexClone license is installed and no clone has been made.', 'Test and development copies take full space and time when a clone would take almost none.', [
+      `1. Confirm the license: system license show -package FlexClone`,
+      `2. Make a writable copy of a volume from a snapshot: volume clone create -vserver ${vs} -flexclone <clone-name> -parent-volume <volume> -parent-snapshot <snapshot> -junction-path /<clone-name>`,
+      `3. Check: volume clone show ; volume show -vserver ${vs} -volume <clone-name> -fields size,used`,
+      `4. Split it from its parent only when it must outlive it: volume clone split start -vserver ${vs} -flexclone <clone-name>`], ['Option A: Use clones for test, development and recovery testing (recommended).', 'Option B: Ignore; informational.'], 'An optimisation: the finding is information that a licensed feature is unused.');
+  if (/dqp package downrev/i.test(t))
+    return out('The Disk Qualification Package (DQP) on the cluster is older than NetApp\'s current one.', 'New drive models or firmware are not recognised correctly, and drive handling can be wrong.', [
+      `1. Download the current DQP zip from the NetApp Support Site (Downloads > Firmware > Disk Qualification Package) and put it on a web server the cluster can reach.`,
+      `2. Install it on every node: storage firmware download -node * -package-url http://<web-server>/<qual_devices_v3>.zip`,
+      `3. Check the drives are still recognised: storage disk show -broken ; storage disk show -fields firmware-revision,model`,
+      `4. ${verify}`], ['Option A: Install the current package (recommended, non-disruptive).'], 'Do not install a DQP built for a different ONTAP family than the cluster runs.');
+  if (/maximum limit reached for inflight operations/i.test(t)) {
+    const clients = (td.match(/clients\s+([\d., a-z]+?)(?:\.\.\.|\s+and\b|\s+are\b)/i) || [])[1] || '';
+    return out('NFS clients are sending more operations at once than ONTAP allows per connection.', 'ONTAP throttles the requests, so applications see latency spikes.', [
+      `1. Clients named by the finding: ${clients ? clients.trim() : 'see the finding detail'}.`,
+      `2. On each Linux client, cap the RPC slot table at the NetApp-recommended value: echo "options sunrpc tcp_max_slot_table_entries=128" > /etc/modprobe.d/sunrpc.conf  (and the same for tcp_slot_table_entries), then unmount, reload the sunrpc module or reboot the client, and remount.`,
+      `3. Check on the cluster that the over-limit event stops: event log show -message-name nblade.execsOverLimit`,
+      `4. If many clients are affected, check the workload: statistics show -object nfsv3 -counter nfsv3_ops ; statistics top client show -sort-key total_ops`,
+      `5. ${verify}`], ['Option A: Limit slot entries on the named clients (recommended).', 'Option B: Spread the clients across more LIFs and nodes.']);
+  }
+  if (/inline efficiency features are not enabled on non-root volumes/i.test(t)) {
+    const vols = (td.match(/volumes?:\s*(.+?)(?:\.\s|$)/i) || [])[1] || '';
+    const first = (vols.split(/[,\s]+/).filter(Boolean)[0] || ':').split(':'), sv = first[0] || vs, vo = first[1] || '<volume>';
+    return out(`Inline efficiency is off on volumes of ${c.cluster}${vols ? ` (${vols})` : ''}.`, 'Savings are lost on new writes and have to be recovered later by background jobs.', [
+      `1. Check: volume efficiency show -vserver ${sv} -volume ${vo} -fields inline-dedupe,inline-compression,data-compaction`,
+      `2. Enable: volume efficiency modify -vserver ${sv} -volume ${vo} -inline-dedupe true -inline-compression true -data-compaction true`,
+      `3. Repeat for the other volumes the finding lists.`, `4. ${verify}`], ['Option A: Enable all three (recommended on all-flash).']);
+  }
+  if (/two intercluster lifs on two ports|intercluster lifs on two ports or one ifgrp/i.test(t))
+    return out(`${c.node} has one intercluster LIF; best practice is two per node.`, 'If that LIF or its port fails, replication from the node stops.', [
+      `1. Check: network interface show -service-policy default-intercluster -fields address,home-node,home-port`,
+      `2. Add a second LIF on a different port of ${c.node}: network interface create -vserver ${c.cluster} -lif ${c.node}_ic2 -service-policy default-intercluster -home-node ${c.node} -home-port <port> -address <ip> -netmask <mask>`,
+      `3. Check the peer sees both: cluster peer show -fields peer-addresses ; network ping -lif ${c.node}_ic2 -vserver ${c.cluster} -destination <remote-ic-ip>`,
+      `4. ${verify}`], ['Option A: Two intercluster LIFs per node on separate ports or an ifgrp (recommended).']);
+  if (/v3-64bit-identifiers|64-bit nfs v3 identifier|bit nfs v3 identifier for hosting flexgroup/i.test(td)) {
+    const svms = (td.match(/Virtual Machines?\s+([A-Za-z0-9_., -]+?)(?:,\s*\.\.\.|\s+that\b|\s+and\b)/i) || [])[1] || vs;
+    return out(`SVMs that host FlexGroups (${svms.trim()}) use 32-bit NFSv3 file IDs.`, 'A FlexGroup with 32-bit identifiers is limited to about 2 billion files.', [
+      `1. Plan a window: changing it makes every NFSv3 client see new file IDs, so all clients must unmount and remount to avoid stale file handles.`,
+      `2. Check (some releases need advanced privilege first: set -privilege advanced): vserver nfs show -vserver ${svms.split(/[,\s]+/)[0] || vs} -fields v3-64bit-identifiers`,
+      `3. Change: vserver nfs modify -vserver ${svms.split(/[,\s]+/)[0] || vs} -v3-64bit-identifiers enabled`,
+      `4. Remount on every client, then check access. Repeat for each SVM listed. Return to admin: set -privilege admin`,
+      `5. ${verify}`], ['Option A: Enable in a planned window with all clients remounted (recommended).', 'Option B: Leave it if no FlexGroup will approach 2 billion files.']);
+  }
+  if (/cluster switch monitoring is not enabled due to switch ip address not reachable/i.test(t))
+    return out('ONTAP cannot reach the management address of a cluster switch it should monitor.', 'Switch health is not monitored, so a failing switch port or fan raises no alert.', [
+      `1. See what ONTAP has: system switch ethernet show -fields address,is-monitoring-enabled-operational,reason`,
+      `2. Check the switch management address is reachable from ${c.cluster}'s node management network and that SNMP or the monitoring user is configured on the switch.`,
+      `3. Correct the address if it changed: system switch ethernet modify -device <switch> -address <ip>`,
+      `4. Check: system switch ethernet show -fields is-monitoring-enabled-operational ; system health alert show`,
+      `5. ${verify}`], ['Option A: Fix the address and credentials (recommended).']);
+  if (/do not leave the bootarg\.login\.allowdiag flag set/i.test(t))
+    return out(`The diagnostic login boot argument is set on ${c.node}.`, 'It allows diagnostic-level login with a weaker check, which should only be on while Support is working on the system.', [
+      `1. Do one node at a time, with its partner serving data. Check the pair: storage failover show -fields possible,state-description`,
+      `2. Take the node over: storage failover takeover -ofnode ${c.node}`,
+      `3. At its LOADER prompt: printenv bootarg.login.allowdiag ; unsetenv bootarg.login.allowdiag ; saveenv ; boot_ontap`,
+      `4. When the node is waiting for giveback: storage failover giveback -ofnode ${c.node}`,
+      `5. Repeat for the partner, then check: storage failover show ; system node show -fields health`,
+      `6. ${verify}`], ['Option A: Clear it in a maintenance window, one node at a time (recommended).']);
+  if (/snapshots are not enabled on all data volumes/i.test(t))
+    return out('Some data volumes have no snapshot policy.', 'Without snapshots there is nothing quick to restore from after ransomware or deletion.', [
+      `1. List the volumes: volume show -vserver ${vs} -fields snapshot-policy,type ; volume show -snapshot-policy none -type RW -fields vserver,volume`,
+      `2. Use a policy with enough copies (hourly, daily, weekly): volume snapshot policy show -fields schedule1,count1,schedule2,count2`,
+      `3. Apply it: volume modify -vserver ${vs} -volume <volume> -snapshot-policy default  (or your own policy)`,
+      `4. Reserve space only if needed: volume modify -vserver ${vs} -volume <volume> -percent-snapshot-space 5`,
+      `5. ${verify}`], ['Option A: A policy on every data volume (recommended).', 'Option B: Replicate to a vault (SnapMirror) for volumes where local snapshots are not wanted.']);
+  if (/volume is hitting the default (?:near )?full threshold|flexgroup volume constituent is over/i.test(t))
+    return out('A volume is close to full.', 'At 100% the volume stops accepting writes; clients see "no space" errors.', [
+      `1. See the volume: volume show -vserver ${vs} -fields size,used,percent-used,autosize-mode,snapshot-reserve-available`,
+      `2. Let it grow by itself: volume autosize -vserver ${vs} -volume <volume> -mode grow -maximum-size <size> -grow-threshold-percent 85`,
+      `3. Or grow it now: volume modify -vserver ${vs} -volume <volume> -size +<amount>  (check the aggregate has room: storage aggregate show -fields availsize)`,
+      `4. Free space: snapshots first, volume snapshot show -vserver ${vs} -volume <volume> -fields size ; volume snapshot delete ... (only if retention allows), and set volume snapshot autodelete modify -vserver ${vs} -volume <volume> -enabled true -trigger volume`,
+      `5. For a FlexGroup, a constituent filling means imbalance: volume show -vserver ${vs} -is-constituent true -fields used ; consider volume rebalance (9.12.1 and later) before growing.`,
+      `6. ${verify}`], ['Option A: Autosize with a maximum, plus an alert at 85% (recommended).', 'Option B: Move the volume to an aggregate with more room: volume move start.']);
+  if (/disk firmware is not on the latest revision/i.test(t))
+    return out('Some drives run older firmware than NetApp currently ships.', 'Older firmware can carry known drive faults fixed in later revisions.', [
+      `1. See what is behind: storage disk show -fields model,firmware-revision -container-type spare,aggregate ; storage disk option show -fields bkg-firmware-update`,
+      `2. Download the current disk firmware package from the NetApp Support Site (Downloads > Firmware > Disk Drive Firmware) and put it on a web server.`,
+      `3. Load it on every node: storage firmware download -node * -package-url http://<web-server>/<disk-firmware>.zip`,
+      `4. The drives update in the background when bkg-firmware-update is true. Watch: storage disk show -fields firmware-revision ; event log show -message-name disk.fw*`,
+      `5. ${verify}`], ['Option A: Update during low load (background update, non-disruptive).']);
+  if (/sp\/bmc is not running the latest firmware/i.test(t))
+    return out(`The service processor (SP/BMC) of ${c.node} is not on the latest firmware.`, 'Out-of-band management and hardware monitoring run with older, possibly vulnerable code.', [
+      `1. See it: system service-processor show -node ${c.node} -fields firmware-version,status ; system service-processor image show -node ${c.node}`,
+      `2. Let ONTAP update it automatically on the next software install: system service-processor image modify -node * -autoupdate true`,
+      `3. Or update now with the package from the NetApp Support Site: system service-processor image update -node ${c.node} -package <file> -update-type full`,
+      `4. Check: system service-processor show -node ${c.node} -fields firmware-version ; system service-processor image show`,
+      `5. ${verify}`], ['Option A: Turn on auto-update (recommended).']);
+  if (/shelf modules with out-of-date firmware/i.test(t))
+    return out('Shelf module firmware is behind the current package.', 'Known shelf module faults fixed in later firmware stay open.', [
+      `1. See it: storage shelf show -fields shelf-name,module-type,firmware-version ; storage shelf firmware show`,
+      `2. Download the shelf firmware package (NetApp Support Site > Firmware > Disk Shelf Firmware) and load it: storage firmware download -node * -package-url http://<web-server>/<shelf-firmware>.zip`,
+      `3. Update: storage shelf firmware update -shelf-name <shelf>  (NS224 and SAS modules update one at a time, non-disruptively with multipath cabling).`,
+      `4. Check: storage shelf firmware show`,
+      `5. ${verify}`], ['Option A: Update in a quiet period, one shelf at a time (recommended).']);
   return null;
 }
 
