@@ -1685,13 +1685,35 @@ def _get_fleet_trend(db, days=90, customer_name=None, serials=None):
             rec = json.loads(snap_json)
         except Exception:
             continue
-        d = by_date.setdefault(date_str, {"date": date_str, "critical": 0, "high": 0, "openCriticalCases": 0, "systemCount": 0})
+        d = by_date.setdefault(date_str, {"date": date_str, "critical": 0, "high": 0, "medium": 0, "low": 0, "openCriticalCases": 0, "systemCount": 0,
+                                          "arpEnabled": 0, "arpDisabled": 0, "contractsLapsed": 0, "_effSum": 0.0, "_effN": 0})
         rc = rec.get("riskCounts") or {}
         d["critical"] += int(rc.get("critical") or 0)
         d["high"] += int(rc.get("high") or 0)
+        d["medium"] += int(rc.get("medium") or 0)
+        d["low"] += int(rc.get("low") or 0)
         d["openCriticalCases"] += int(rec.get("openCriticalCases") or 0)
         d["systemCount"] += 1
-    return sorted(by_date.values(), key=lambda x: x["date"])
+        # measures the snapshots already hold, so the history is complete from the first snapshot
+        if rec.get("isARPEnabled") is True:
+            d["arpEnabled"] += 1
+        elif rec.get("isARPEnabled") is False:
+            d["arpDisabled"] += 1
+        end = str(rec.get("contractEndDate") or "")[:10]
+        if rec.get("contractActive") is False or (end and end < date_str):
+            d["contractsLapsed"] += 1
+        try:
+            eff = float(rec.get("efficiencyRatio"))
+            if eff > 0:
+                d["_effSum"] += eff
+                d["_effN"] += 1
+        except (TypeError, ValueError):
+            pass
+    out = sorted(by_date.values(), key=lambda x: x["date"])
+    for d in out:
+        n = d.pop("_effN")
+        d["avgEfficiency"] = round(d.pop("_effSum") / n, 2) if n else None
+    return out
 
 
 def _changes_between(db, days=30, customer_name=None, serials=None):

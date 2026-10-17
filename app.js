@@ -45,9 +45,29 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.343";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.344";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.344",
+    date: "2026-10-17",
+    title: "Full sweep: Word tables, cross-references for long lists, What changed and Better/Unchanged/Worse in the documents",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Full sweep of the Action Planner and the deliverables: the 28 documents of a 245-system customer were generated and checked for which topics each carries, for raw Markdown or code leaking into the Word text, and (with tools/audit_deliverables.py, 38 scopes) for placeholders, invented figures and other customers' names.",
+          "Word: a Markdown table inside a plain-text document (the hardening scorecard, known-exploited-vulnerability and configuration tables appended to the Security Posture Brief and the MSP Service Report) was printed as literal pipes and dashes; it is now a table. After the fix no document leaks Markdown, code fences or placeholder values into the Word text.",
+          "When a topic is too long to list in a document but is covered in another, the document now says so and names the document that has the complete list. A new section 'Related Findings, and Where the Complete List Is' (a table in Markdown documents, lines in plain text) lists, for the scope, known exploited vulnerabilities, hardening gaps, configuration findings, unowned drives, SnapMirror findings, switches needing attention, risks first raised in the last 30 days and hardware end of support, each with its count and where the full list is; a topic the document already has a section for is left out. It is in the Executive Risk Assessment, Solution Proposals, TAM Success Plan, QBR Pack, MSP report, Handover Brief, Risk & Remediation Brief, Security Posture Brief, Customer Health report, and the Technical Risks and Security Advisories sections. Lists that were cut (the system ranking, StorageGRID nodes and tenants, platform insights, switches, upgrade order, contracts, per-system risks, the Executive Summary and Next Steps lists) now end with where the rest is.",
+          "Better / Unchanged / Worse: the 30, 60 and 90 day view is now a scorecard. Each measure (critical, high and medium risks, open severity 1 and 2 cases, systems with ransomware protection on and off, systems with a lapsed contract, average efficiency ratio, system records in scope) is compared with the same measure 30, 60 and 90 days ago and marked Better, Unchanged or Worse, with a count of each per window. The server computes the new measures from the daily snapshots it already keeps, so the history is complete from the first snapshot (four tests). Where fewer days of history exist than the window asks for, the note says so.",
+          "What changed and the scorecard are now in the documents that report on a period: the Executive Risk Assessment, TAM Success Plan, QBR Pack (90 days), MSP report, Handover Brief, Risk & Remediation Brief, Security Posture Brief, Customer Health report, the Customer Value Report, the Executive Summary and the Technical Risks section; the Configuration Review gains a count of findings first raised in the last 30, 60 and 90 days. The what-changed table shows the 10 most serious kinds of new risk and points to the Customer Value Report for the full list.",
+          "The Security Advisories section and document now report the known exploited (CISA KEV) vulnerabilities, and the Configuration Review now also covers MetroCluster mediator and automatic switchover findings, card firmware with a known issue (NetApp KB rule) and a summary of the security configuration gaps of the hardening scorecard with a pointer to the scorecard.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.343",
     date: "2026-10-17",
@@ -13376,14 +13396,15 @@ function _chgByCluster(rows) {
 function _chgRiskTitles(systems) { const m = {}; (systems || []).forEach(s => (s.risks || []).forEach(r => { if (r.id != null && !m[r.id]) m[r.id] = { title: String(r.description || ('Risk ' + r.id)).slice(0, 140), sev: String(r.severity || '').toUpperCase() }; })); return m; }
 // The same two views as the Overview card, as document text: newly raised risks (live, complete list) and the snapshot comparison with its data-quality notes.
 // The comparison arrives from the server asynchronously, so a first generation for a scope may not have it yet (the Overview card requests it for its own scope).
-function _dfChangesText(systems, heading, days) {
+function _dfChangesText(systems, heading, days, max) {
   days = days || 30;
   const md = /^#/.test(heading || ''), cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
   const nr = _chgNewRisks(systems, days), data = _chgData(days, (systems || []).map(s => s.serialNumber).filter(Boolean));
   let o = `\n${heading || 'WHAT CHANGED'}\n\n`;
   if (nr.total) {
     o += `**Finding:** ${nr.total} risk${nr.total !== 1 ? 's were' : ' was'} first raised by Active IQ in the last ${days} days, on ${_uN(nr.kinds, nr.systems)} (` + ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].filter(k => nr.bySev[k]).map(k => `${nr.bySev[k]} ${k.toLowerCase()}`).join(', ') + `).\n\n`;
-    o += '| Severity | Risk | Systems |\n|---|---|---|\n' + nr.groups.map(g => `| ${cell(g.sev.toLowerCase())} | ${cell(g.title)} | ${g.systems.size} |`).join('\n') + '\n\n';
+    o += '| Severity | Risk | Systems |\n|---|---|---|\n' + nr.groups.slice(0, max || Infinity).map(g => `| ${cell(g.sev.toLowerCase())} | ${cell(g.title)} | ${g.systems.size} |`).join('\n') + '\n\n';
+    if (max && nr.groups.length > max) o += `The ${max} most serious of ${nr.groups.length} kinds of new risk; the complete list is in the Customer Value Report (Progress, What Changed) and the What changed card on the Overview tab.\n\n`;
   } else o += `**Finding:** no risk was first raised on these systems in the last ${days} days.\n\n`;
   if (data && data.available) {
     const t = data.totals || {};
@@ -17460,7 +17481,7 @@ function _dfSwitchInventoryText(systems, opts) {
   const show = v.list.slice().sort((x, y) => (y.monitored - x.monitored) || String(x.name).localeCompare(String(y.name), undefined, { numeric: true })).slice(0, lim);
   o += `\n` + _dfTable(['Switch', 'Vendor / model', 'Network', 'Firmware', 'Version check', 'RCF applied', 'Monitoring', 'SNMP', 'Clusters'],
     show.map(e => [e.name, [e.vendor, e.model].filter(Boolean).join(' ') || '\u2014', e.type || '\u2014', one(e.fw), e.check.text, one(e.rcf), e.source, e.snmpLabel || '\u2014', [...e.clusters].join(', ')]));
-  if (v.list.length > lim) o += `  ...and ${v.list.length - lim} more (see the Switch Validation tab for the full list)\n`;
+  if (v.list.length > lim) o += `  ...and ${v.list.length - lim} more (the complete list is in the Network Switch and Fabric Validation document and the Switch Validation tab of the Action Planner)\n`;
   return o;
 }
 // Active IQ also tracks records that are not storage controllers (product types NON_FILER / SWITCH / UNKNOWN / AIDE_DCN): on the live
@@ -20951,24 +20972,53 @@ function _dfWave1Reasons(cl) {
   if (iom) parts.push('IOM6 shelf modules block 9.16.1+' + at(iom));
   return parts.join('; ');
 }
+// The trend scope of a set of systems: the customer's name when it is one customer, else the list of serial numbers (a watchlist, a group, several customers).
+function _dfTrendScope(systems) {
+  const names = new Set((systems || []).map(s => s.customerName).filter(Boolean));
+  return names.size === 1 ? [...names][0] : ((systems || []).length && (systems || []).length < (state.systems || []).length ? systems.map(s => s.serialNumber).filter(Boolean) : null);
+}
+// 30, 60 and 90 days: each measure now against the same measure that many days ago, and whether that is better, unchanged or worse.
+const _DF_SCORE_MEASURES = [
+  { k: 'critical', label: 'Critical risks', good: -1 }, { k: 'high', label: 'High risks', good: -1 }, { k: 'medium', label: 'Medium risks', good: -1 },
+  { k: 'openCriticalCases', label: 'Open severity 1 and 2 cases', good: -1 }, { k: 'arpEnabled', label: 'Systems with ransomware protection on', good: 1 },
+  { k: 'arpDisabled', label: 'Systems with ransomware protection off', good: -1 }, { k: 'contractsLapsed', label: 'Systems with a lapsed contract', good: -1 },
+  { k: 'avgEfficiency', label: 'Average efficiency ratio', good: 1, dec: 2 }, { k: 'systemCount', label: 'System records in scope', good: 0 }
+];
+function _dfScorecard(customer) {
+  const trend = _dfTrendData(customer, 90); if (!trend) return null;
+  const last = trend[trend.length - 1], lastT = Date.parse(last.date);
+  const wins = [30, 60, 90].map(n => { const cutoff = new Date(lastT - n * 86400000).toISOString().slice(0, 10), start = trend.find(t => t.date >= cutoff) || trend[0]; return { n, from: start.date, partial: start.date > cutoff, start }; });
+  const fmt = (m, v) => v == null ? '' : (m.dec ? Number(v).toFixed(m.dec) : String(v));
+  const rows = _DF_SCORE_MEASURES.filter(m => last[m.k] != null).map(m => ({ label: m.label, now: fmt(m, last[m.k]), good: m.good, cells: wins.map(w => {
+    const then = w.start[m.k]; if (then == null) return null;
+    const d = +(Number(last[m.k]) - Number(then)).toFixed(3), tol = m.dec ? 0.05 : 0;
+    return { then: fmt(m, then), now: fmt(m, last[m.k]), verdict: m.good === 0 ? 'n/a' : (Math.abs(d) <= tol ? 'Unchanged' : (d * m.good > 0 ? 'Better' : 'Worse')) };
+  }) }));
+  const tally = wins.map((w, i) => { const t = { better: 0, unchanged: 0, worse: 0 }; rows.forEach(r => { const c = r.cells[i]; if (c && c.verdict !== 'n/a') t[c.verdict.toLowerCase()]++; }); return t; });
+  return { rows, wins, tally, last };
+}
 function _dfTrendText(customerName, heading) {
-  const windows = _dfTrendWindows(customerName);
-  if (!windows) return '';
-  const dir = n => n > 0 ? `up ${n}` : n < 0 ? `down ${Math.abs(n)}` : 'unchanged';
+  const sc = _dfScorecard(customerName);
+  if (!sc || !sc.rows.length) return '';
   const md = /^#/.test(heading || '');
-  // a real table (Markdown or pipe-delimited text), so the Word download gets a proper table too
-  const cells = windows.map(w => [
-    w.windowDays + ' day' + (w.windowDays !== 1 ? 's' : '') + (w.partial ? ' *' : ''),
-    `${dir(w.criticalDelta)} (${w.criticalThen}->${w.criticalNow})`,
-    `${dir(w.highDelta)} (${w.highThen}->${w.highNow})`,
-    `${dir(w.casesDelta)} (${w.casesThen}->${w.casesNow})`]);
-  const head = ['Window', 'Critical', 'High', 'Open Crit. Cases'];
+  const head = ['Measure', 'Now', ...sc.wins.map(w => `${w.n} days ago${w.partial ? ' *' : ''}`)];
+  const cells = sc.rows.map(r => [r.label, r.now, ...r.cells.map(c => !c ? 'not recorded' : (c.verdict === 'n/a' ? c.then : `${c.verdict} (${c.then} -> ${c.now})`))]);
   const rows = md
     ? ['| ' + head.join(' | ') + ' |', '|' + head.map(() => '---').join('|') + '|'].concat(cells.map(c => '| ' + c.join(' | ') + ' |')).join('\n')
     : ['  ' + head.join(' | ')].concat(cells.map(c => '  ' + c.join(' | '))).join('\n');
-  const anyPartial = windows.some(w => w.partial);
-  return `\n${heading || 'RISK TREND (30/60/90 DAYS)'}\n\n${rows}\n` +
-    (anyPartial ? `\n${md ? '' : '  '}Note: an asterisk (*) means fewer than that many days of sync history exist yet -- the change is over the actual tracked span, not the full window.\n` : '') + '\n';
+  const verdictLine = sc.wins.map((w, i) => `${w.n} days: ${sc.tally[i].better} better, ${sc.tally[i].unchanged} unchanged, ${sc.tally[i].worse} worse`).join('; ');
+  return `\n${heading || 'PROGRESS OVER 30, 60 AND 90 DAYS (BETTER / UNCHANGED / WORSE)'}\n\n${md ? '' : '  '}${verdictLine}.\n\n${rows}\n\n`
+    + `${md ? '' : '  '}Each measure is the total over the system records ARIA captured on that day for this scope, compared with ${[...new Set(sc.wins.map(w => w.from))].join(' and ')}. A record is a node, so a risk on both nodes of a pair counts twice: read the direction, not the absolute number.${sc.wins.some(w => w.partial) ? ` An asterisk (*) means fewer days of history exist than the window asks for (ARIA's history for this scope starts ${sc.wins[2].from}), so the change is over the span ARIA has${new Set(sc.wins.map(w => w.from)).size === 1 ? '; all three windows compare with the same day and will differ as history builds up' : ''}.` : ''}\n\n`;
+}
+// What changed and the better / unchanged / worse view, added to a document that does not have them. A section the document already has is not repeated.
+function _dfAppendProgress(doc, systems, days) {
+  if (typeof doc !== 'string') return doc;
+  let add = '';
+  try {
+    if (!/What Changed/i.test(doc)) add += _dfChangesText(systems, `## What Changed (Last ${days || 30} Days)`, days || 30, 10) || '';
+    if (!/Better \/ Unchanged \/ Worse|RISK TREND/i.test(doc)) add += _dfTrendText(_dfTrendScope(systems), '## Progress Over 30, 60 and 90 Days (Better / Unchanged / Worse)') || '';
+  } catch (e) { console.warn('[progress]', e); }
+  return add ? doc.replace(/\s*$/, '\n') + add : doc;
 }
 // ── Minimum fixed release per CVE ────────────────────────────────────────────────────────────────
 // The advisory database (security_bulletins.json -> NETAPP_SECURITY_BULLETIN_DB) records, per advisory,
@@ -21387,7 +21437,7 @@ function _dfSystemIssueRankingText(systems, limit) {
     ['System', 'Nodes', 'Customer', 'Crit Risks', 'High Risks', 'Crit CVEs', 'High CVEs', 'Open Cases', 'AIQ Score'],
     shown.map(r => [r.systemName + (_UNIT_BADGE[r.kind] ? ` (${_UNIT_BADGE[r.kind]})` : ''), r.nodeCount, r.customerName || '—', r.critRisks, r.highRisks, r.critCves, r.highCves, r.openCases, r.aiqHealthScore != null ? r.aiqHealthScore : '—'])
   );
-  return table + (rows.length > lim ? `\n  +${rows.length - lim} more ${rows.length - lim !== 1 ? 'systems (clusters, grids or arrays)' : 'system'} with at least one issue` : '');
+  return table + (rows.length > lim ? `\n  +${rows.length - lim} more ${rows.length - lim !== 1 ? 'systems (clusters, grids or arrays)' : 'system'} with at least one issue; every cluster, grid and array with its findings is in the Prioritized Technical Risks section of the Action Planner` : '');
 }
 
 // ── StorageGRID awareness ───────────────────────────────────────────────────
@@ -22049,7 +22099,7 @@ function _dfStorageGridView(systems) {
     if (g.unlisted.length) add('medium', 'Systems in Active IQ not listed in the grid topology', `${g.unlisted.length} StorageGRID system${g.unlisted.length !== 1 ? 's' : ''} in Active IQ resolve to this grid but are not in its node roster (${g.unlisted.slice(0, 6).map(x => x.systemName || x.serialNumber).join(', ')}${g.unlisted.length > 6 ? ', +' + (g.unlisted.length - 6) + ' more' : ''}); they are not counted as nodes.`);
     if (g.nodes.length && g.nodesNotReporting.length) {
       const names = g.nodesNotReporting.map(n => n.hostName).filter(Boolean);
-      add('medium', 'Nodes not reporting to Active IQ', `${g.nodesNotReporting.length} of ${g.nodes.length} nodes are not visible in Active IQ as their own systems (${names.slice(0, 6).join(', ')}${names.length > 6 ? ', +' + (names.length - 6) + ' more' : ''}); their individual health, risks and capacity are not monitored.`);
+      add('medium', 'Nodes not reporting to Active IQ', `${g.nodesNotReporting.length} of ${g.nodes.length} nodes are not visible in Active IQ as their own systems (${names.slice(0, 6).join(', ')}${names.length > 6 ? ', +' + (names.length - 6) + ' more (the complete node roster is in the StorageGRID tab of the Action Planner and the StorageGRID report)' : ''}); their individual health, risks and capacity are not monitored.`);
     }
     const stale = g.nodes.filter(n => n.health && n.health.asupDays != null && n.health.asupDays > 7);
     if (stale.length) add('medium', 'Nodes with stale AutoSupport', `${stale.length} reporting node${stale.length !== 1 ? 's have' : ' has'} not sent AutoSupport for over 7 days (${stale.slice(0, 5).map(n => `${n.hostName} ${n.health.asupDays}d`).join(', ')}${stale.length > 5 ? ', ...' : ''}).`);
@@ -22139,7 +22189,7 @@ function _dfStorageGridText(v, opts) {
   const ruleRows = []; v.grids.forEach(g => g.rules.forEach(r => ruleRows.push([g.gridName, r.ruleName, r.isDefaultRule ? 'Yes' : 'No', r._p.text, r.referenceTime || '—', r.ingestBehavior || '—', r.filter ? (r.filter) : 'All objects'])));
   if (ruleRows.length) o += `\n  ILM Rules as Reported by Active IQ (Active IQ returns one ILM rule set per grid (from AutoSupport) and does not say which rules belong to the active policy. Confirm in Grid Manager > ILM > Policies.)\n` + _dfTable(['Grid', 'Rule', 'Default', 'Placement', 'Reference Time', 'Ingest', 'Applies To'], ruleRows) + '\n';
   const tenRows = []; v.grids.forEach(g => g.tenants.forEach(tn => { const b = tn.buckets || []; tenRows.push([g.gridName, tn.tenantId, b.length, b.filter(x => String(x.versioning || '').toUpperCase() === 'ENABLED').length, b.filter(x => x.isS3ObjectLockingEnabled || x.isLegacyComplianceEnabled).length, b.filter(x => x.isCloudMirror).length]); }));
-  if (tenRows.length) o += `\n  Tenants & Buckets\n` + _dfTable(['Grid', 'Tenant ID', 'Buckets', 'Versioned', 'Immutable', 'CloudMirror'], tenRows.slice(0, lim)) + (tenRows.length > lim ? `\n  +${tenRows.length - lim} more tenants` : '') + '\n';
+  if (tenRows.length) o += `\n  Tenants & Buckets\n` + _dfTable(['Grid', 'Tenant ID', 'Buckets', 'Versioned', 'Immutable', 'CloudMirror'], tenRows.slice(0, lim)) + (tenRows.length > lim ? `\n  +${tenRows.length - lim} more tenants; the complete list is in the StorageGRID tab of the Action Planner and the StorageGRID report` : '') + '\n';
   { const recs = {}; v.findings.filter(f => f.severity !== 'info' && f.recommendation).forEach(f => { const r = recs[f.title] = recs[f.title] || { sev: f.severity, rec: f.recommendation, grids: new Set() }; r.grids.add(f.grid); });
     const rr = Object.keys(recs).map(t => [recs[t].sev.toUpperCase(), t, recs[t].grids.size, recs[t].rec]);
     if (rr.length) o += `\n  StorageGRID Recommendations\n` + _dfTable(['Severity', 'Finding', 'Grids', 'Recommendation'], rr) + '\n'; }
@@ -22283,7 +22333,7 @@ function _dfPlatformInsightsSummaryLine(v) {
 function _dfPlatformInsightsText(v, which, opts) {
   if (!v || !v.withExtras) return '';
   which = which || ['energy', 'drives', 'history', 'headroom', 'files', 'adapters', 'ci', 'talking', 'findings']; opts = opts || {}; const lim = Infinity;
-  const more = (n, w) => n > lim ? `\n  +${n - lim} more ${w}` : '';
+  const more = (n, w) => n > lim ? `\n  +${n - lim} more ${w}; the complete list is in the Platform Insights tab of the Action Planner` : '';
   let o = `  ${_dfPlatformInsightsSummaryLine(v)}.\n`;
   if (which.includes('energy') && v.splitRows && v.splitRows.length) {
     o += `\n  Used Capacity by Use (NAS, SAN and snapshots, TB, as reported by Active IQ)\n` + _dfTable(['System', 'NAS', 'SAN', 'Snapshots'], v.splitRows.map(r => [r.system, r.nas.toFixed(2), r.san.toFixed(2), r.snap.toFixed(2)])) + '\n';
@@ -22687,6 +22737,12 @@ const _CFG_CHECKS = [
   { id: 'smtp', group: 'Management', label: 'AutoSupport sent by SMTP', src: 'aiq', rx: /smtp transport/i,
     rec: 'Send AutoSupport over HTTPS: SMTP may truncate the message and is not the supported default.',
     cmd: ['system node autosupport show -fields transport', 'system node autosupport modify -node * -transport https'] },
+  { id: 'mcmed', group: 'High availability', label: 'MetroCluster mediator or automatic switchover not available', src: 'aiq', rx: /mediator|tiebreaker|mauso|automatic unplanned switchover/i,
+    rec: 'Restore the ONTAP Mediator (or Tiebreaker) and automatic unplanned switchover: without them a site failure needs an operator to switch over by hand. Fix the mediator connection, then confirm every node reports the feature enabled.',
+    cmd: ['metrocluster show', 'metrocluster configuration-settings mediator show', 'metrocluster check run', 'metrocluster check show'] },
+  { id: 'cardfw', group: 'Hardware', label: 'Card firmware with a known issue', src: 'rule',
+    rec: 'Read the NetApp KB article named in the evidence before changing anything: NetApp keeps some resolutions behind the support login, so ARIA records the issue and the affected firmware, not a fix. Open a case if the card shows the symptom.',
+    cmd: ['system controller slot module show', 'system node run -node <node> -command sysconfig -a'] },
   { id: 'ha-asym', group: 'High availability', label: 'HA partners have different cards', src: 'aria',
     rec: 'Make the two nodes identical: the same card in the same slot. A LIF that fails over to a port the partner does not have cannot fail over. Confirm on the array; if the inventory is right, install the missing card (or remove the extra one) in a maintenance window.',
     cmd: ['system controller slot module show', 'network port show -fields speed-admin,speed-oper,mtu', 'system node run -node <node> -command sysconfig -a'] },
@@ -22698,6 +22754,7 @@ const _CFG_CHECKS = [
     cmd: ['system node autosupport show -fields transport', 'system node autosupport modify -node * -transport https'] }
 ];
 const _CFG_GROUPS = ['High availability', 'Hardware', 'Disks', 'Cluster network', 'Management'];
+const _cfgSrcLabel = src => src === 'aria' ? 'ARIA comparison' : src === 'rule' ? 'NetApp known-issue rule' : 'Active IQ';
 function _cfgReview(systems) {
   const units = getClusters(systems || []), rank = { critical: 0, high: 1, medium: 2, low: 3, best_practice: 4 }, rows = [];
   const lbl = v => String(v || '').replace(/_/g, ' ');
@@ -22737,6 +22794,10 @@ function _cfgReview(systems) {
       rows.push({ ...base, id: 'mtu', src: 'aria', severity: cl ? 'high' : 'medium', sevRank: cl ? 1 : 2, nodeSpecific: false, days: null, ack: false,
         evidence: bad.slice(0, 3).map(e => `${e.name}${e.ip && e.ip !== e.name ? ' (' + e.ip + ')' : ''}: ` + [...e.mtus.entries()].sort((a, b) => b[0] - a[0]).map(([m, l]) => `MTU ${m} on ${l.slice(0, 3).join(', ')}${l.length > 3 ? ' +' + (l.length - 3) : ''}`).join(' but ')).join('; ') });
     }
+    // card firmware with a known issue (rules in resolution_rules.json, firmwareKnownIssues, component CARD)
+    { const hits = []; nodes.forEach(n => _cardFwKnownIssues(n).forEach(h => hits.push({ n, h })));
+      if (hits.length) rows.push({ ...base, id: 'cardfw', src: 'rule', severity: 'medium', sevRank: 2, nodeSpecific: hits.length < nodes.length, days: null, ack: false,
+        evidence: _spClip(hits.slice(0, 3).map(x => `${x.n.systemName} slot ${x.h.slot}: ${x.h.card} (${x.h.pn}) on firmware ${x.h.fw}: ${x.h.rule.id}, ${x.h.rule.summary}`).join('; '), 400) }); }
     // 3. AutoSupport over plain HTTP
     const ht = nodes.filter(n => String(n.asupTransport || '').toUpperCase() === 'HTTP');
     if (ht.length) rows.push({ ...base, id: 'http', src: 'aria', severity: 'medium', sevRank: 2, evidence: `AutoSupport transport is HTTP on ${ht.map(n => n.systemName).slice(0, 4).join(', ')}${ht.length > 4 ? ' +' + (ht.length - 4) : ''}`, nodeSpecific: ht.length < nodes.length, days: null, ack: false });
@@ -22746,16 +22807,22 @@ function _cfgReview(systems) {
   const checks = [...by.values()].map(e => ({ ...e, worst: Math.min(...e.rows.map(r => r.sevRank)), customers: new Set(e.rows.map(r => r.customer).filter(Boolean)).size }))
     .sort((a, b) => _CFG_GROUPS.indexOf(a.check.group) - _CFG_GROUPS.indexOf(b.check.group) || a.worst - b.worst || b.rows.length - a.rows.length);
   rows.forEach(r => { r.sevRank = r.sevRank ?? 9; });
-  return { rows, checks, clusters: new Set(rows.map(r => r.ckey)).size, customers: new Set(rows.map(r => r.customer).filter(Boolean)).size };
+  const hard = _dfHardeningRows(systems || []);
+  return { rows, checks, clusters: new Set(rows.map(r => r.ckey)).size, customers: new Set(rows.map(r => r.customer).filter(Boolean)).size, hardening: hard.rows.filter(r => r.gap.length && r.id !== 'vuln'), hardEvaluated: hard.evaluated };
 }
 function _cfgReviewHtml(v, cap) {
   const e2 = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.74rem;', sub = 'color:var(--text-muted);font-size:0.68rem;';
-  return v.checks.map(c => `<details style="border:1px solid var(--border-color);border-radius:6px;margin-bottom:6px;"><summary style="cursor:pointer;padding:8px 10px;font-size:0.8rem;"><b>${e2(c.check.label)}</b> <span style="${sub}">${e2(c.check.group)} · ${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}${c.check.src === 'aria' ? ' · <b>ARIA comparison</b>' : ' · Active IQ finding'}</span></summary>`
+  return v.checks.map(c => `<details style="border:1px solid var(--border-color);border-radius:6px;margin-bottom:6px;"><summary style="cursor:pointer;padding:8px 10px;font-size:0.8rem;"><b>${e2(c.check.label)}</b> <span style="${sub}">${e2(c.check.group)} · ${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}${c.check.src === 'aiq' ? ' · Active IQ finding' : ` · <b>${_cfgSrcLabel(c.check.src)}</b>`}</span></summary>`
     + `<div style="padding:4px 10px 10px;"><div style="font-size:0.76rem;margin-bottom:6px;"><b>What to do:</b> ${e2(c.check.rec)}</div><div style="font-size:0.72rem;margin-bottom:6px;color:var(--text-secondary);"><b>Commands:</b> ${c.check.cmd.map(x => `<code>${e2(x)}</code>`).join(' &nbsp; ')}</div>`
     + `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${['System', 'Customer', 'Severity', 'Evidence'].map(x => `<th style="${th}">${x}</th>`).join('')}</tr></thead><tbody>`
     + c.rows.slice(0, cap).map(r => `<tr><td style="${td}"><a href="#" data-ckey="${e2(r.ckey)}" onclick="selectCluster(this.dataset.ckey);return false;">${e2(r.name)}</a>${r.nodeSpecific ? `<div style="${sub}">only on some nodes</div>` : ''}</td><td style="${td}">${e2(r.customer)}</td><td style="${td}">${e2(r.severity)}${r.days != null ? `<div style="${sub}">${r.days} days</div>` : ''}</td><td style="${td}">${e2(r.evidence)}${r.ack ? ` <span style="${sub}">(acknowledged)</span>` : ''}</td></tr>`).join('')
     + `</tbody></table></div>${c.rows.length > cap ? `<div style="${sub}margin-top:4px;">and ${c.rows.length - cap} more; the complete list is in the Configuration Review document.</div>` : ''}</div></details>`).join('');
+}
+function _cfgHardeningHtml(v) {
+  if (!v.hardening || !v.hardening.length) return '';
+  const e2 = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;'), td = 'padding:5px 8px;border-bottom:1px solid var(--wa-40);font-size:0.74rem;', th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);';
+  return `<details style="border:1px solid var(--border-color);border-radius:6px;margin-bottom:6px;"><summary style="cursor:pointer;padding:8px 10px;font-size:0.8rem;"><b>Security configuration gaps</b> <span style="color:var(--text-muted);font-size:0.68rem;">${v.hardening.length} of the scorecard's controls have a gap raised by Active IQ · see the hardening scorecard on the Technical Audit tab</span></summary><div style="padding:4px 10px 10px;overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${['Area', 'Control', 'Systems with a gap'].map(x => `<th style="${th}">${x}</th>`).join('')}</tr></thead><tbody>${v.hardening.map(r => `<tr><td style="${td}">${e2(r.area)}</td><td style="${td}">${e2(r.control)}</td><td style="${td}">${r.gap.length} of ${r.evaluated}</td></tr>`).join('')}</tbody></table></div></details>`;
 }
 function _cfgIntroHtml(v) {
   return `<div style="font-size:0.8rem;margin:8px 0 10px;"><b>${v.rows.length}</b> configuration finding${v.rows.length !== 1 ? 's' : ''} on <b>${v.clusters}</b> cluster, grid or array${v.clusters !== 1 ? 's' : ''} (${v.customers} customer${v.customers !== 1 ? 's' : ''}). Most are findings Active IQ raises, grouped with what to do and the command that shows each. <b>ARIA comparison</b> marks three that Active IQ does not raise and ARIA derives from the inventory Active IQ reports (partner cards, MTU, AutoSupport transport): confirm those on the array.</div>`;
@@ -22765,7 +22832,7 @@ function renderCfgReviewCard() {
   const v = _cfgReview(getFilteredSystems(true) || []);
   if (!v.rows.length) { card.style.display = 'none'; return; }
   card.style.display = 'block';
-  card.innerHTML = `<div class="section-title" style="margin:0;">Configuration review</div>` + _cfgIntroHtml(v) + _cfgReviewHtml(v, 25);
+  card.innerHTML = `<div class="section-title" style="margin:0;">Configuration review</div>` + _cfgIntroHtml(v) + _cfgReviewHtml(v, 25) + _cfgHardeningHtml(v);
   _ovFoldCard(card, `${v.rows.length} finding${v.rows.length !== 1 ? 's' : ''} on ${v.clusters} cluster${v.clusters !== 1 ? 's' : ''}, ${v.checks.length} kind${v.checks.length !== 1 ? 's' : ''}`);
 }
 // The Configuration Review document (Action Planner tab and the deliverable P): every finding, what to do, the commands, the clusters.
@@ -22778,22 +22845,25 @@ function compileConfigReviewMd(systems, scopeTitle) {
   o += `Findings marked **Active IQ** are raised by Active IQ itself. Those marked **ARIA comparison** are derived by ARIA from the inventory Active IQ reports (HA partners with different cards in the same slot, ports of one broadcast domain with different MTUs, AutoSupport sent over plain HTTP): Active IQ does not raise them, so confirm each on the array before acting. A card's slot is not judged against the documentation by ARIA, because NetApp's slot rules differ by platform; only Active IQ's own unsupported-slot finding is used.\n\n`;
   const order = v.checks.slice().sort((a, b) => a.worst - b.worst || ['High availability', 'Cluster network', 'Hardware', 'Disks', 'Management'].indexOf(a.check.group) - ['High availability', 'Cluster network', 'Hardware', 'Disks', 'Management'].indexOf(b.check.group) || b.rows.length - a.rows.length);
   o += `## 2. What to fix first\n\nOrdered by the most severe finding, then by area (high availability and the cluster network come before the rest: they decide whether a takeover or a network change is safe).\n\n` + _wdTable(['#', 'Check', 'Area', 'Source', 'Clusters', 'Worst severity', 'Recommendation'],
-    order.map((c, i) => [i + 1, c.check.label, c.check.group, c.check.src === 'aria' ? 'ARIA comparison' : 'Active IQ', c.rows.length, c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity, c.check.rec]));
+    order.map((c, i) => [i + 1, c.check.label, c.check.group, _cfgSrcLabel(c.check.src), c.rows.length, c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity, c.check.rec]));
   o += `## 3. Findings by area\n\n`;
   _CFG_GROUPS.forEach(g => {
     const cs = v.checks.filter(c => c.check.group === g); if (!cs.length) return;
     o += `### ${g}\n\n`;
     cs.forEach(c => {
-      o += `#### ${c.check.label} (${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}; ${c.check.src === 'aria' ? 'ARIA comparison' : 'Active IQ finding'})\n\n**What to do:** ${c.check.rec}\n\n**Commands:**\n\n\`\`\`\n${c.check.cmd.join('\n')}\n\`\`\`\n\n`;
+      o += `#### ${c.check.label} (${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}; ${(c.check.src === 'aiq' ? 'Active IQ finding' : _cfgSrcLabel(c.check.src))})\n\n**What to do:** ${c.check.rec}\n\n**Commands:**\n\n\`\`\`\n${c.check.cmd.join('\n')}\n\`\`\`\n\n`;
       o += _wdTable(['System', 'Customer', 'Severity', 'Open', 'Evidence'], c.rows.slice().sort((a, b) => a.sevRank - b.sevRank || (b.days || 0) - (a.days || 0)).slice(0, 60).map(r => [r.name + (r.nodeCount > 1 ? ` (${r.nodeCount} nodes${r.nodeSpecific ? ', some only' : ''})` : ''), r.customer, r.severity + (r.ack ? ' (acknowledged)' : ''), r.days == null ? '' : r.days + ' days', r.evidence]));
-      if (c.rows.length > 60) o += `and ${c.rows.length - 60} more.\n\n`;
+      if (c.rows.length > 60) o += `and ${c.rows.length - 60} more; the Overview card lists every one, and the As-Built Configuration Document has each system's configuration.\n\n`;
     });
   });
   if (unowned.length) o += _dfUnownedText(systems, '## 4. Unowned drives in detail').replace(/\n+$/, '\n\n');
+  { const dated = v.rows.filter(r => r.days != null), w = n => dated.filter(r => r.days <= n).length;
+    o += `## What changed\n\n` + (dated.length ? `Findings Active IQ first raised on these systems: ${w(30)} in the last 30 days, ${w(60)} in the last 60, ${w(90)} in the last 90, and ${dated.length - w(90)} before that. ARIA's own comparisons carry no date, so they are not counted. For how the whole estate has moved (risks, cases, ransomware protection, contracts), see the Progress section of the Risk & Remediation Brief or the Executive Summary.\n\n` : `The dates of the findings are not available.\n\n`); }
   const by = new Map(); v.rows.forEach(r => { const e = by.get(r.ckey) || { name: r.name, customer: r.customer, nodeCount: r.nodeCount, n: 0, checks: [] }; e.n++; e.checks.push(_CFG_CHECKS.find(c => c.id === r.id).label); by.set(r.ckey, e); });
   const multi = [...by.values()].filter(e => e.n >= 2).sort((a, b) => b.n - a.n).slice(0, 15);
   if (multi.length) o += `## ${unowned.length ? 5 : 4}. Clusters with more than one finding\n\n` + _wdTable(['System', 'Customer', 'Findings', 'Which'], multi.map(e => [e.name + (e.nodeCount > 1 ? ` (${e.nodeCount} nodes)` : ''), e.customer, e.n, e.checks.join('; ')]));
-  o += `## What this review does and does not cover\n\n**Covered:** card in an unsupported slot, NS224 shelf cabling, takeover not possible, automatic giveback, two cluster LIFs on one port, a cluster network port offline, intercluster LIFs, a Service Processor with no address, AutoSupport over SMTP or HTTP, unowned drives, and the cards of the two nodes of an HA pair compared slot by slot.\n\n**Not covered, because Active IQ does not report it:** switch and host-side configuration, multipathing and MTU on the customer's network beyond what ONTAP lists, cable-level cabling of controllers, and every setting that is not in the AutoSupport data. Run NetApp Config Advisor on each cluster for a complete cabling and configuration validation, and confirm every ARIA comparison on the array.\n`;
+  if (v.hardening && v.hardening.length) o += `## ${(unowned.length ? 5 : 4) + (multi.length ? 1 : 0)}. Security configuration gaps\n\nActive IQ raises a gap on ${v.hardening.length} of the controls in ARIA's hardening scorecard. They are listed here so the configuration picture is in one place; the Security Posture Brief and the scorecard on the Technical Audit tab carry the systems and the references.\n\n` + _wdTable(['Area', 'Control', 'Systems with a gap'], v.hardening.map(r => [r.area, r.control, `${r.gap.length} of ${r.evaluated}`]));
+  o += `## What this review does and does not cover\n\n**Covered:** card in an unsupported slot, NS224 shelf cabling, takeover not possible, automatic giveback, two cluster LIFs on one port, a cluster network port offline, intercluster LIFs, a Service Processor with no address, AutoSupport over SMTP or HTTP, unowned drives, MetroCluster mediator and automatic switchover, card firmware with a known issue, the security configuration gaps of the hardening scorecard, and the cards of the two nodes of an HA pair compared slot by slot.\n\n**Not covered, because Active IQ does not report it:** switch and host-side configuration, multipathing and MTU on the customer's network beyond what ONTAP lists, cable-level cabling of controllers, and every setting that is not in the AutoSupport data. Run NetApp Config Advisor on each cluster for a complete cabling and configuration validation, and confirm every ARIA comparison on the array.\n`;
   return o;
 }
 // The review in the documents. kind: 'brief' (a table of the checks with the recommendation, and the evidence of ARIA's own comparisons), 'full' (also every
@@ -22811,17 +22881,54 @@ function _dfAppendCfg(doc, systems, kind) {
     return doc.replace(/\s*$/, '\n') + o;
   }
   o += `${v.rows.length} finding${v.rows.length !== 1 ? 's' : ''} on ${v.clusters} cluster${v.clusters !== 1 ? 's' : ''}. Findings marked "Active IQ" are raised by Active IQ; "ARIA comparison" findings are derived by ARIA from the inventory Active IQ reports (Active IQ does not raise them) and should be confirmed on the array.\n\n`;
-  if (md) o += '| Check | Source | Clusters | Worst severity | Recommendation |\n|---|---|---|---|---|\n' + checks.map(c => `| ${cell(c.check.label)} | ${c.check.src === 'aria' ? 'ARIA comparison' : 'Active IQ'} | ${c.rows.length} | ${cell(c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity)} | ${cell(c.check.rec)} |`).join('\n') + '\n';
-  else o += checks.map(c => `  ${c.check.label} [${c.check.src === 'aria' ? 'ARIA comparison' : 'Active IQ'}, ${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}, worst ${c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity}]\n    Recommendation: ${c.check.rec}`).join('\n') + '\n';
-  const own = v.rows.filter(r => r.src === 'aria');
+  if (md) o += '| Check | Source | Clusters | Worst severity | Recommendation |\n|---|---|---|---|---|\n' + checks.map(c => `| ${cell(c.check.label)} | ${_cfgSrcLabel(c.check.src)} | ${c.rows.length} | ${cell(c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity)} | ${cell(c.check.rec)} |`).join('\n') + '\n';
+  else o += checks.map(c => `  ${c.check.label} [${_cfgSrcLabel(c.check.src)}, ${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}, worst ${c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity}]\n    Recommendation: ${c.check.rec}`).join('\n') + '\n';
+  const own = v.rows.filter(r => r.src !== 'aiq');
   if (own.length && kind !== 'full') o += `\n${md ? '**' : ''}Evidence for the ARIA comparisons${md ? '**' : ''}\n` + own.slice(0, 10).map(r => `${md ? '- ' : '  '}${r.name} (${r.customer || '-'}): ${r.evidence}`).join('\n') + (own.length > 10 ? `\n${md ? '- ' : '  '}and ${own.length - 10} more` : '') + '\n';
   if (kind === 'full') {
     const list = v.rows.filter(r => r.id !== 'unowned').sort((a, b) => a.sevRank - b.sevRank || a.name.localeCompare(b.name)).slice(0, 80);
     o += `\n${md ? '**' : ''}Every cluster${md ? '**' : ''}\n`;
     o += md ? '| System | Customer | Check | Severity | Evidence |\n|---|---|---|---|---|\n' + list.map(r => `| ${cell(r.name)} | ${cell(r.customer)} | ${cell(_CFG_CHECKS.find(c => c.id === r.id).label)} | ${cell(r.severity)} | ${cell(r.evidence)} |`).join('\n') + '\n'
       : list.map(r => `  ${r.name} (${r.customer || '-'}): ${_CFG_CHECKS.find(c => c.id === r.id).label} [${r.severity}]: ${r.evidence}`).join('\n') + '\n';
-    if (v.rows.filter(r => r.id !== 'unowned').length > 80) o += `... and ${v.rows.filter(r => r.id !== 'unowned').length - 80} more.\n`;
+    if (v.rows.filter(r => r.id !== 'unowned').length > 80) o += `... and ${v.rows.filter(r => r.id !== 'unowned').length - 80} more; the complete list is in the Configuration Review (Action Planner tab and deliverable P).\n`;
   }
+  return doc.replace(/\s*$/, '\n') + o;
+}
+// A document that does not list a topic in full says that the topic exists in this scope and where the complete list is. The topics are the ones that are
+// too long to repeat in every document: known exploited vulnerabilities, hardening gaps, configuration findings, unowned drives, SnapMirror health, switches
+// and hardware end of support. A topic the document already has a section for, or that is empty for the scope, is left out.
+let _ptrCache = { systems: null, rows: null };
+function _dfPointerRows(systems) {
+  if (_ptrCache.systems === systems && _ptrCache.rows) return _ptrCache.rows;
+  const rows = [];
+  try {
+    if (typeof _kevCves !== 'undefined' && _kevCves && _kevCves.size) { const k = _kevExposure(systems); if (k.rows.length) rows.push({ re: /Known Exploited Vulnerabilities \(CISA KEV\)/i, topic: 'Known exploited vulnerabilities (CISA KEV)', here: `${k.rows.length} CVE${k.rows.length !== 1 ? 's' : ''} on ${_uN(k.kinds, k.systems)}`, where: 'the Security Posture Brief (Known Exploited Vulnerabilities) and the Overview tab' }); }
+    const h = _dfHardeningRows(systems).rows.filter(r => r.gap.length && r.id !== 'vuln');
+    if (h.length) rows.push({ re: /Hardening Scorecard/i, topic: 'Security hardening gaps', here: `${h.length} control${h.length !== 1 ? 's' : ''} with a gap raised`, where: 'the Security Posture Brief (Hardening Scorecard) and the Technical Audit tab' });
+    const cr = _cfgReview(systems);
+    if (cr.rows.length) rows.push({ re: /Configuration Review \(risks and recommendations\)|Configuration Review$/im, topic: 'Configuration findings', here: `${cr.rows.length} on ${cr.clusters} cluster${cr.clusters !== 1 ? 's' : ''}`, where: 'the Configuration Review (Action Planner tab and deliverable P)' });
+    const un = _unownedDrives(systems);
+    if (un.length) rows.push({ re: /Unowned Drives/i, topic: 'Unowned drives', here: _uN(un.map(x => x.kind), un.length), where: 'the Risk & Remediation Brief and the Security Posture Brief' });
+    const sm = _snapMirrorHealth(systems);
+    if (sm.rows.length) rows.push({ re: /SnapMirror Health/i, topic: 'SnapMirror replication findings', here: `${sm.rows.length} cluster${sm.rows.length !== 1 ? 's' : ''}${sm.failing ? `, ${sm.failing} with updates failing` : ''}`, where: 'the Security Posture Brief (SnapMirror Health) and the Overview tab' });
+    const sw = _dfSwitchInventory(systems), swn = sw.disc + sw.conn + sw.behind.length + sw.expired.length;
+    if (sw.n && swn) rows.push({ re: /Network Switch and Fabric Validation/i, topic: 'Switches needing attention', here: `${swn} of ${sw.n} switches`, where: 'the Network Switch and Fabric Validation document (Action Planner Switch Validation tab)' });
+    { const nr = _chgNewRisks(systems, 30); if (nr.total) rows.push({ re: /What Changed/i, topic: 'Risks first raised in the last 30 days', here: `${nr.total} on ${_uN(nr.kinds, nr.systems)}`, where: 'the Customer Value Report (Progress, What Changed) and the Overview tab' }); }
+    const rf = _dfRefreshPlan(systems);
+    if (rf.length) rows.push({ re: /hardware refresh plan|Hardware end of support/i, topic: 'Hardware end of support', here: `${rf.length} hardware model${rf.length !== 1 ? 's' : ''}`, where: 'the Customer Health and Lifecycle Report and the Sales Refresh and Renewal Proposals' });
+  } catch (e) { console.warn('[pointers]', e); }
+  _ptrCache = { systems, rows };
+  return rows;
+}
+function _dfAppendPointers(doc, systems) {
+  if (typeof doc !== 'string') return doc;
+  const rows = _dfPointerRows(systems).filter(r => !r.re.test(doc));
+  if (!rows.length) return doc;
+  const md = /\n#{1,3} /.test(doc), W = 78, cell = c => String(c == null || c === '' ? '-' : c).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
+  let o = md ? `\n## Related Findings, and Where the Complete List Is\n\n` : `\n${'='.repeat(W)}\nRELATED FINDINGS, AND WHERE THE COMPLETE LIST IS\n${'='.repeat(W)}\n`;
+  o += `These are too long to repeat here. Each is in the scope; the complete list is in the document named.\n\n`;
+  o += md ? '| Topic | In this scope | The complete list is in |\n|---|---|---|\n' + rows.map(r => `| ${cell(r.topic)} | ${cell(r.here)} | ${cell(r.where)} |`).join('\n') + '\n'
+    : rows.map(r => `  ${r.topic}: ${r.here}.\n    The complete list is in ${r.where}.`).join('\n') + '\n';
   return doc.replace(/\s*$/, '\n') + o;
 }
 // SnapMirror health. Active IQ's API exposes only the number of relationships per cluster (no source, destination, policy or lag), so the health of
@@ -32480,6 +32587,7 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   let qbrPack = compileQBRPack(targetSystems, allRisks, allUpgrades, expiringContracts, allSupportCases, scopeTitle, fw);
   if (_riskTrendText) qbrPack += _riskTrendText;
 
+
   // 9. MSP Service Delivery Report
   let mspReport = compileMSPServiceReport(targetSystems, allRisks, expiringContracts, allSupportCases, scopeTitle, fw);
   // Portfolio Exposure: counts only, never names other customers (see
@@ -32530,6 +32638,23 @@ ${_eosOverlap.map(g => `  ${g.model}: also approaching EOS for ${g.customers.len
   handoverBrief = _dfAppendCfg(handoverBrief, targetSystems, 'brief');
   riskRemediationBrief = _dfAppendCfg(riskRemediationBrief, targetSystems, 'full');
   securityBrief = _dfAppendCfg(securityBrief, targetSystems, 'full');
+  // what changed, and the 30 / 60 / 90 day better-unchanged-worse view, in the documents that report on a period
+  problemStatements = _dfAppendProgress(problemStatements, targetSystems, 30);
+  customerSuccessPlan = _dfAppendProgress(customerSuccessPlan, targetSystems, 30);
+  qbrPack = _dfAppendProgress(qbrPack, targetSystems, 90);
+  mspReport = _dfAppendProgress(mspReport, targetSystems, 30);
+  handoverBrief = _dfAppendProgress(handoverBrief, targetSystems, 30);
+  riskRemediationBrief = _dfAppendProgress(riskRemediationBrief, targetSystems, 30);
+  securityBrief = _dfAppendProgress(securityBrief, targetSystems, 30);
+  // topics too long to repeat in every document: say they exist and where the complete list is
+  problemStatements = _dfAppendPointers(problemStatements, targetSystems);
+  solutionProposals = _dfAppendPointers(solutionProposals, targetSystems);
+  customerSuccessPlan = _dfAppendPointers(customerSuccessPlan, targetSystems);
+  qbrPack = _dfAppendPointers(qbrPack, targetSystems);
+  mspReport = _dfAppendPointers(mspReport, targetSystems);
+  handoverBrief = _dfAppendPointers(handoverBrief, targetSystems);
+  riskRemediationBrief = _dfAppendPointers(riskRemediationBrief, targetSystems);
+  securityBrief = _dfAppendPointers(securityBrief, targetSystems);
 
   // ── Inject fleet-relevant enrichment KB references into all deliverables ──
   // Vendor knowledge-base reference lists belong in the documents an engineer works from (change tickets, implementation plans, security and risk briefs);
@@ -32657,7 +32782,7 @@ Reference: mysupport.netapp.com/matrix (NetApp Interoperability Matrix Tool)
     // a TAM actually last spoke with or met this customer. ARIA has no calendar,
     // CRM, or meeting-log integration of any kind; don't imply one.
     customerReport: _dfInsertNcf(compileCustomerReport(targetSystems, allRisks, expiringContracts, allSupportCases, scopeTitle), /## 5\. Monitoring & Reliability/, _dfNonCveFindingsText(targetSystems, { prefix: '4a. ', md: true })) + (_riskTrendText ? _dfTrendText(_trendCustomer, '## Fleet Health, Risk Trend (30/60/90 Days)') : ''),
-    valueReport: compileValueReport(targetSystems, allRisks, allSupportCases, scopeTitle) + (_riskTrendText ? _dfTrendText(_trendCustomer, '## Progress, Risk Trend (30/60/90 Days)') : '') + _dfChangesText(targetSystems, '## Progress, What Changed (Last 30 Days)', 30),
+    valueReport: compileValueReport(targetSystems, allRisks, allSupportCases, scopeTitle) + (_riskTrendText ? _dfTrendText(_trendCustomer, '## Progress Over 30, 60 and 90 Days (Better / Unchanged / Worse)') : '') + _dfChangesText(targetSystems, '## Progress, What Changed (Last 30 Days)', 30),
     _enrichmentCounts: enrichSections._counts || {},
     _fleetProfile: enrichSections._fleetProfile || '',
     _totalEnrichmentArticles: Object.values(enrichSections._counts || {}).reduce((a, b) => a + b, 0),
@@ -32666,7 +32791,7 @@ Reference: mysupport.netapp.com/matrix (NetApp Interoperability Matrix Tool)
     _fleetSignals: _fleetSignals,
     _firmwareSummary: fw
   };
-  _deliverables.customerReport = _dfAppendCfg(_dfAppendUnowned(_deliverables.customerReport, targetSystems, 'brief'), targetSystems, 'brief');
+  _deliverables.customerReport = _dfAppendPointers(_dfAppendProgress(_dfAppendCfg(_dfAppendUnowned(_deliverables.customerReport, targetSystems, 'brief'), targetSystems, 'brief'), targetSystems, 30), targetSystems);
   return _deliverables;
 }
 
@@ -36422,6 +36547,7 @@ function generateActionPlan() {
   // history yet fetched" while this runs in the background; regenerating
   // the plan after it completes (cached, so near-instant) picks it up.
   prefetchSystemHistory(targetSystems);
+  try { const _sr = targetSystems.map(s => s.serialNumber).filter(Boolean); _dfTrendData(_dfTrendScope(targetSystems), 90); _chgData(30, _sr); _chgData(90, _sr); } catch (e) { /* the sections appear on the next generation */ }
   annotateAdoptionScores(targetSystems);
 
   // 8. Compile Executable Deliverables (Draft Email, Upgrade Proposal, and Internal Dispatch Ticket)
@@ -37410,7 +37536,7 @@ function generateActionPlan() {
         <h2 style="font-size: 1.15rem; margin: 0; border: none; padding: 0;">Configuration Review</h2>
         <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadPlanSection(29)" data-tooltip="Download the Configuration Review as a document.">Download Review</button>
       </div>
-      ${(() => { const _cv = _cfgReview(targetSystems); return _cv.rows.length ? _cfgIntroHtml(_cv) + _cfgReviewHtml(_cv, 200) : '<p style="font-size:0.85rem;color:var(--text-muted);">✓ No configuration finding is open for the systems in scope: no card in an unsupported slot, no shelf cabling or failover problem, no cluster network or intercluster LIF issue, no Service Processor or AutoSupport transport issue, no unowned drives, and no difference between the cards of the two nodes of an HA pair.</p>'; })()}
+      ${(() => { const _cv = _cfgReview(targetSystems); return _cv.rows.length ? _cfgIntroHtml(_cv) + _cfgReviewHtml(_cv, 200) + _cfgHardeningHtml(_cv) : '<p style="font-size:0.85rem;color:var(--text-muted);">✓ No configuration finding is open for the systems in scope: no card in an unsupported slot, no shelf cabling or failover problem, no cluster network or intercluster LIF issue, no Service Processor or AutoSupport transport issue, no unowned drives, and no difference between the cards of the two nodes of an HA pair.</p>'; })()}
     </div>
 
     <!-- Deliverables Suite, tab 2 of 3: Customer & Sales (D-I) -->
@@ -38080,6 +38206,8 @@ function compileRisksWordMd(systems, scopeTitle) {
     const opts = p && p.options && p.options.length ? p.options : ['Contact NetApp Support.'];
     o += `**Options and trade-offs**\n\n` + opts.map(x => `- ${_wdClean(x)}`).join('\n') + '\n\n';
   });
+    o = _dfAppendProgress(o, systems, 30);
+  o = _dfAppendPointers(o, systems);
   return o;
 }
 function compileAdvisoriesWordMd(systems, scopeTitle) {
@@ -38109,6 +38237,8 @@ function compileAdvisoriesWordMd(systems, scopeTitle) {
   [...mit.values()].forEach((m, n) => {
     o += `### ${n + 1}. ${cap(m.sev)}: ${m.ids.length} ${m.kb ? 'knowledge-base notice' : 'advisor'}${m.kb ? (m.ids.length !== 1 ? 's' : '') : (m.ids.length !== 1 ? 'ies' : 'y')}${m.cves.size > m.ids.length ? ` covering ${m.cves.size} CVEs` : ''}\n\n**${m.kb ? 'Notices' : 'Advisories'}:** ${m.ids.join('; ')}\n\n**Affected systems (${m.names.length}):** ${m.names.join(', ')}\n\n**${m.res ? 'Recommended action' : 'General guidance, mitigation'}:** ${m.text}\n\n`;
   });
+    o += _dfKevExposureText(systems, '## Known exploited vulnerabilities (CISA KEV)');
+  o = _dfAppendPointers(o, systems);
   return o;
 }
 // Clean-ups applied to every Action Planner view that is exported by converting the screen: the scope/date tile table that only repeats the
@@ -38149,7 +38279,11 @@ function _apDocInputs(systems) {
   filterActiveCases(cases);
   return { risks, upgrades, cases, openCases: cases.filter(c => !c._isClosed), contracts: _dfContractFacts(systems) };
 }
-const _apNames = (list, n) => { const a = (list || []).map(x => typeof x === 'string' ? x : (x.systemName || x.name || x.model || '')).filter(Boolean); return a.slice(0, n || 6).join(', ') + (a.length > (n || 6) ? `, and ${a.length - (n || 6)} more` : ''); };
+const _apNames = (list, n, where) => { const a = (list || []).map(x => typeof x === 'string' ? x : (x.systemName || x.name || x.model || '')).filter(Boolean); return a.slice(0, n || 6).join(', ') + (a.length > (n || 6) ? `, and ${a.length - (n || 6)} more${where ? ` (the complete list is in ${where})` : ''}` : ''); };
+// where the complete list behind a decision lives
+const _apWhere = text => { const t = String(text || '');
+  return /support|contract/i.test(t) ? 'the Customer Health and Lifecycle Report' : /ransomware|ARP/i.test(t) ? 'the Security Posture Brief and the hardening scorecard on the Technical Audit tab' : /replicat/i.test(t) ? 'the Risk & Remediation Brief'
+    : /upgrade/i.test(t) ? 'the OS Upgrade Roadmap' : /capacity/i.test(t) ? 'the Capacity Breakdown by Cluster, Grid or Array on the Value & ROI tab' : /critical|vulnerab/i.test(t) ? 'the Prioritized Technical Risks section' : 'the As-Built Configuration Document'; };
 function compileExecutiveSummaryMd(systems, scopeTitle) {
   const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0], inp = _apDocInputs(systems), units = getClusters(systems);
   const sev = {}; inp.risks.forEach(r => { const k = String(r.severity || '').toLowerCase().replace(/ /g, '_'); sev[k] = (sev[k] || 0) + 1; });
@@ -38188,17 +38322,17 @@ function compileExecutiveSummaryMd(systems, scopeTitle) {
   if (!plan.length) o += `None: no corrective action is required at this time.\n\n`;
   else {
     o += _wdTable(['#', 'Decision', 'Scope', 'When', 'Owner'], plan.map((p, i) => [i + 1, p.action, p.scope || '', p.when || '', p.owner || '']));
-    plan.forEach((p, i) => { o += `**${i + 1}. ${p.action}.** ${p.why}${p.type ? ` *Disruption:* ${p.type}.` : ''}${p.systems && p.systems.length ? ` *Systems:* ${_apNames(p.systems, 8)}.` : ''}\n\n`; });
+    plan.forEach((p, i) => { o += `**${i + 1}. ${p.action}.** ${p.why}${p.type ? ` *Disruption:* ${p.type}.` : ''}${p.systems && p.systems.length ? ` *Systems:* ${_apNames(p.systems, 8, _apWhere(p.action))}.` : ''}\n\n`; });
   }
   // 4. risk
   o += `## 4. Risk and security\n\n` + _wdTable(['Critical', 'High', 'Medium', 'Low', 'Best practice'], [[sev.critical || 0, sev.high || 0, sev.medium || 0, sev.low || 0, sev.best_practice || 0]]);
   o += `Counted once per cluster, grid or array. ${cves.length ? `Security advisories apply to this estate: ${cves.filter(c => c.sev === 'critical').length} critical, ${cves.filter(c => c.sev === 'high').length} high, ${cves.filter(c => c.sev !== 'critical' && c.sev !== 'high').length} other (${cves.length} in all).` : 'No security advisory applies to the systems in scope.'}${kev ? ` ${kev.rows.length ? `${kev.rows.length} CVE${kev.rows.length !== 1 ? 's' : ''} on CISA's known-exploited list ${kev.rows.length !== 1 ? 'apply' : 'applies'} (${kev.rows.slice(0, 5).map(r => r.id).join(', ')}).` : "None of CISA's known-exploited CVEs applies on the evidence Active IQ and NetApp's advisories give."}` : ''}\n\n`;
-  if (rank.length) o += `**Where the risk is concentrated** (worst first):\n\n` + _wdTable(['System', 'Customer', 'Critical', 'High', 'Critical/high CVEs', 'Open cases', 'Health'], rank.slice(0, 8).map(r => [r.systemName + (r.nodeCount > 1 ? ` (${r.nodeCount} nodes)` : ''), r.customerName, r.critRisks, r.highRisks, `${r.critCves}/${r.highCves}`, r.openCases, r.aiqHealthScore == null ? 'n/r' : r.aiqHealthScore]));
+  if (rank.length) o += `**Where the risk is concentrated** (worst first${rank.length > 8 ? `; the first 8 of ${rank.length}, every one is in the Prioritized Technical Risks section` : ''}):\n\n` + _wdTable(['System', 'Customer', 'Critical', 'High', 'Critical/high CVEs', 'Open cases', 'Health'], rank.slice(0, 8).map(r => [r.systemName + (r.nodeCount > 1 ? ` (${r.nodeCount} nodes)` : ''), r.customerName, r.critRisks, r.highRisks, `${r.critCves}/${r.highCves}`, r.openCases, r.aiqHealthScore == null ? 'n/r' : r.aiqHealthScore]));
   // 5. support and lifecycle
   o += `## 5. Support, contracts and lifecycle\n\n`;
   o += _wdTable(['Open support cases', 'Contracts active', 'Expiring within 90 days', 'Lapsed', 'Not reporting AutoSupport'], [[inp.openCases.length, ct.active.length, ct.expiring90.length, ct.expired.length, asupBad.length]]);
   if (inp.openCases.length) o += `Open cases by severity: ${Object.entries(openBySev).sort().map(([k, n]) => `${k}: ${n}`).join(', ')}${oldest ? `; the oldest was opened ${_dfDate(new Date(oldest).toISOString())}` : ''}.\n\n`;
-  if (ct.expired.length || ct.expiring90.length) o += _wdTable(['System', 'Contract', 'Ends', 'Days'], [...ct.expired.map(e => [e.systemName, 'Lapsed', _dfDate(e.endDate), e.daysRemaining]), ...ct.expiring90.map(e => [e.systemName, 'Expiring', _dfDate(e.endDate), e.daysRemaining])].slice(0, 15));
+  if (ct.expired.length || ct.expiring90.length) o += _wdTable(['System', 'Contract', 'Ends', 'Days'], [...ct.expired.map(e => [e.systemName, 'Lapsed', _dfDate(e.endDate), e.daysRemaining]), ...ct.expiring90.map(e => [e.systemName, 'Expiring', _dfDate(e.endDate), e.daysRemaining])].slice(0, 15)) + (ct.expired.length + ct.expiring90.length > 15 ? `The first 15 of ${ct.expired.length + ct.expiring90.length}; every contract is in the Customer Health and Lifecycle Report.\n\n` : '');
   if (refresh.length) o += `**Hardware end of support (within 36 months):** ` + refresh.map(r => `${r.model}, ${_dfPlural(r.n, 'system')}, support ends ${_dfDate(r.eos)}`).join('; ') + '.\n\n';
   o += `**Software currency:** ${waves.wave1.length + waves.wave2.length ? `${_dfPlural(waves.wave1.length + waves.wave2.length, 'cluster')} should move to the recommended ONTAP release${waves.wave1.length ? `, ${waves.wave1.length} of them as a priority (${waves.wave1.slice(0, 4).map(c => c.name).join(', ')}${waves.wave1.length > 4 ? ', ...' : ''}: ${_dfWave1Reasons(waves.wave1)})` : ''}` : 'every ONTAP cluster is on the recommended release'}.${minSafe && minSafe.behindTotal ? ` ${minSafe.behindTotal} system${minSafe.behindTotal !== 1 ? 's' : ''} run below the minimum safe release for their line.` : ''}\n\n`;
   // 6. capacity
@@ -38213,7 +38347,9 @@ function compileExecutiveSummaryMd(systems, scopeTitle) {
   // 8. configuration
   o += `## 8. Configuration\n\n`;
   o += cr.rows.length ? `${cr.rows.length} configuration finding${cr.rows.length !== 1 ? 's' : ''} on ${cr.clusters} cluster${cr.clusters !== 1 ? 's' : ''}: ${cr.checks.slice(0, 6).map(c => `${c.check.label} (${c.rows.length})`).join('; ')}${cr.checks.length > 6 ? '; ...' : ''}. ${unowned.length ? `Unowned drives are present on ${_dfPlural(unowned.length, 'cluster')}: they cannot serve as spares or hold data. ` : ''}The Risk & Remediation Brief lists each with its recommendation.\n\n` : `No configuration finding (cards, failover, cluster network, AutoSupport transport, unowned drives) is open.\n\n`;
-  o += `## 9. Where to find the detail\n\nPrioritised risks with fix steps: Technical Risks. Security advisories and known exploited CVEs: Security Advisories and the Security Posture Brief. Upgrade order: Operational Guidelines and Next Steps and the OS Upgrade Roadmap. Cases: Support Cases. Switches: Network Switch and Fabric Validation. Per-system configuration: the As-Built Configuration Document.\n`;
+  { const trend = _dfTrendText(_dfTrendScope(systems), '## 9. Progress over 30, 60 and 90 days (better / unchanged / worse)'), chg = _dfChangesText(systems, `## ${trend ? 10 : 9}. What changed in the last 30 days`, 30, 8);
+    o += trend + chg; }
+  o += `## ${(_dfTrendText(_dfTrendScope(systems), '#') ? 1 : 0) + 10}. Where to find the detail\n\nPrioritised risks with fix steps: Technical Risks. Security advisories and known exploited CVEs: Security Advisories and the Security Posture Brief. Upgrade order: Operational Guidelines and Next Steps and the OS Upgrade Roadmap. Cases: Support Cases. Switches: Network Switch and Fabric Validation. Per-system configuration: the As-Built Configuration Document.\n`;
   return o;
 }
 function compileNextStepsMd(systems, scopeTitle) {
@@ -38231,7 +38367,7 @@ function compileNextStepsMd(systems, scopeTitle) {
     const groups = [['Now: within 30 days', p => startDay(p) < 30], ['Next: 30 to 90 days', p => startDay(p) >= 30 && startDay(p) < 90], ['Later: beyond 90 days', p => startDay(p) >= 90]];
     const ordered = []; let n = 0;
     groups.forEach(([label, f]) => { const g = plan.filter(f); if (g.length) { o += `### ${label}\n\n` + _wdTable(['#', 'Action', 'Scope', 'When', 'Owner', 'Disruption'], g.map(p => { ordered.push(p); return [++n, p.action, p.scope || '', p.when || '', p.owner || '', p.type || '']; })); } });
-    o += `Why each matters:\n\n` + ordered.map((p, i) => `${i + 1}. **${p.action}.** ${p.why}${p.systems && p.systems.length ? ` Systems: ${_apNames(p.systems, 8)}.` : ''}`).join('\n') + '\n\n';
+    o += `Why each matters:\n\n` + ordered.map((p, i) => `${i + 1}. **${p.action}.** ${p.why}${p.systems && p.systems.length ? ` Systems: ${_apNames(p.systems, 8, _apWhere(p.action))}.` : ''}`).join('\n') + '\n\n';
   }
   // 2. upgrade order
   const wl = [...waves.wave1.map(c => ({ ...c, wave: 'First' })), ...waves.wave2.map(c => ({ ...c, wave: 'Then' }))];
@@ -38240,7 +38376,7 @@ function compileNextStepsMd(systems, scopeTitle) {
   else {
     o += `Upgrade the clusters marked First before the rest: they carry critical findings or run software that is past full support. A target stays on the release line the cluster already runs unless Active IQ requires a move; check each in the Upgrade Advisor in Active IQ before scheduling.\n\n`;
     o += _wdTable(['Order', 'Cluster', 'Nodes', 'Running', 'Target', 'Why'], wl.slice(0, 40).map(c => [c.wave, c.name, c.nodes.length, [...c.vers].join(' / '), c.target || 'see Upgrade Advisor', c.reasons.join('; ') || 'not on the recommended release']));
-    if (wl.length > 40) o += `and ${wl.length - 40} more clusters.\n\n`;
+    if (wl.length > 40) o += `The first 40 of ${wl.length} clusters; the complete order, with the hops each needs, is in the OS Upgrade Roadmap.\n\n`;
   }
   // 3. before any change
   o += `## 3. Before any change\n\nRun on every cluster in the change, and stop if any check shows a fault that is not understood:\n\n\`\`\`\ncluster show\nsystem health alert show\nstorage failover show\nnetwork interface show -is-home false\nsnapmirror show -fields state,status,healthy\nsystem configuration backup show\nsystem node autosupport invoke -node * -type all -message "MAINT=4h"\n\`\`\`\n\n`;
@@ -38285,7 +38421,7 @@ function compileSwitchesMd(systems, scopeTitle) {
   if (!need.length) o += `None: every switch is monitored, has no firmware below its baseline and no support or RCF issue.${v.weak.length ? ' SNMP is the only open point (section 3).' : ''}\n\n`;
   else {
     o += _wdTable(['Switch', 'Model', 'Network', 'Clusters', 'Findings', 'Action'], need.slice(0, 60).map(({ e, why, todo }) => [e.name + (e.ip ? ` (${e.ip})` : ''), modelOf(e), e.type || '', [...e.clusters].join(', '), why.join('; '), todo.join('; ')]));
-    if (need.length > 60) o += `and ${need.length - 60} more.\n\n`;
+    if (need.length > 60) o += `The first 60 of ${need.length}; every switch is in the inventory in section ${rec.length ? 4 : 3}.\n\n`;
   }
   // 3. what to do, only for the kinds present
   const rec = [];
@@ -38298,7 +38434,7 @@ function compileSwitchesMd(systems, scopeTitle) {
   // 4. inventory
   o += `## ${rec.length ? 4 : 3}. Switch inventory\n\n` + _wdTable(['Switch', 'Vendor / model', 'Network', 'Firmware', 'Check', 'RCF', 'Monitoring', 'SNMP', 'Support ends', 'Clusters'],
     v.list.slice().sort((x, y) => (y.monitored - x.monitored) || String(x.name).localeCompare(String(y.name), undefined, { numeric: true })).slice(0, 120).map(e => [e.name, modelOf(e), e.type || '', e.fw || 'not reported', e.check ? e.check.text : '', e.rcf || 'not reported', e.source, e.snmpLabel || 'not reported', e.contractEnd ? _dfDate(e.contractEnd) : 'not reported', [...e.clusters].join(', ')]));
-  if (v.list.length > 120) o += `and ${v.list.length - 120} more switches.\n\n`;
+  if (v.list.length > 120) o += `The first 120 of ${v.list.length} switches; the Switch Validation tab of the Action Planner lists all of them.\n\n`;
   const models = Object.entries(v.byModel).sort((a, b) => b[1].n - a[1].n);
   if (models.length > 1 || (models[0] && models[0][0] !== '(model not reported)')) o += `## ${rec.length ? 5 : 4}. Firmware and RCF by model\n\n` + _wdTable(['Model', 'Switches', 'Firmware versions in use', 'RCF versions in use'], models.map(([m, b]) => [m, b.n, [...b.fw].join(', ') || 'not reported', [...b.rcf].join(', ') || 'not reported']));
   return o;
@@ -38830,7 +38966,7 @@ ${sepThin}\n`;
         _sysRisks.slice(0, 20).forEach(r => {
           body += `  [${_v(r.severity).toUpperCase()}] ${_v(r.category)} — ${_v(r.description || r.shortName || r.riskDetail || r.riskDescription || r.title)}\n`;
         });
-        if (_sysRisks.length > 20) body += `  ...and ${_sysRisks.length - 20} more\n`;
+        if (_sysRisks.length > 20) body += `  ...and ${_sysRisks.length - 20} more (the complete list is in the Prioritized Technical Risks section of the Action Planner)\n`;
       }
       body += '\n';
 
@@ -38840,6 +38976,9 @@ ${sepThin}\n`;
     text = body;
   }
   
+  if (index === 3 && text) text += _dfKevExposureText(targetSystems, '## Known Exploited Vulnerabilities (CISA KEV)');
+  if (index === 2 && text) text = _dfAppendProgress(text, targetSystems, 30);
+  if ((index === 2 || index === 3) && text) text = _dfAppendPointers(text, targetSystems);
   if (filename && text) {
     triggerFileDownload(filename, text);
   }
@@ -39593,6 +39732,11 @@ function _dxParse(text, isMd, ctx) {
     if (/^[A-Z][A-Z0-9 &/,()\-:'\u2014.<>\u2264%]{5,}(?: \([^)]{1,60}\))?:?$/.test(t) && ind < 3 && !/:\s+\S/.test(t)) { setSub(_dxClean(t.replace(/:$/, ''))); continue; }   // ALL-CAPS title, optionally ending in a mixed-case note such as (Non-CVE)
     if (/^(ACTION|PHASE)\b.*/.test(t) && ind < 3) { setSub(_dxClean(t.replace(/\s+\[[A-Z \-+&]+\]$/, ''))); continue; }
     if (_dxAllCaps(t.replace(/\(.*?\)/g, '')) && /:$/.test(t) && t.length < 70 && !/\d\./.test(t.slice(0, 3))) { setSub(_dxClean(t.replace(/:$/, ''))); continue; }
+    if (t.startsWith('|') && /^\|?\s*:?-{2,}/.test(String(L[i + 1] || '').trim().replace(/^\|/, '').trim())) {   // a Markdown table inside a plain-text document
+      const rows = [];
+      while (i < L.length && L[i].trim().startsWith('|')) { if (!/^\|?\s*:?-{2,}/.test(L[i].trim().replace(/^\|/, '').trim())) rows.push(L[i].trim().replace(/^\||\|$/g, '').split('|').map(c => _dxClean(c.trim()))); i++; }
+      i--; push({ t: 'table', rows, header: true }); continue;
+    }
     // pipe rows -> table
     const pipeStart = i;
     if ((t.match(/ \| /g) || []).length >= 2) {

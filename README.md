@@ -1,6 +1,6 @@
 # ARIA — Active IQ Risk Intelligence Advisor
 
-[![Version](https://img.shields.io/badge/version-5.6.343-0066cc)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.6.344-0066cc)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-3776AB?logo=python&logoColor=white)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
@@ -605,6 +605,12 @@ Besides the deliverables, **every Action Planner tab** has a **Download Word** b
 ### What every narrative deliverable opens with
 
 Each narrative deliverable starts with a **Decisions needed** block: the top five actions, each with why it matters, a suggested timing and an owner. The Health & Lifecycle Report also carries the full plan table (type of change, timing, owner), an **Upgrade Sequence** (clusters in waves: pre-release, unsupported or critical first; MetroCluster DR site first), **Hardware Refresh Planning** (order-by and migrate-by dates, TB to migrate) and a **Capacity Trend** from Active IQ's monthly cluster history (drained or decommissioning clusters and temporary spikes are called out).
+
+### Progress, and where a long list is
+
+Documents that report on a period carry **What changed** (risks first raised in the last 30 days, the most serious kinds first) and a **Better / Unchanged / Worse** scorecard: critical, high and medium risks, open severity 1 and 2 cases, systems with ransomware protection on and off, systems with a lapsed contract, the average efficiency ratio and the number of system records, each compared with 30, 60 and 90 days ago from the daily snapshots ARIA keeps. Where less history exists than the window asks for, the note says so.
+
+A topic that is too long to repeat in every document is summarised where it applies, and the document says where the complete list is: a **Related Findings, and Where the Complete List Is** section gives the count in the scope for known exploited vulnerabilities, hardening gaps, configuration findings, unowned drives, SnapMirror findings, switches needing attention, new risks and hardware end of support, and names the document (and tab) that holds the whole list. A list cut inside a document ends with where the rest is.
 
 ### Accuracy rules the deliverables follow
 
