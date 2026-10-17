@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.352";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.353";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.353",
+    date: "2026-10-17",
+    title: "Playbooks as data and a record of findings with no procedure",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Remediation playbooks are now data. tools/playbooks.json (shipped) and data/playbooks_local.json (yours, never overwritten by an update) hold procedures in a documented format (docs/PLAYBOOKS.md): the finding to match, the names to take from the system and the finding, the steps with commands, options, a ticket with risk, window and rollback, and the NetApp pages it was written from. A new entry applies on the next load with no release. Only entries marked approved are used; a draft waits for a person, a local rejected entry switches off a shipped one, and an invalid entry is reported (never used). Procedures for E-Series and StorageGRID can be added the same way; the first is E-Series Remote Login, written from NetApp's SANtricity documentation.",
+          "The tool now knows what it has no procedure for. After each load it reports the findings that got none (data/playbook_gaps.json); Settings > Data & Sync > Procedure coverage shows the share covered (92.4% on the large test fleet), the kinds of finding with none, drafts waiting for approval and invalid entries, and the 25 largest gaps are added to the reference updater's review queue as 'playbook-gap' items. A kind that later gets a procedure leaves the record and its queue item closes. Nothing is written or fetched by the tool itself, so it still runs where no AI or internet is allowed; the weekly maintenance job (docs/LIBRARY_HARVEST_ROUTINE.md, new section) drafts entries from NetApp's documentation and a person approves them.",
+          "Six ONTAP procedures written in code (automatic giveback, NTP redundancy and unresponsive servers, single DNS server, FabricPool certificate validation, cluster peering encryption, license files) moved into the data file; the others stay in code until they are moved. Tests: tests/test_playbooks_data.py (14): loading, approval, validation, the gap record and queue, and the data engine under node.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.352",
     date: "2026-10-17",
@@ -23078,7 +23095,7 @@ function _dfAppendProcedureTickets(doc, systems) {
   const RULE = '='.repeat(80), CAP = 30, shown = list.slice(0, CAP);
   let o = `\n${RULE}\nCHANGE TICKETS FOR THE PROCEDURES\n${RULE}\n${list.length} change${list.length !== 1 ? 's' : ''}, one per finding type, each covering every cluster it applies to. Take the cluster's configuration backup first (system configuration backup create -node <node> -backup-type cluster), check health before and after (cluster show ; storage failover show ; system health alert show), and follow the change control rules above.\n`;
   shown.forEach((g, i) => {
-    const names = [...g.units.keys()], t = _PB_TICKET.find(x => x.rx.test(g.key)) || { risk: 'Low', win: 'Any; no outage expected', back: 'Record the current value with the show command in step 1; to roll back, set it back with the same modify command.' };
+    const names = [...g.units.keys()], t = g.plan.ticket || _PB_TICKET.find(x => x.rx.test(g.key)) || { risk: 'Low', win: 'Any; no outage expected', back: 'Record the current value with the show command in step 1; to roll back, set it back with the same modify command.' };
     const gp = /^ONTAP upgrade/.test(g.key) ? _pbUpgradeText(g.plan) : g.plan, steps = (gp.fullSteps || gp.steps || []).filter(x => /^\d+\./.test(String(x)));
     o += `\nCHG-P${String(i + 1).padStart(2, '0')}  ${g.key}\n  Clusters (${names.length}): ${names.slice(0, 10).join(', ')}${names.length > 10 ? ', ...' : ''}\n  Reason:   ${/^ONTAP upgrade/.test(g.key) ? 'The installed ONTAP release has security advisories and bugs that a newer release fixes (listed per cluster below).' : g.plan.cause}\n  Risk of the change: ${t.risk}.  Window: ${t.win}.\n  Pre-check: take the configuration backup and run the health commands above; step 1 records the current setting.\n  Change (commands written for ${names[0]}; repeat on each cluster with its own names):\n${steps.map(x => '    ' + x).join('\n')}\n  Verify:   the show command in the last step returns the new setting; the finding clears in Active IQ after the next AutoSupport.\n  Rollback: ${t.back}\n`;
     if (names.length > 1) o += `  Per cluster:\n` + [...g.units.values()].slice(0, 8).map(u => `    ${u.name} (${u.customer || '-'}): ${u.refs.size ? u.refs.size + ' finding' + (u.refs.size !== 1 ? 's' : '') + ' fixed: ' + [...u.refs].slice(0, 4).join(', ') : String(u.detail).replace(/\s+/g, ' ').slice(0, 180)}`).join('\n') + (names.length > 8 ? `\n    ... and ${names.length - 8} more` : '') + '\n';
@@ -23091,7 +23108,7 @@ function _dfAppendProcedures(doc, systems, kind) {
   const groups = new Map(), best = _pbBestUpgrade(systems);
   (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
     if (!r.hasPlaybook || !r.remediationPlan) return;
-    if (kind === 'sec' && !_PB_SECURITY.test(String(r.remediationPlan.groupKey || r.description || ''))) return;
+    if (kind === 'sec' && !r.remediationPlan.security && !_PB_SECURITY.test(String(r.remediationPlan.groupKey || r.description || ''))) return;
     const u = _unitOf(sys), gk = r.remediationPlan.groupKey, up = /^ONTAP upgrade to /.test(gk || ''), eff = up ? (best.get(u.name) || gk) : gk;
     const key = eff || String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: null, sev: r.severity };
     if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || ''), nodes: new Set(), refs: new Set() });
@@ -25083,14 +25100,82 @@ function _applyRemedPlaybook(risk, sysLike) {
     const pb = _remedPlaybook(risk, sysLike);
     if (!pb) return false;
     const links = ((risk.remediationPlan && risk.remediationPlan.steps) || []).filter(x => /https?:\/\//.test(String(x)) && !pb.steps.some(y => String(y).includes(String(x).replace(/^\d+\.\s*/, '').split(' — ').pop())));
-    risk.remediationPlan = { ...(risk.remediationPlan || {}), cause: pb.cause, impact: pb.impact, options: pb.options, thirdParty: pb.thirdParty || (risk.remediationPlan && risk.remediationPlan.thirdParty) || '', groupKey: pb.groupKey || '', advisoryRef: pb.advisoryRef || '',
+    risk.remediationPlan = { ...(risk.remediationPlan || {}), cause: pb.cause, impact: pb.impact, options: pb.options, thirdParty: pb.thirdParty || (risk.remediationPlan && risk.remediationPlan.thirdParty) || '', groupKey: pb.groupKey || '', advisoryRef: pb.advisoryRef || '', ticket: pb.ticket || null, security: !!pb.security, playbookId: pb.playbookId || '',
       steps: (pb.compact || pb.steps).concat(links.length ? ['Active IQ guidance for this finding:'].concat(links) : []), fullSteps: pb.compact ? pb.steps : null };
     risk.hasPlaybook = true;
     return true;
   } catch (e) { return false; /* the general plan stays */ }
 }
+// ── Playbooks as data ─────────────────────────────────────────────────────────────────────────────────────────────────
+// data/playbooks.json (shipped) and data/playbooks_local.json (added by a person or the maintenance job) hold procedures in a format the tool reads without a
+// release: see docs/PLAYBOOKS.md. Only entries the server marks approved arrive here. They are tried before the procedures written in code below, so a data
+// entry with the right match replaces one; a new finding type needs no change to this file.
+let _DATA_PLAYBOOKS = [], _dataPlaybooksLoaded = false;
+async function _ensureDataPlaybooks() {
+  if (_dataPlaybooksLoaded) return;
+  try { const r = await fetch('/api/library/playbooks', { cache: 'no-store' }); if (r.ok) { const d = await r.json(); _DATA_PLAYBOOKS = Array.isArray(d.playbooks) ? d.playbooks : []; } } catch (e) { /* the procedures in code still apply */ }
+  _dataPlaybooksLoaded = true;
+}
+function _dpFill(text, vars) { return String(text == null ? '' : text).replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, (m, k) => (vars[k] ? vars[k] : `<${k}>`)); }
+function _dataPlaybook(risk, sys) {
+  if (!_DATA_PLAYBOOKS.length || !risk || !sys) return null;
+  const fam = _platformFamily(sys), t = String(risk.description || risk.title || ''), td = t + ' ' + String(risk.riskDetail || '');
+  for (const e of _DATA_PLAYBOOKS) {
+    if (e.family && e.family !== 'any' && e.family !== fam) continue;
+    let rx; try { rx = e._rx || (e._rx = new RegExp(e.match, 'i')); } catch (x) { continue; }
+    if (!rx.test(e.matchOn === 'description' ? t : td)) continue;
+    const c = _rvCtx(risk, sys), vars = { cluster: c.cluster, node: c.node, version: c.ver, model: c.model, svm: c.svm === '<svm>' ? '' : c.svm, policy: c.policy === '<policy>' ? '' : c.policy, ref: risk.advisoryUrl || '' };
+    Object.entries(e.vars || {}).forEach(([k, r2]) => { try { const m = td.match(new RegExp(r2, 'i')); if (m && m[1]) vars[k] = String(m[1]).replace(/[.,;]+$/, ''); } catch (x) { /* a bad pattern leaves the placeholder */ } });
+    let body = e;
+    if (e.minVersion && fam === 'ontap' && e.belowMin) { const mv = String(e.minVersion).split('.').map(Number); if (!_rvAtLeast(sys, mv[0], mv[1], mv[2] || 0)) body = Object.assign({}, e, e.belowMin); }
+    const steps = (body.steps || []).map(x => _dpFill(x, vars));
+    if (!e.noVerify) steps.push(`${steps.length + 1}. Confirm the finding clears in Active IQ after the next AutoSupport (within about a day).`);
+    const note = e.note || (fam === 'ontap' ? `Syntax is from the ONTAP 9 command reference; confirm option names for ${c.ver || 'this release'} with the command's help (<command> ?) before running, and run changes under change control.`
+      : `Menu paths and commands follow NetApp's documentation for ${fam === 'eseries' ? 'SANtricity' : 'StorageGRID'}${c.ver ? ' ' + c.ver : ''}; confirm them against the documentation for the version in use, and run changes under change control.`);
+    steps.push(note);
+    if (risk.advisoryUrl) steps.push(`Reference: ${risk.advisoryUrl}`);
+    (e.sources || []).forEach(u => steps.push(`Source: ${u}`));
+    return { cause: _dpFill(body.cause || e.cause, vars), impact: _dpFill(body.impact || e.impact, vars), steps, options: (body.options || e.options || []).map(x => _dpFill(x, vars)), thirdParty: _dpFill(e.thirdParty || '', vars),
+      ticket: e.ticket || null, security: !!e.security, playbookId: e.id };
+  }
+  return null;
+}
+// What the procedures cover: the findings that got none are reported to the server (data/playbook_gaps.json, shown in Settings > Data & Sync, and the largest go
+// into the reference updater's review queue for the maintenance job to write). Nothing is fetched or generated here.
+let _gapSig = '';
+async function reportPlaybookGaps(systems) {
+  try {
+    const gaps = new Map(); let total = 0, covered = 0;
+    (systems || state.systems || []).forEach(sys => (sys.risks || []).forEach(r => {
+      total++; if (r.hasPlaybook) { covered++; return; }
+      const fam = _platformFamily(sys), key = `${fam} | ${r.category || 'General'} | ${String(r.description || r.title || '').replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 110)}`;
+      const g = gaps.get(key) || { key, category: r.category || '', families: [fam], count: 0, names: new Set(), severity: r.severity || '', detail: String(r.riskDetail || '').slice(0, 300), recommendation: String(r.recommendation || '').slice(0, 300), urls: (r.guidance || []).map(x => x.url).filter(Boolean).slice(0, 3) };
+      g.count++; g.names.add(sys.systemName); gaps.set(key, g);
+    }));
+    const list = [...gaps.values()].sort((a, b) => b.count - a.count).slice(0, 300).map(g => ({ key: g.key, category: g.category, families: g.families, count: g.count, systems: g.names.size, severity: g.severity, detail: g.detail, recommendation: g.recommendation, urls: g.urls }));
+    const sig = `${total}|${covered}|${list.length}|${list.slice(0, 5).map(g => g.key + g.count).join(',')}`;
+    if (sig === _gapSig) return; _gapSig = sig;
+    await fetch('/api/library/playbooks/gaps', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ total, covered, gaps: list }) });
+  } catch (e) { /* a record for the settings page only */ }
+}
+async function loadPlaybookCoverage() {
+  const box = document.getElementById('playbookCoverage'); if (!box) return;
+  try {
+    const r = await fetch('/api/library/playbooks/status', { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json(), pb = d.playbooks || {}, ago = iso => { if (!iso) return 'not yet'; const h = (Date.now() - Date.parse(iso)) / 3600000; return h < 1 ? 'less than an hour ago' : h < 48 ? Math.round(h) + ' h ago' : Math.round(h / 24) + ' days ago'; };
+    const gaps = d.gaps || [], hist = d.history || [];
+    const trend = hist.length > 1 && hist[0].total ? ` (${(100 * hist[0].covered / hist[0].total).toFixed(0)}% at the first record)` : '';
+    box.innerHTML = `<div style="color:var(--text-secondary);">${d.pct == null ? 'No report yet: it is written after the first load of the fleet.' : `<b>${d.pct}%</b> of the findings in the fleet (${(d.covered || 0).toLocaleString()} of ${(d.total || 0).toLocaleString()}) have a procedure written for their own system${_esc(trend)}; ${d.gapTypes || 0} kinds of finding have none. Recorded ${_esc(ago(d.updated))}.`}
+      <br>Playbooks as data: ${pb.approved || 0} in use (${pb.shipped || 0} shipped, ${pb.local || 0} local)${pb.pending ? `, <b>${pb.pending} draft${pb.pending === 1 ? '' : 's'} waiting for approval</b>` : ''}${pb.invalid ? `, <span style="color:var(--status-critical);">${pb.invalid} invalid</span>` : ''}. The rest are written in the program.</div>`
+      + ((d.problems || []).length ? `<div style="margin-top:6px;color:var(--status-critical);">${d.problems.slice(0, 4).map(x => _esc(x.id) + ': ' + _esc(x.problems[0])).join('<br>')}</div>` : '')
+      + (gaps.length ? `<details style="margin-top:8px;"><summary style="cursor:pointer;color:var(--text-muted);">Findings with no procedure (largest first)</summary><table style="width:100%;border-collapse:collapse;margin-top:6px;">`
+        + gaps.slice(0, 25).map(g => `<tr style="border-top:1px solid var(--wa-50);"><td style="padding:3px 8px 3px 0;">${_esc(g.key.replace(/^[a-z]+ \| /, ''))}</td><td style="padding:3px 6px;color:var(--text-muted);white-space:nowrap;">${_esc((g.families || []).join(', '))}</td><td style="padding:3px 0;text-align:right;white-space:nowrap;">${g.count} on ${g.systems}</td></tr>`).join('') + `</table><div style="margin-top:6px;color:var(--text-muted);">The largest are in the review queue above. A procedure is added as a playbook entry (docs/PLAYBOOKS.md): a person approves it, and it applies on the next load, with no new release.</div></details>` : '');
+  } catch (e) { box.textContent = 'Could not load the procedure coverage: ' + e.message; }
+}
 function _remedPlaybook(risk, sys) {
-  if (!risk || !sys || (typeof _platformFamily === 'function' && _platformFamily(sys) !== 'ontap')) return null;
+  if (!risk || !sys) return null;
+  const _dpb = _dataPlaybook(risk, sys); if (_dpb) return _dpb;
+  if (typeof _platformFamily === 'function' && _platformFamily(sys) !== 'ontap') return null;
   const t = String(risk.description || risk.title || ''), td = t + ' ' + String(risk.riskDetail || ''), c = _rvCtx(risk, sys), vs = c.svm, ref = risk.advisoryUrl ? `Reference: ${risk.advisoryUrl}` : '';
   const out = (cause, impact, steps, options, thirdParty) => ({ cause, impact, steps: steps.concat([`Syntax is from the ONTAP 9 command reference; confirm option names for ${c.ver || 'this release'} with the command's help (<command> ?) before running, and run changes under change control.`]).concat(ref ? [ref] : []), options, thirdParty: thirdParty || '' });
   const verify = 'Confirm the finding clears in Active IQ after the next AutoSupport (within about a day).';
@@ -25190,32 +25275,6 @@ function _remedPlaybook(risk, sys) {
       `3. Apply a policy and enable: vserver vscan scanner-pool apply-policy -vserver ${vs} -scanner-pool vscan-pool -scanner-policy primary ; vserver vscan on-access-policy create -vserver ${vs} -policy-name default-cifs -protocol CIFS -scan-files-with-no-ext true ; vserver vscan enable -vserver ${vs}`,
       `4. Check: vserver vscan connection-status show -vserver ${vs} ; vserver vscan show -vserver ${vs}`,
       `5. ${verify}`], ['Option A: On-access scanning with two AV servers (recommended).', 'Option B: On-demand scanning only, scheduled off-hours.'], 'Size the AV servers: scan latency adds to file open time.');
-  if (/auto giveback is not enabled/i.test(t))
-    return out('Automatic giveback is off.', `After a takeover the node (${c.node}) stays down until someone gives it back, leaving the pair without redundancy.`, [
-      `1. Check: storage failover show -fields auto-giveback,possible`,
-      `2. Enable: storage failover modify -node * -auto-giveback true`,
-      `3. Confirm: storage failover show -fields auto-giveback`,
-      `4. ${verify}`], ['Option A: Enable on all nodes (recommended).']);
-  if (/ntp servers are not redundant|one or more ntp servers are not responding/i.test(t))
-    return out(/not responding/i.test(t) ? 'An NTP server configured on the cluster does not answer.' : 'Fewer than two external NTP servers are configured.', 'Cluster time can drift, which breaks Kerberos/AD authentication, certificates, log correlation and SnapMirror schedules.', [
-      `1. Check: cluster time-service ntp server show ; cluster time-service ntp status show`,
-      /not responding/i.test(t) ? `2. Test reachability from the cluster network (UDP 123): network ping -lif <mgmt-lif> -vserver ${c.cluster} -destination <ntp-server>; remove a dead server: cluster time-service ntp server delete -server <dead-ntp>` : `2. Add at least a second, independent source: cluster time-service ntp server create -server <ntp-server-2>`,
-      `3. Use three or more servers where possible so a faulty source can be outvoted; prefer internal stratum 2-3 servers.`,
-      `4. Check: cluster time-service ntp status show ; date`,
-      `5. ${verify}`], ['Option A: Three NTP servers, two internal and one external (recommended).']);
-  if (/vserver has a single dns server configured/i.test(t))
-    return out(`SVM ${vs} has one DNS server.`, 'If it is unavailable, name resolution, AD authentication and SMB/NFS access fail.', [
-      `1. Check: vserver services name-service dns show -vserver ${vs}`,
-      `2. Add the second server (keep the existing one first): vserver services name-service dns modify -vserver ${vs} -domains <domain> -name-servers <dns1>,<dns2>`,
-      `3. Check: vserver services name-service dns check -vserver ${vs}`,
-      `4. ${verify}`], ['Option A: Two or more DNS servers in different locations (recommended).']);
-  if (/certificate validation is set to false for fabricpool/i.test(t))
-    return out('The FabricPool object store accepts any certificate.', 'Tiered data could be sent to an impostor endpoint (man-in-the-middle).', [
-      `1. Check: storage aggregate object-store config show -fields server,ssl-enabled,is-certificate-validation-enabled`,
-      `2. Install the CA that signed the object store certificate: security certificate install -type server-ca -vserver ${c.cluster}`,
-      `3. Turn validation on: storage aggregate object-store config modify -object-store-name <object-store> -is-certificate-validation-enabled true`,
-      `4. Check the tiering still works: storage aggregate object-store show-space ; storage aggregate show -fields tiering-policy`,
-      `5. ${verify}`], ['Option A: Install the CA and enable validation (recommended).']);
   if (/intercluster peer remote ip address configuration/i.test(t))
     return out('A cluster peer lists too few remote intercluster addresses.', 'If that one address or node is down, replication to this cluster stops.', [
       `1. Check: cluster peer show -instance ; cluster peer show -fields peer-addresses,availability`,
@@ -25223,13 +25282,6 @@ function _remedPlaybook(risk, sys) {
       `3. Add one address per remote node: cluster peer modify -cluster <peer-cluster> -peer-addrs <ip-node1>,<ip-node2>,<ip-node3>,<ip-node4>`,
       `4. Check: cluster peer show -fields peer-addresses,availability ; cluster peer health show`,
       `5. ${verify}`], ['Option A: List one intercluster LIF per remote node (recommended).']);
-  if (/system has not converted to either netapp license fi?le \(nlf\)/i.test(t))
-    return out('The cluster still has 28-character license keys instead of NetApp license files.', 'Old keys are no longer issued; capacity and feature changes need NLF, and entitlement checks can fail after an upgrade.', [
-      `1. List what is installed: system license show -fields package,type,expiration`,
-      `2. Sign in to the NetApp Support Site (My Support, Software Licenses), enter the cluster serial numbers (system node show -fields serialnumber for ${c.cluster}) and download the NLF for each.`,
-      `3. Install: system license add -license-code <contents of the NLF>  (one per serial number).`,
-      `4. Check: system license show-status`,
-      `5. ${verify}`], ['Option A: Install NLF for every node serial (recommended).']);
   if (/enable (?:compaction|compression) to support more workloads/i.test(t)) {
     const comp = /compaction/i.test(t);
     return out(`${comp ? 'Data compaction' : 'Compression'} is not enabled on volumes that would benefit.`, 'Less effective capacity than the system can provide; earlier than necessary capacity purchase.', [
@@ -25311,12 +25363,6 @@ function _remedPlaybook(risk, sys) {
       `3. Run on existing data: volume efficiency start -vserver ${vs} -volume <volume> -scan-old-data true`,
       `4. Check: volume efficiency show -vserver ${vs} -volume <volume> ; volume show -vserver ${vs} -volume <volume> -fields sis-space-saved`,
       `5. ${verify}`], ['Option A: Enable on all general-purpose volumes (recommended).']);
-  if (/cluster peering encryption not enabled/i.test(t))
-    return out('Replication traffic between the clusters is not encrypted.', 'SnapMirror data and metadata cross the network in clear text.', [
-      `1. Check: cluster peer show -fields encryption-protocol-proposed,encryption-protocol,auth-status-admin`,
-      `2. Enable on this cluster: cluster peer modify -cluster <peer-cluster> -auth-status-admin use-authentication -encryption-protocol-proposed tls-psk  (do the same on the peer; the passphrase is generated and exchanged for you in 9.6 and later).`,
-      `3. Check: cluster peer show -fields encryption-protocol ; snapmirror show -fields status`,
-      `4. ${verify}`], ['Option A: TLS-PSK on every peer relationship (recommended).'], 'Do the change on both clusters in the same window; a mismatch stops transfers until both agree.');
   if (/continuously-available cifs share property configured/i.test(t))
     return out('The continuously-available property is set on a share that does not need it.', 'It is for Hyper-V and SQL Server over SMB; on ordinary shares it adds state and can slow failover.', [
       `1. List shares with it: vserver cifs share show -vserver ${vs} -fields share-properties`,
@@ -42282,7 +42328,7 @@ async function loadReferenceStatus() {
     let rows = (d.data || []).map(x => `<tr><td style="padding:3px 8px 3px 0;">${_esc(x.label)}${x.file === 'reference_library.js' && x.note ? `<div style="font-size:0.68rem;color:var(--text-muted);">${_esc(x.note)}</div>` : ''}</td><td style="padding:3px 8px;color:var(--text-muted);">${x.present ? _esc(x.updated) + ' (' + age(x.ageHours) + ' ago)' : _esc(x.note || 'not present')}</td><td style="padding:3px 0;color:${x.stale ? '#f59e0b' : (x.static ? 'var(--text-muted)' : 'var(--accent-green)')};">${x.stale ? (x.file === 'reference_library.js' ? 'review' : 'stale') : (x.static ? 'static (manual)' : (x.present ? 'current' : 'missing'))}</td></tr>`).join('');
     if (lib.found) rows += `<tr><td style="padding:3px 8px 3px 0;">NetApp Reference Library (${lib.docs} documents)</td><td style="padding:3px 8px;color:var(--text-muted);">compiled ${_esc(lib.compiled || '?')}, newest file ${_esc(lib.newestFile || '?')}${lib.updater && lib.updater.lastRun ? `<div style="font-size:0.68rem;">ARIA's own sweep: ${_esc(String(lib.updater.lastRun).slice(0, 10))}, ${lib.updater.pagesKnown} source pages followed, ${lib.updater.openItems} to review</div>` : ''}</td><td style="padding:3px 0;color:${lib.stale ? '#f59e0b' : 'var(--accent-green)'};">${lib.stale ? 'stale' : 'current'}</td></tr>`;
     tbl.innerHTML = `<table style="width:100%;border-collapse:collapse;">${rows}</table>`;
-    loadLibraryUpdater();
+    loadLibraryUpdater(); loadPlaybookCoverage();
     const stale = (d.data || []).filter(x => x.stale && x.present).map(x => x.label);
     const msgs = [];
     if (stale.length) msgs.push(`Not refreshed recently: ${stale.join(', ')}. Use "Refresh all reference data now".`);
@@ -42963,6 +43009,7 @@ function _watchSyncThenReload() {
 }
 
 async function loadProductionData(forceRefresh = false) {
+  await _ensureDataPlaybooks();
 
   const textLabel = document.getElementById("connectionStatusText");
   const indicator  = document.querySelector(".indicator");
@@ -43310,6 +43357,7 @@ async function loadProductionData(forceRefresh = false) {
     // Non-blocking: runs after render, never delays the UI
     setTimeout(() => enrichmentEngine.syncFromServer(state.systems), 1200);
     // plans created by ARIA follow the new data: re-measure and write what changed (can be switched off on the Success Plans tab)
+    if (!result._stillSyncingInBackground) setTimeout(() => { try { reportPlaybookGaps(); loadPlaybookCoverage(); } catch (e) { /* settings page only */ } }, 6000);
     if (!result._stillSyncingInBackground) setTimeout(() => { try { autoSyncSuccessPlans(); } catch (e) { console.warn('[CSP] auto update failed:', e); } }, 4000);
 
   } catch (err) {

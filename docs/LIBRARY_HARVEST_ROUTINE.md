@@ -78,6 +78,15 @@ ARIA holds, and apply section 2 for any difference:
 
 Keep this list current: add a topic when the library gains a category.
 
+### Procedures that are missing (`playbook-gap` items)
+
+The review queue (`data/library_update_queue.json`) holds `playbook-gap` items: kinds of finding in the fleet that have no remediation procedure, largest first (the same list is in Settings > Data & Sync > Procedure coverage). For each one, as far as the time allows:
+
+1. Open the NetApp page the item links and the pages it cites. Write the procedure **only from the documentation**: every command, option and menu path must be on the page. If a step cannot be confirmed, write "see the linked page" instead of a guess.
+2. Add an entry to `data/playbooks_local.json` with `"status": "draft"`, in the format of `docs/PLAYBOOKS.md` (family, match, vars, cause, impact, steps, options, ticket with rollback, sources). Keep ONTAP commands out of E-Series and StorageGRID entries.
+3. Run `python tests/run_tests.py`: an invalid entry is reported by `tests/test_playbooks_data.py`. Do not set `"status": "approved"`: a person reads the draft against the page and approves it.
+4. Say in the report which gap items now have a draft, which could not be written, and why.
+
 ## 4. Check, release, record
 
 1. `node --check app.js`, `python -m pyflakes server.py tools/*.py`, `python tests/run_tests.py`; if any code changed, a smoke run generating the deliverables.

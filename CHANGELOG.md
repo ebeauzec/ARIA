@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.353 (2026-10-17)
+
+### Added
+- Remediation playbooks are now data. tools/playbooks.json (shipped) and data/playbooks_local.json (yours, never overwritten by an update) hold procedures in a documented format (docs/PLAYBOOKS.md): the finding to match, the names to take from the system and the finding, the steps with commands, options, a ticket with risk, window and rollback, and the NetApp pages it was written from. A new entry applies on the next load with no release. Only entries marked approved are used; a draft waits for a person, a local rejected entry switches off a shipped one, and an invalid entry is reported (never used). Procedures for E-Series and StorageGRID can be added the same way; the first is E-Series Remote Login, written from NetApp's SANtricity documentation.
+- The tool now knows what it has no procedure for. After each load it reports the findings that got none (data/playbook_gaps.json); Settings > Data & Sync > Procedure coverage shows the share covered (92.4% on the large test fleet), the kinds of finding with none, drafts waiting for approval and invalid entries, and the 25 largest gaps are added to the reference updater's review queue as 'playbook-gap' items. A kind that later gets a procedure leaves the record and its queue item closes. Nothing is written or fetched by the tool itself, so it still runs where no AI or internet is allowed; the weekly maintenance job (docs/LIBRARY_HARVEST_ROUTINE.md, new section) drafts entries from NetApp's documentation and a person approves them.
+- Six ONTAP procedures written in code (automatic giveback, NTP redundancy and unresponsive servers, single DNS server, FabricPool certificate validation, cluster peering encryption, license files) moved into the data file; the others stay in code until they are moved. Tests: tests/test_playbooks_data.py (14): loading, approval, validation, the gap record and queue, and the data engine under node.
+
 ## 5.6.352 (2026-10-17)
 
 ### Added

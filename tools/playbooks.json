@@ -1,0 +1,185 @@
+{
+ "format": 1,
+ "note": "Shipped remediation playbooks. Add your own to data/playbooks_local.json (never overwritten by an update); see docs/PLAYBOOKS.md for the format.",
+ "playbooks": [
+  {
+   "id": "ontap.auto-giveback",
+   "status": "approved",
+   "family": "ontap",
+   "match": "auto giveback is not enabled",
+   "cause": "Automatic giveback is off.",
+   "impact": "After a takeover the node ({node}) stays down until someone gives it back, leaving the pair without redundancy.",
+   "steps": [
+    "1. Check: storage failover show -fields auto-giveback,possible",
+    "2. Enable: storage failover modify -node * -auto-giveback true",
+    "3. Confirm: storage failover show -fields auto-giveback"
+   ],
+   "options": [
+    "Option A: Enable on all nodes (recommended)."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "storage failover modify -node * -auto-giveback false"
+   }
+  },
+  {
+   "id": "ontap.ntp-redundancy",
+   "status": "approved",
+   "family": "ontap",
+   "match": "ntp servers are not redundant",
+   "cause": "Fewer than two external NTP servers are configured.",
+   "impact": "Cluster time can drift, which breaks Kerberos/AD authentication, certificates, log correlation and SnapMirror schedules.",
+   "steps": [
+    "1. Check: cluster time-service ntp server show ; cluster time-service ntp status show",
+    "2. Add at least a second, independent source: cluster time-service ntp server create -server <ntp-server-2>",
+    "3. Use three or more servers where possible so a faulty source can be outvoted; prefer internal stratum 2-3 servers.",
+    "4. Check: cluster time-service ntp status show ; date"
+   ],
+   "options": [
+    "Option A: Three NTP servers, two internal and one external (recommended)."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/system-admin/commands-manage-system-time-reference.html"
+   ]
+  },
+  {
+   "id": "ontap.ntp-unresponsive",
+   "status": "approved",
+   "family": "ontap",
+   "match": "one or more ntp servers are not responding",
+   "cause": "An NTP server configured on the cluster does not answer.",
+   "impact": "Cluster time can drift, which breaks Kerberos/AD authentication, certificates, log correlation and SnapMirror schedules.",
+   "steps": [
+    "1. Check: cluster time-service ntp server show ; cluster time-service ntp status show",
+    "2. Test reachability from the cluster network (UDP 123): network ping -lif <mgmt-lif> -vserver {cluster} -destination <ntp-server>; remove a dead server: cluster time-service ntp server delete -server <dead-ntp>",
+    "3. Use three or more servers where possible so a faulty source can be outvoted; prefer internal stratum 2-3 servers.",
+    "4. Check: cluster time-service ntp status show ; date"
+   ],
+   "options": [
+    "Option A: Three NTP servers, two internal and one external (recommended)."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/system-admin/commands-manage-system-time-reference.html"
+   ]
+  },
+  {
+   "id": "ontap.dns-single-server",
+   "status": "approved",
+   "family": "ontap",
+   "match": "vserver has a single dns server configured",
+   "cause": "SVM {svm} has one DNS server.",
+   "impact": "If it is unavailable, name resolution, AD authentication and SMB/NFS access fail.",
+   "steps": [
+    "1. Check: vserver services name-service dns show -vserver {svm}",
+    "2. Add the second server (keep the existing one first): vserver services name-service dns modify -vserver {svm} -domains <domain> -name-servers <dns1>,<dns2>",
+    "3. Check: vserver services name-service dns check -vserver {svm}"
+   ],
+   "options": [
+    "Option A: Two or more DNS servers in different locations (recommended)."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/"
+   ]
+  },
+  {
+   "id": "ontap.fabricpool-certificate-validation",
+   "status": "approved",
+   "family": "ontap",
+   "security": true,
+   "match": "certificate validation is set to false for fabricpool",
+   "cause": "The FabricPool object store accepts any certificate.",
+   "impact": "Tiered data could be sent to an impostor endpoint (man-in-the-middle).",
+   "steps": [
+    "1. Check: storage aggregate object-store config show -fields server,ssl-enabled,is-certificate-validation-enabled",
+    "2. Install the CA that signed the object store certificate: security certificate install -type server-ca -vserver {cluster}",
+    "3. Turn validation on: storage aggregate object-store config modify -object-store-name <object-store> -is-certificate-validation-enabled true",
+    "4. Check the tiering still works: storage aggregate object-store show-space ; storage aggregate show -fields tiering-policy"
+   ],
+   "options": [
+    "Option A: Install the CA and enable validation (recommended)."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/"
+   ]
+  },
+  {
+   "id": "ontap.cluster-peering-encryption",
+   "status": "approved",
+   "family": "ontap",
+   "security": true,
+   "match": "cluster peering encryption not enabled",
+   "cause": "Replication traffic between the clusters is not encrypted.",
+   "impact": "SnapMirror data and metadata cross the network in clear text.",
+   "steps": [
+    "1. Check: cluster peer show -fields encryption-protocol-proposed,encryption-protocol,auth-status-admin",
+    "2. Enable on this cluster: cluster peer modify -cluster <peer-cluster> -auth-status-admin use-authentication -encryption-protocol-proposed tls-psk  (do the same on the peer; the passphrase is generated and exchanged for you in 9.6 and later).",
+    "3. Check: cluster peer show -fields encryption-protocol ; snapmirror show -fields status"
+   ],
+   "options": [
+    "Option A: TLS-PSK on every peer relationship (recommended)."
+   ],
+   "thirdParty": "Do the change on both clusters in the same window; a mismatch stops transfers until both agree.",
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/"
+   ],
+   "ticket": {
+    "risk": "Medium",
+    "window": "Both clusters in the same window; transfers pause until both agree",
+    "rollback": "cluster peer modify -cluster <peer> -encryption-protocol-proposed none (both sides)."
+   }
+  },
+  {
+   "id": "ontap.license-files",
+   "status": "approved",
+   "family": "ontap",
+   "match": "system has not converted to either netapp license fi?le \\(nlf\\)",
+   "cause": "The cluster still has 28-character license keys instead of NetApp license files.",
+   "impact": "Old keys are no longer issued; capacity and feature changes need NLF, and entitlement checks can fail after an upgrade.",
+   "steps": [
+    "1. List what is installed: system license show -fields package,type,expiration",
+    "2. Sign in to the NetApp Support Site (My Support, Software Licenses), enter the cluster serial numbers (system node show -fields serialnumber for {cluster}) and download the NLF for each.",
+    "3. Install: system license add -license-code <contents of the NLF>  (one per serial number).",
+    "4. Check: system license show-status"
+   ],
+   "options": [
+    "Option A: Install NLF for every node serial (recommended)."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/"
+   ]
+  },
+  {
+   "id": "eseries.remote-login",
+   "status": "approved",
+   "family": "eseries",
+   "security": true,
+   "match": "remote login is enabled",
+   "cause": "SSH/Telnet remote login to the controllers of {model} is enabled.",
+   "impact": "Remote login is meant for NetApp Support at their request. Left on, it gives anyone who can reach the controller management network a shell prompt to attack.",
+   "steps": [
+    "1. Confirm with the storage team that NetApp Support is not working on the array now.",
+    "2. In SANtricity System Manager open Hardware, then the Controllers & Components tab, and select controller A.",
+    "3. Select Configure remote login (SSH) (named Change remote login in SANtricity 11.73 and earlier), clear the Enable remote login checkbox and confirm. Active connections end.",
+    "4. Repeat for controller B: the setting is per controller.",
+    "5. If NetApp Support needs it later, turn it on for the session only. On SANtricity 11.74 and later you can also require an SSH key or password for remote login."
+   ],
+   "options": [
+    "Option A: Disable on both controllers (recommended).",
+    "Option B: Keep it on only while a support case needs it, and record who turned it off again."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/allow-remote-login.html",
+    "https://kb.netapp.com/on-prem/E-Series/Hardware-KBs/How_to_enable_or_disable_remote_login_on_E-Series_Storage_Systems"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; open shell sessions to the controller end",
+    "rollback": "Tick Enable remote login again in Configure remote login (SSH) on each controller."
+   }
+  }
+ ]
+}

@@ -44,6 +44,8 @@ web_datas = [
     (os.path.join(SPECPATH, '..', 'data', 'demo_storageperf.json'), 'data'),
     # Current slot/port assignments harvested from NetApp's documentation (hw_docs_harvester.py)
     (os.path.join(SPECPATH, '..', 'data', 'platform_hardware.json'), 'data'),
+    # The shipped remediation playbooks (tools/playbooks.json); data/playbooks_local.json beside the exe adds to them
+    (os.path.join(SPECPATH, '..', 'tools', 'playbooks.json'), 'tools'),
 ]
 web_datas = [d for d in web_datas if os.path.exists(d[0])]
 
@@ -54,7 +56,7 @@ webview_datas, webview_binaries, webview_hidden = collect_all('webview')
 
 all_datas    = web_datas    + webview_datas
 all_binaries = webview_binaries
-all_hidden   = webview_hidden + collect_submodules('webview') + ['server', 'aria_auth', 'perf_integration', 'hw_docs_harvester', 'asup_parser', 'dqp_parser', 'firmware_harvester', 'reference_harvester', 'library_manager', 'ontap_release_notes', 'eoa_list', 'netapp_docs_versions', 'derived_reference']
+all_hidden   = webview_hidden + collect_submodules('webview') + ['server', 'aria_auth', 'perf_integration', 'hw_docs_harvester', 'asup_parser', 'playbooks', 'dqp_parser', 'firmware_harvester', 'reference_harvester', 'library_manager', 'ontap_release_notes', 'eoa_list', 'netapp_docs_versions', 'derived_reference']
 
 # Platform-specific hidden imports
 if IS_WIN:

@@ -1,8 +1,8 @@
 {
-  "version": "5.6.352",
+  "version": "5.6.353",
   "major": 5,
   "minor": 6,
-  "patch": 352,
+  "patch": 353,
   "date": "2026-10-17",
-  "notes": "Upgrade procedure per cluster and more finding types: 92% of findings carry a procedure for their own system"
+  "notes": "Procedures are data files a person approves; coverage and gaps are recorded and shown, and queued for the maintenance job"
 }

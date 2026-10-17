@@ -11382,7 +11382,10 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         POST /api/library/refresh          run every built-in reference scanner now
         GET  /api/library/update/status    the reference updater: last sweep, tables, review queue
         POST /api/library/update/run       sweep now (administrators)
-        POST /api/library/update/ack       {ids, note} -- close review items (administrators)"""
+        POST /api/library/update/ack       {ids, note} -- close review items (administrators)
+        GET  /api/library/playbooks        the approved remediation playbooks (tools/playbooks.json + data/playbooks_local.json)
+        GET  /api/library/playbooks/status procedure coverage, the findings with no procedure, drafts waiting for approval
+        POST /api/library/playbooks/gaps   {total, covered, gaps[]} -- the front end reports what it could not cover"""
         _tools = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools')
         if _tools not in sys.path:
             sys.path.insert(0, _tools)
@@ -11453,6 +11456,22 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 cfg['libraryPath'] = path
                 CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding='utf-8')
                 self._send_json(200, {'ok': True})
+            elif method == 'GET' and route == '/api/library/playbooks':
+                import playbooks as _pb
+                ld = _pb.load(str(SCRIPT_DIR / 'data'))
+                self._send_json(200, {'playbooks': ld['playbooks'], 'counts': ld['counts']})
+            elif method == 'GET' and route == '/api/library/playbooks/status':
+                import playbooks as _pb
+                self._send_json(200, _pb.status(str(SCRIPT_DIR / 'data')))
+            elif method == 'POST' and route == '/api/library/playbooks/gaps':
+                if (getattr(self, '_user', None) or {}).get('role') == 'viewer':
+                    self._send_json(403, {'error': 'Viewers cannot record procedure gaps'}); return
+                import playbooks as _pb
+                n = int(self.headers.get('Content-Length') or 0)
+                if n > 2_000_000:
+                    self._send_json(413, {'error': 'Report too large'}); return
+                body = json.loads(self.rfile.read(n) or b'{}')
+                self._send_json(200, dict(_pb.record_gaps(str(SCRIPT_DIR / 'data'), body), ok=True))
             elif method == 'GET' and route == '/api/library/update/status':
                 import library_updater as _lu
                 st = _lu.status(str(SCRIPT_DIR))
