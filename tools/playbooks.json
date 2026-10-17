@@ -1258,7 +1258,9 @@
     "risk": "Low",
     "window": "Any; open shell sessions to the controller end",
     "rollback": "Tick Enable remote login again in Configure remote login (SSH) on each controller."
-   }
+   },
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "eseries.santricity-upgrade",
@@ -1300,7 +1302,9 @@
     "https://docs.netapp.com/us-en/e-series-santricity/um-manage/upgrade-controller-firmware.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-interface/recover-from-problems-using-recovery-guru.html",
     "https://docs.netapp.com/us-en/storagegrid-appliances/sg6000/upgrading-santricity-os-on-storage-controllers-using-grid-manager-sg6000.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "eseries.media-scan-frequency",
@@ -1325,7 +1329,9 @@
    ],
    "sources": [
     "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/change-media-scan-settings.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "eseries.drive-firmware",
@@ -1357,7 +1363,9 @@
     "https://docs.netapp.com/us-en/e-series-santricity/sm-support/upgrade-drive-firmware.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-interface/recover-from-problems-using-recovery-guru.html",
     "https://docs.netapp.com/us-en/storagegrid-appliances/sg6000/upgrading-drive-firmware-using-santricity-system-manager-online.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "eseries.hot-spare-coverage",
@@ -1386,7 +1394,9 @@
     "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/assign-hot-spares-hardware.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/hot-spare-drives.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/change-configuration-settings-for-a-pool.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "eseries.drawer-loss-protection",
@@ -1413,7 +1423,9 @@
     "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/create-volume-group.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/create-pool-manually.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/replace-drive-logically-hardware.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "eseries.recovery-guru-entries",
@@ -1434,7 +1446,9 @@
    ],
    "sources": [
     "https://docs.netapp.com/us-en/e-series-santricity/sm-interface/recover-from-problems-using-recovery-guru.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "eseries.hdd-six-years",
@@ -1457,7 +1471,9 @@
    "sources": [
     "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/replace-drive-logically-hardware.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-interface/recover-from-problems-using-recovery-guru.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "storagegrid.software-upgrade",
@@ -1498,7 +1514,9 @@
     "https://docs.netapp.com/us-en/storagegrid/upgrade/performing-upgrade.html",
     "https://docs.netapp.com/us-en/storagegrid/upgrade/verifying-installed-version-of-storagegrid.html",
     "https://docs.netapp.com/us-en/storagegrid/maintain/applying-hotfix.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "storagegrid.ntp-servers",
@@ -1524,7 +1542,9 @@
    },
    "sources": [
     "https://docs.netapp.com/us-en/storagegrid/maintain/configuring-ntp-servers.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "storagegrid.object-compression",
@@ -1545,7 +1565,9 @@
    ],
    "sources": [
     "https://docs.netapp.com/us-en/storagegrid/admin/configuring-stored-object-compression.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "storagegrid.versioning-object-lock",
@@ -1570,7 +1592,9 @@
     "https://docs.netapp.com/us-en/storagegrid/tenant/using-s3-object-lock.html",
     "https://docs.netapp.com/us-en/storagegrid/ilm/enabling-s3-object-lock-globally.html",
     "https://docs.netapp.com/us-en/storagegrid/tenant/changing-bucket-versioning.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   },
   {
    "id": "storagegrid.site-capacity",
@@ -1595,7 +1619,9 @@
    "sources": [
     "https://docs.netapp.com/us-en/storagegrid/expand/guidelines-for-adding-object-capacity.html",
     "https://docs.netapp.com/us-en/storagegrid/admin/managing-full-storage-nodes.html"
-   ]
+   ],
+   "approvedBy": "owner",
+   "approvedAt": "2026-10-17"
   }
  ]
 }

@@ -62,6 +62,7 @@ ARIA never writes a procedure itself and never fetches one at run time; it runs 
 | `minVersion`, `belowMin` | ONTAP only: below `minVersion` the `belowMin` text replaces the cause, impact and steps. |
 | `security` | `true` lists it in the Security Brief's hardening procedures. |
 | `ticket` | `risk`, `window` and `rollback` for the change ticket. Without it the ticket says low risk and "set it back with the same modify command". |
+| `approvedBy`, `approvedAt` | Optional record of who approved the entry and when (informational; `status` is what the program reads). |
 | `sources` | Required: the NetApp pages the procedure was written from; printed under the steps. |
 | `groupKey`, `compact`, `advisoryRef` | For a procedure one upgrade serves for many findings (the advisories an ONTAP, SANtricity or StorageGRID upgrade closes): `groupKey` (for example `SANtricity upgrade to {target} (fixes security advisories)`) names the group the documents print once per system, `compact` is the one-line form shown in each finding's own plan, `advisoryRef` is the id listed for the system. |
 | `noVerify`, `note` | Leave out the closing "confirm the finding clears" step; replace the closing note about syntax. |

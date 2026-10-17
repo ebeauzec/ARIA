@@ -45,9 +45,24 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.356";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.357";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.357",
+    date: "2026-10-17",
+    title: "SANtricity and StorageGRID procedures approved",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "The 13 SANtricity (E-Series) and StorageGRID procedures are approved by the owner: SANtricity OS upgrade for advisories, drive firmware, media scan frequency, hot spare coverage, drawer loss protection, Recovery Guru entries, drives past six years and remote login; StorageGRID software upgrade, NTP servers, stored object compression, Object Lock for versioned buckets and site capacity. Each entry records who approved it and when (approvedBy, approvedAt). All of their commands and menu paths are verified against the NetApp pages they cite.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.356",
     date: "2026-10-17",

@@ -1,8 +1,8 @@
 {
-  "version": "5.6.356",
+  "version": "5.6.357",
   "major": 5,
   "minor": 6,
-  "patch": 356,
+  "patch": 357,
   "date": "2026-10-17",
-  "notes": "Procedures checked against NetApp's command reference; the NetApp Reference Library ships with ARIA"
+  "notes": "The 13 SANtricity and StorageGRID procedures are approved by the owner"
 }

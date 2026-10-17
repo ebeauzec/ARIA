@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.6.357 (2026-10-17)
+
+### Added
+- The 13 SANtricity (E-Series) and StorageGRID procedures are approved by the owner: SANtricity OS upgrade for advisories, drive firmware, media scan frequency, hot spare coverage, drawer loss protection, Recovery Guru entries, drives past six years and remote login; StorageGRID software upgrade, NTP servers, stored object compression, Object Lock for versioned buckets and site capacity. Each entry records who approved it and when (approvedBy, approvedAt). All of their commands and menu paths are verified against the NetApp pages they cite.
+
 ## 5.6.356 (2026-10-17)
 
 ### Added
