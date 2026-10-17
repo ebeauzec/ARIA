@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.359 (2026-10-17)
+
+### Added
+- Six more procedures, written from NetApp's pages and approved by the automatic checks: the E-Series SANtricity OS upgrade failure of advisory removed-ref (symptoms and event 5083, the affected releases and the fixed ones NetApp's article names, what to ask support, and the rule that an array in a StorageGRID appliance may only use SANtricity versions its StorageGRID release supports); the optimisation suggestions 'use flash/SSDs' for E-Series (SSD Cache for read-heavy hard-disk volumes, or an all-flash array as a project) and for StorageGRID (where NetApp requires performance-tier media for metadata, system data and the container pool, and how metadata capacity grows); 'reduce temperature to lower power usage' (reading the system's temperature sensors and thresholds, and taking the reading to the facilities team); 'thin provisioning not enabled' (the volumes named in the finding, how to make them thin and how to watch the space); and 'background aggregate deduplication not enabled' (the background and inline forms, and the scan of existing data).
+- Two claims that were not on the NetApp pages cited (that SSD Cache is limited to hard-disk volumes and is not available on EF600 and EF300) were taken out of the SSD Cache procedure before release: the automatic checks verify commands and menu paths, so the wording around them was checked by hand against the fetched pages.
+- Coverage on the large test fleet: 31,483 of 32,948 findings (95.6%); 71 procedures, 255 commands and menu paths checked, none wrong.
+
 ## 5.6.358 (2026-10-17)
 
 ### Added

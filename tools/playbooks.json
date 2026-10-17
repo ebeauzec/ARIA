@@ -1698,6 +1698,197 @@
    ],
    "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
    "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "eseries.removed-ref-upgrade-failure",
+   "status": "approved",
+   "family": "any",
+   "match": "\\bremoved-ref\\b",
+   "cause": "{node} runs SANtricity OS {version}. advisory removed-ref (removed-ref) says the certificate signing and validation in the SANtricity OS releases it lists keeps the controllers from recognising the validity of the firmware certificate, so a SANtricity OS or firmware upgrade fails.",
+   "impact": "The upgrade fails with 'Missing alternate trust chain for DLP file' and the event 'A certificate failed authentication' (type 5083), so the array cannot be brought to a newer release with the normal procedure. NetApp's article on this error says the affected releases were withdrawn from the Support Site until the fixed releases are published.",
+   "steps": [
+    "1. Know the symptoms: a SANtricity OS upgrade (System Manager, or SMcli with download storagearray firmware) fails with 'The firmware download failed because the controller cannot process the request. Failure reason: Missing alternate trust chain for DLP file.' On a StorageGRID appliance it fails the same way on the Software update and SANtricity OS update pages of the Grid Manager. The E-Series event log (System Manager, Support section, Events) and the major event log in a support bundle show event type 5083: 'A certificate failed authentication'.",
+    "2. Know the releases: NetApp's article lists SANtricity OS 11.80x, 11.80.1x (GA, R1, R2 and R3) and 11.90x before R2 as affected, and says their download is disabled on the Support Site until the fix is released (11.80.1R4 and 11.90R2). This array runs {version}.",
+    "3. Read bulletin removed-ref (https://kb.netapp.com/removed-link). It is not public, so this report cannot quote it: note the route NetApp gives to a fixed release and any workaround.",
+    "4. Open a NetApp support case quoting removed-ref, the array's serial number, the SANtricity OS release ({version}), the event 5083 text and the name of the upgrade file that failed, and ask for the supported way to reach a fixed release.",
+    "5. For an E-Series array that belongs to a StorageGRID appliance (SG5700, SG6000, SG6100): its SANtricity OS must stay at a version your StorageGRID release supports, and that list might not yet include the fixed release. Check the supported SANtricity OS versions for the appliance at NetApp Downloads: StorageGRID Appliance or in the NetApp Interoperability Matrix Tool before choosing the target. Apply the latest StorageGRID hotfix first, then upgrade from the Grid Manager: Maintenance > System > Software update > SANtricity OS update.",
+    "6. For a standalone E-Series array, once a fixed release is available to you, upgrade with the SANtricity OS upgrade procedure (Support > Upgrade center)."
+   ],
+   "options": [
+    "Option A: Wait for the fixed release that NetApp Support confirms for this array, and upgrade then (recommended).",
+    "Option B: Leave the array as it is and record that upgrades are blocked until then; do not start other upgrades that need a signed file."
+   ],
+   "thirdParty": "On a StorageGRID appliance, tell the grid team: the SANtricity OS is part of the Storage Node and is upgraded through the Grid Manager.",
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; steps 1 to 4 change nothing on the array. The upgrade has its own ticket (the SANtricity upgrade).",
+    "rollback": "Nothing to roll back in steps 1 to 4."
+   },
+   "sources": [
+    "https://kb.netapp.com/removed-link",
+    "https://kb.netapp.com/on-prem/E-Series/SANtricity-OS-KBs/E-Series_SANtricity_OS_upgrade_fails_with_missing_alternate_trust_chain_for_DLP_file_message",
+    "https://docs.netapp.com/us-en/storagegrid-appliances/sg6000/upgrading-santricity-os-on-storage-controllers-using-grid-manager-sg6000.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-support/upgrade-controller-software-and-firmware.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "eseries.use-flash",
+   "status": "approved",
+   "family": "eseries",
+   "match": "use flash/ssds to conserve rack space",
+   "cause": "{node} ({model}) has no flash drives. Active IQ suggests flash for its capacity, power and cooling gains.",
+   "impact": "This is an optimisation, not a fault: a hard-disk array uses more rack space, power and cooling per unit of performance and capacity than a flash array.",
+   "steps": [
+    "1. Decide whether it is worth doing: find the volumes whose applications are read-heavy and latency-sensitive. For hard-disk volumes there are two routes: a read cache of SSDs inside the array (step 2), or moving the workload to an all-flash EF-Series array (step 3).",
+    "2. SSD Cache: it caches the most frequently read ('hot') data onto SSDs behind the controller's DRAM cache and is used only for host reads. The array must contain SSD drives. NetApp's pages describe it as a cache in front of hard-disk volumes, so confirm in the SANtricity documentation that your model supports it. Only one SSD Cache is supported per array, its usable size is limited by the controller's primary cache, and a volume that uses it is no longer moved by automatic load balancing. To create it: Storage > Pools and volume groups, Create > SSD Cache, name it, select the SSD candidate (capacity and number of drives), and associate the volumes. If the volumes are secure-enabled, create a secure-enabled SSD Cache: security can be set only when it is created.",
+    "3. All-flash array: for a whole workload (not only reads), size an EF-Series array with NetApp's Hardware Universe, plan the data move with the application owners, and keep the hard-disk array until the move is checked. This is a project with its own cost case, not a configuration change.",
+    "4. After step 2, compare read latency and throughput before and after on the associated volumes; if there is no gain, remove the association rather than keep a cache that is not used.",
+    "5. If neither route is wanted, record that the suggestion was considered and why it was declined."
+   ],
+   "options": [
+    "Option A: SSD Cache for read-heavy HDD volumes, if the array has or can take SSDs (the smallest change).",
+    "Option B: Move the workload to an EF-Series array at the next refresh.",
+    "Option C: Keep as is and record the decision."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; SSD Cache is created online and applied to chosen volumes",
+    "rollback": "Remove the volumes from the SSD Cache (or delete the cache) in Storage > Pools and volume groups."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/how-ssd-cache-works.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/create-ssd-cache.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/ssd-cache-and-volumes.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "storagegrid.use-flash",
+   "status": "approved",
+   "family": "storagegrid",
+   "match": "use flash/ssds to conserve rack space",
+   "cause": "{node} does not use flash drives. Active IQ suggests flash for its capacity, power and cooling gains.",
+   "impact": "This is an optimisation, not a fault. What matters most in StorageGRID is where the object metadata, the system data and the container pool sit: NetApp requires performance-tier media for them.",
+   "steps": [
+    "1. Know what NetApp requires: the volumes for the container pool, the system data and the object metadata must be performance-tier storage (10K SAS or SSD) so that latency, IOPS and throughput are adequate; capacity-tier (NL-SAS or SATA) storage is for object data only. All of it must be RAID-backed, with write-back caching on protected or persistent media.",
+    "2. See what the grid has: for each Storage Node, which media holds volume 0, where StorageGRID keeps the object metadata (three copies per site, spread over that site's Storage Nodes). On a software-based node that is how the node was provisioned; on an appliance it is the appliance model.",
+    "3. If the metadata or system volumes are on capacity-tier media, that is the change worth making: move them to performance-tier storage (this is done by node recovery or expansion with new storage, not by a setting).",
+    "4. When adding capacity, remember that metadata lives on volume 0 only: adding storage volumes does not add metadata capacity, adding Storage Nodes does. Plan to add Storage Nodes at a site once the metadata used reaches 70%. For a metadata-only node at a site with SG6000 or SG6100 appliances, NetApp lists 128 GB RAM, an 8-core CPU and 8 TB of SSD (or equivalent) for the database.",
+    "5. If the nodes already meet the requirement, record that the suggestion was considered and why it was declined."
+   ],
+   "options": [
+    "Option A: Put the metadata and system volumes on performance-tier media where they are not (recommended).",
+    "Option B: Use flash for new Storage Nodes at the next expansion.",
+    "Option C: Keep as is and record the decision."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/storagegrid/swnodes/storage-and-performance-requirements.html",
+    "https://docs.netapp.com/us-en/storagegrid/expand/adding-metadata-capacity.html",
+    "https://docs.netapp.com/us-en/storagegrid/expand/guidelines-for-adding-object-capacity.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.reduce-temperature",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "reduce temperature to lower overall power usage",
+   "cause": "The ambient temperature reading of the system can be improved. The finding says: {detail}",
+   "impact": "Running the equipment inside the recommended temperature range lets the data centre cut its energy use and the carbon emissions that go with it. The reading itself is not a fault of the system.",
+   "steps": [
+    "1. Read the temperatures the system reports: system node environment sensors show  (sensor type, name, state, value and threshold warnings; the inlet or ambient sensor name depends on the platform).",
+    "2. Read the thresholds the node itself applies. On the Service Processor of a node, the SP command 'system sensors' lists each temperature sensor (for example the inlet sensor In_Flow_Temp) with its lower and upper noncritical and critical limits; a reading between the noncritical and critical limit means the component shows signs of a problem and should be planned for service soon.",
+    "3. Compare the reading with the recommended range of ASHRAE's thermal guidelines, which the finding links (Equipment Thermal Guidelines for Data Processing Environments), for the equipment class of the platform; NetApp's Hardware Universe gives each platform's own operating environment.",
+    "4. The change is in the data centre, not on the array: take the reading and the comparison to whoever runs cooling and the room layout, and ask for the room set point or the rack's air supply to be brought into the recommended range.",
+    "5. After the change, read the sensors again (step 1) and compare the power drawn before and after in Active IQ Digital Advisor's sustainability figures."
+   ],
+   "options": [
+    "Option A: Ask the facilities team to bring the room into the recommended range (recommended).",
+    "Option B: Record the reading as accepted for this room, with the reason."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/system-admin/display-environment-task.html",
+    "https://docs.netapp.com/us-en/ontap/system-admin/threshold-based-sp-sensor-readings-status-concept.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.thin-provisioning",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "thin provisioning not enabled",
+   "vars": {
+    "vols": "volumes?:\\s*(.+?)(?:\\.\\s|$)",
+    "vsvm": "volumes?:\\s*([^:\\s,]+):",
+    "vvol": "volumes?:\\s*[^:\\s,]+:([^\\s,.]+)"
+   },
+   "cause": "Volumes on {cluster} have a space guarantee, so thin provisioning is not in use: {vols}.",
+   "impact": "A volume with a space guarantee has its whole size preallocated in the aggregate, so the space it does not use cannot be used by other volumes and storage efficiency is lower.",
+   "steps": [
+    "1. Check the volume: volume show -vserver {vsvm} -volume {vvol} -fields space-guarantee,space-slo,fractional-reserve,size,available",
+    "2. Decide with the owner of the data. A thin volume asks the aggregate for space as data is written, so it can run out of space before it reaches its nominal size: only thin-provision volumes whose growth you watch.",
+    "3. Make it thin: volume modify -vserver {vsvm} -volume {vvol} -space-guarantee none  (the none value preallocates no space, even if the volume contains space-reserved files; the fractional reserve of a thin volume defaults to 0). A volume whose -space-slo is thick or semi-thick keeps its space guarantee: its SLO has to be changed first.",
+    "4. Repeat for the other volumes in the finding.",
+    "5. Watch the space: volume show -vserver {vsvm} -fields available,percent-used ; storage aggregate show -fields availsize,percent-used  and set the volume to grow by itself: volume autosize -vserver {vsvm} -volume {vvol} -mode grow -maximum-size <size>. Alert on the aggregate, not only the volume."
+   ],
+   "options": [
+    "Option A: Thin-provision the volumes you monitor, on AFF systems where it is the default (recommended).",
+    "Option B: Keep the guarantee on volumes where a full aggregate must never affect them, and record why."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "volume modify -vserver <svm> -volume <volume> -space-guarantee volume  (it needs free space in the aggregate for the whole volume)."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/volumes/configure-volume-provision-options-task.html",
+    "https://docs.netapp.com/us-en/ontap-cli/volume-modify.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.aggregate-deduplication",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "background aggregate deduplication not enabled",
+   "vars": {
+    "vols": "volumes?:\\s*(.+?)(?:\\.\\s|$)",
+    "vvol": "volumes?:\\s*([A-Za-z0-9_.-]+)"
+   },
+   "cause": "Aggregate-level (cross-volume) deduplication is not enabled on volumes of {cluster}: {vols}.",
+   "impact": "Duplicate blocks across the volumes of one aggregate are not removed, so storage efficiency is lower than the system can deliver.",
+   "steps": [
+    "1. Check the volume: volume efficiency show -vserver {svm} -volume {vvol} -fields cross-volume-inline-dedupe,cross-volume-background-dedupe  (if you do not know the SVM: volume show -volume {vvol} -fields vserver).",
+    "2. Aggregate-level deduplication is for AFF systems (background from ONTAP 9.3, the scanner for existing data from 9.4); it is on by default for new volumes and for upgraded volumes that have volume deduplication on. Enable the background form: volume efficiency modify -vserver {svm} -volume {vvol} -cross-volume-background-dedupe true",
+    "3. Enable the inline form (only volumes whose space guarantee is none can take part, which is the AFF default): volume efficiency modify -vserver {svm} -volume {vvol} -cross-volume-inline-dedupe true",
+    "4. Deduplicate the data that is already there, in off-peak hours because the scan takes long: storage aggregate efficiency cross-volume-dedupe start -aggregate <aggr> -scan-old-data true  (it asks for confirmation).",
+    "5. Check progress and the result: storage aggregate efficiency cross-volume-dedupe show ; volume efficiency show -vserver {svm} -volume {vvol}",
+    "6. Repeat for the other volumes in the finding."
+   ],
+   "options": [
+    "Option A: Enable both forms on all non-root volumes of AFF aggregates (recommended).",
+    "Option B: Enable the background form only, where inline deduplication adds too much write latency."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; run the scan of old data off-peak",
+    "rollback": "volume efficiency modify -vserver <svm> -volume <volume> -cross-volume-background-dedupe false  (and -cross-volume-inline-dedupe false)."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/volumes/enable-disable-background-deduplication-aff-task.html",
+    "https://docs.netapp.com/us-en/ontap/volumes/manage-aggregate-level-deduplication-aff-task.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
   }
  ]
 }
