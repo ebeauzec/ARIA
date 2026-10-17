@@ -38,7 +38,7 @@ If your existing MetroCluster configuration contains a platform that uses **shar
 NetApp strongly recommends that you enable console logging on the devices you are using and take the following actions when performing this procedure:
 
 - Leave AutoSupport enabled during maintenance.
-- Trigger a maintenance AutoSupport message before and after maintenance to disable case creation for the duration of the maintenance activity. See KB [How to suppress automatic case creation during scheduled maintenance windows](https://kb.netapp.com/removed-link).
+- Trigger a maintenance AutoSupport message before and after maintenance to disable case creation for the duration of the maintenance activity. See KB How to suppress automatic case creation during scheduled maintenance windows.
 - Enable session logging for any CLI session. See the "Logging Session Output" section in KB [How to configure PuTTY for optimal connectivity to ONTAP systems](https://kb.netapp.com/on-prem/ontap/Ontap_OS/OS-KBs/How_to_configure_PuTTY_for_optimal_connectivity_to_ONTAP_systems).
 
 ## Perform the refresh procedure

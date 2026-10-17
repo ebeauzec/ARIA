@@ -15,7 +15,7 @@ Fetched: 2026-07-07
 
 - NetApp tests firmware releases in MetroCluster to ensure the highest reliability and performance.
 - Only firmware releases that are listed in the Interoperability Matrix Tool (IMT) or Hardware Universe (HWU) have undergone this qualification and are supported.
-- For more information on reviewing a list of all the supported firmware versions, see the [IMT](https://mysupport.netapp.com/matrix/) and [HWU](https://hwu.netapp.com/).
+- For more information on reviewing a list of all the supported firmware versions, see the IMT and [HWU](https://hwu.netapp.com/).
 - NetApp recommends using the latest qualified firmware for the ONTAP release.
 
 For more information on upgrading your firmware to a supported version, see the following KB articles/documents:

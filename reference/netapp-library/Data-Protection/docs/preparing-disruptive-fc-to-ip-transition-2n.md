@@ -9,7 +9,7 @@ Before starting the transition process, you must make sure the configuration mee
 NetApp strongly recommends that you enable console logging on the devices you are using and take the following actions when performing this procedure:
 
 - Leave AutoSupport enabled during maintenance.
-- Trigger a maintenance AutoSupport message before and after maintenance to disable case creation for the duration of the maintenance activity. See KB [How to suppress automatic case creation during scheduled maintenance windows](https://kb.netapp.com/removed-link).
+- Trigger a maintenance AutoSupport message before and after maintenance to disable case creation for the duration of the maintenance activity. See KB How to suppress automatic case creation during scheduled maintenance windows.
 - Enable session logging for any CLI session. See the "Logging Session Output" section in KB [How to configure PuTTY for optimal connectivity to ONTAP systems](https://kb.netapp.com/on-prem/ontap/Ontap_OS/OS-KBs/How_to_configure_PuTTY_for_optimal_connectivity_to_ONTAP_systems).
 
 ## General requirements for disruptive FC-to-IP transition
@@ -116,7 +116,7 @@ You must verify the health and connectivity of the MetroCluster FC configuration
    d. Perform a MetroCluster check: `metrocluster check run`
    e. Display the results of the MetroCluster check: `metrocluster check show`
    f. Check for any health alerts on the switches (if present): `storage switch show`
-   g. Run Config Advisor ([NetApp Downloads: Config Advisor](https://mysupport.netapp.com/site/tools/tool-eula/activeiq-configadvisor)).
+   g. Run Config Advisor (NetApp Downloads: Config Advisor).
    h. After running Config Advisor, review the tool's output and follow the recommendations to address any issues discovered.
 2. Verify that the nodes are in non-HA mode: `storage failover show`
 

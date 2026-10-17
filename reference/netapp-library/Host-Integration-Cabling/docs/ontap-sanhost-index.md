@@ -26,6 +26,6 @@ This content provides distribution-specific guidance on how to configure SAN cli
 - [All SAN Array software configuration](https://docs.netapp.com/us-en/ontap/task_asa_software_configuration.html)
 - [SAN administration](https://docs.netapp.com/us-en/ontap/san-admin/index.html)
 - [SAN configuration](https://docs.netapp.com/us-en/ontap/san-config/index.html)
-- [Earlier Host Utilities releases](https://mysupport.netapp.com/documentation/productlibrary/index.html?archive=true&language=en&productID=61343)
+- Earlier Host Utilities releases
 
 PDF of full doc site: https://docs.netapp.com/us-en/ontap-sanhost/pdfs/fullsite-sidebar/ONTAP_SAN_Host_Utilities.pdf

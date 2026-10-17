@@ -55,7 +55,7 @@ Note: This documentation is for StorageGRID 12.0. Other versions available: 11.9
 
 ## More resources
 
-- [StorageGRID support page](https://mysupport.netapp.com/site/products/all/details/5d9f1107e01d9c0001ee50f6/guideme-tab)
+- StorageGRID support page
 - [NetApp Interoperability Matrix Tool (IMT)](https://imt.netapp.com/matrix/#welcome)
 - [StorageGRID knowledge base](https://kb.netapp.com/Advice_and_Troubleshooting/Hybrid_Cloud_Infrastructure/StorageGRID)
 - [NetApp blog](https://netapp.com/blog/)

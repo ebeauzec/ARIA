@@ -62,7 +62,7 @@
 - [TR-4705 — NetApp MetroCluster solution architecture and design (PDF)](https://www.netapp.com/pdf.html?item=/media/13480-tr4705.pdf)
 - [TR-4689 — MetroCluster IP solution architecture and design (PDF)](https://www.netapp.com/pdf.html?item=/media/13481-tr4689.pdf)
 - TR-4375 — NetApp MetroCluster FC
-- Additional MetroCluster resources: [NetApp Hardware Universe](https://hwu.netapp.com/), [NetApp Config Advisor](https://mysupport.netapp.com/site/tools/tool-eula/activeiq-configadvisor) (support login required)
+- Additional MetroCluster resources: [NetApp Hardware Universe](https://hwu.netapp.com/), NetApp Config Advisor (support login required)
 
 Verified live 2026-07-04.
 - [ONTAP business continuity technical reports index](https://docs.netapp.com/us-en/ontap-technical-reports/business-continuity.html)

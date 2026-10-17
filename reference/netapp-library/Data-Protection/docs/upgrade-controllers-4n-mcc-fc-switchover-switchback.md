@@ -16,7 +16,7 @@ You can upgrade certain platforms using the switchover and switchback operation 
 
   > **Note:** If the original or new platforms are FAS8020 or AFF8020 systems using ports 1c and 1d in FC-VI mode, see KB [Upgrading controllers when FCVI connections on existing FAS8020 or AFF8020 nodes use ports 1c and 1d](https://kb.netapp.com/Advice_and_Troubleshooting/Data_Protection_and_Security/MetroCluster/Upgrading_controllers_when_FCVI_connections_on_existing_FAS8020_or_AFF8020_nodes_use_ports_1c_and_1d).
 
-- The licenses at both sites must match. Obtain new licenses from [NetApp Support](https://mysupport.netapp.com/site/).
+- The licenses at both sites must match. Obtain new licenses from NetApp Support.
 - This procedure applies to controller modules in a MetroCluster FC configuration (two-node stretch, or two/four/eight-node fabric-attached).
 - All controllers in the same DR group should be upgraded during the same maintenance period. Operating the MetroCluster configuration with different controller types in the same DR group is not supported outside of this maintenance activity. For eight-node configurations, controllers within a DR Group must be the same, but both DR groups can use different controller types.
 - Mapping storage, FC, and Ethernet connections between original and new nodes in advance is recommended.
@@ -28,7 +28,7 @@ Example names used in this procedure: site_A (before: node_A_1-old, node_A_2-old
 
 NetApp strongly recommends enabling console logging and:
 - Leave AutoSupport enabled during maintenance.
-- Trigger a maintenance AutoSupport message before and after maintenance to disable case creation. See KB [How to suppress automatic case creation during scheduled maintenance windows](https://kb.netapp.com/removed-link).
+- Trigger a maintenance AutoSupport message before and after maintenance to disable case creation. See KB How to suppress automatic case creation during scheduled maintenance windows.
 - Enable session logging for any CLI session — see "Logging Session Output" in KB [How to configure PuTTY for optimal connectivity to ONTAP systems](https://kb.netapp.com/on-prem/ontap/Ontap_OS/OS-KBs/How_to_configure_PuTTY_for_optimal_connectivity_to_ONTAP_systems).
 
 ## Prepare for the upgrade
@@ -51,7 +51,7 @@ Steps:
    b. `metrocluster node show`
    c. `metrocluster check run`
    d. `metrocluster check show`
-4. Check MetroCluster cabling with Config Advisor: download and run [Config Advisor](https://mysupport.netapp.com/site/tools/tool-eula/activeiq-configadvisor), then review output and follow recommendations.
+4. Check MetroCluster cabling with Config Advisor: download and run Config Advisor, then review output and follow recommendations.
 
 ### Map ports from the old nodes to the new nodes
 
@@ -214,7 +214,7 @@ Steps:
 Performed on each new controller module.
 
 Steps:
-1. Access [NetApp Support Site](https://mysupport.netapp.com/site/) to download netboot files.
+1. Access NetApp Support Site to download netboot files.
 2. Download the appropriate ONTAP software and store the `ontap-version_image.tgz` file on a web-accessible directory.
 3. Verify needed files are available:
 

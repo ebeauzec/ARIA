@@ -18,7 +18,7 @@ NetApp MetroCluster configurations combine array-based clustering with synchrono
 - [Drive shelves](https://docs.netapp.com/us-en/ontap-metrocluster/maintain/index.html)
 
 ## RCF files
-- [MetroCluster RCF files](https://mysupport.netapp.com/site/products/all/details/metrocluster-rcf/docsandkb-tab)
+- MetroCluster RCF files
 
 ## Upgrade, expand, and convert
 - [Upgrade and refresh hardware](https://docs.netapp.com/us-en/ontap-metrocluster/upgrade/concept_choosing_an_upgrade_method_mcc.html)
@@ -34,10 +34,10 @@ NetApp MetroCluster configurations combine array-based clustering with synchrono
 - [Recover from a disaster](https://docs.netapp.com/us-en/ontap-metrocluster/disaster-recovery/concept_dr_workflow.html)
 
 ## ATTO bridge firmware
-- [ATTO FibreBridge firmware downloads](https://mysupport.netapp.com/site/products/all/details/atto-fibrebridge/downloads-tab)
+- ATTO FibreBridge firmware downloads
 
 ## More resources
-- [NetApp Config Advisor](https://mysupport.netapp.com/site/tools/tool-eula/activeiq-configadvisor)
+- NetApp Config Advisor
 - [NetApp Hardware Universe](https://hwu.netapp.com/)
 - [NetApp Support Knowledge Base](https://kb.netapp.com/)
 

@@ -1,6 +1,6 @@
 # ARIA — Active IQ Risk Intelligence Advisor
 
-[![Version](https://img.shields.io/badge/version-5.6.359-0066cc)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.6.360-0066cc)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-3776AB?logo=python&logoColor=white)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
@@ -145,7 +145,7 @@ In a single sync, the tool harvests your complete fleet telemetry from the Activ
 - Kerberos AES enforcement detection
 - SnapMirror synchronous policy alignment audit
 - Legacy firewall policy deprecation detection
-- **StorageGRID best-practice and risk checks** — nodes not sending AutoSupport, single admin or gateway node, single-site grid, single-copy or default-only ILM, no versioning or Object Lock, mixed node versions, appliance end-of-availability (NetApp notice removed-ref), capacity and support term, each with a recommendation, injected into the same risk engine as every other platform
+- **StorageGRID best-practice and risk checks** — nodes not sending AutoSupport, single admin or gateway node, single-site grid, single-copy or default-only ILM, no versioning or Object Lock, mixed node versions, capacity and support term, each with a recommendation, injected into the same risk engine as every other platform
 - **Restricted-account support** — accounts without unfiltered Active IQ access (watchlist-scoped only) are harvested through their discovered watchlists for every query
 - **Harvest Resilience** — merge-back guard prevents transient API failures from wiping cached system and cluster data. A watchlist lookup is tried three times, customers and sites lost in a result that dropped 10% or more are kept from the previous harvest, and an account whose harvest fails is shown as a warning in Settings until a harvest of it succeeds.
 
@@ -327,7 +327,7 @@ In a single sync, the tool harvests your complete fleet telemetry from the Activ
 
 **Workflow:**
 1. Select the customer, then open **Action Planner → StorageGRID**. Every grid shows its **real node count**: Active IQ publishes the whole grid topology from the admin node, so nodes that never send AutoSupport themselves are still counted, broken out by role (admin, gateway, storage, archive) and form factor (physical appliance, VMware VM, bare metal).
-2. Read the findings and recommendations (above the tenants table): nodes not reporting AutoSupport, single admin or gateway node, single-site grid, single-copy or default-only ILM rules, buckets without versioning or S3 Object Lock, mixed node software versions, appliance models under end-of-availability notice removed-ref, capacity, and support term.
+2. Read the findings and recommendations (above the tenants table): nodes not reporting AutoSupport, single admin or gateway node, single-site grid, single-copy or default-only ILM rules, buckets without versioning or S3 Object Lock, mixed node software versions, capacity, and support term.
 3. Review the **ILM rules** (placements, storage pools, ingest behaviour, copy counts / erasure-coding scheme, time periods in days), **tenants and buckets**, and per-site capacity.
 4. Click **Download Word** for the full **StorageGRID Assessment Report** (executive summary, prioritised findings and recommended actions, per-grid node roster, ILM rules, tenants and buckets).
 5. The same data feeds the TAM Success Plan, QBR, Executive Risk Assessment, Handover, MSP, Risk & Remediation, Security Brief and Customer Health deliverables, and StorageGRID findings are injected into the risk engine so they appear in Technical Risks and the Remediation Tracker.
@@ -956,7 +956,7 @@ The desktop program runs the same server as `python server.py`, in a window of i
 
 Confirmed by live schema introspection; these show as *Not reported*, never as a guess:
 - E-Series (SANtricity) and StorageGRID nodes have no controller, port or WWPN fields; E-Series reports projected, not actual, power.
-- VMware StorageGRID nodes expose no model, drive, version or health detail; no open per-model end-of-support dates for StorageGRID appliances (NetApp notice removed-ref is flagged, dates are on mysupport.netapp.com).
+- VMware StorageGRID nodes expose no model, drive, version or health detail; no open per-model end-of-support dates for StorageGRID appliances.
 - StorageGRID ILM has no active-policy flag; ILM time periods are in days.
 - SP/BMC, BIOS and DQP firmware for StorageGRID and E-Series; shelf module firmware is reported only as an outdated count on some systems.
 - Cluster switches: only switches monitored by the Cluster Switch Health Monitor (CSHM) carry model, firmware, RCF version and contract; others have only a name. No switch ports, ISL or health fields, and no switch support-contract dates were returned. Some customers have no switch records at all.

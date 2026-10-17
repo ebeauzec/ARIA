@@ -14,7 +14,7 @@ Man pages are also available at the ONTAP command line with the `man` command. L
 
 ## CLI comparison tool
 
-You can learn about changes to the command-line interface (CLI) commands between ONTAP releases by using the [CLI Comparison Tool](https://mysupport.netapp.com/site/cli-comparison) on the NetApp Support Site.
+You can learn about changes to the command-line interface (CLI) commands between ONTAP releases by using the CLI Comparison Tool on the NetApp Support Site.
 
 ## Related information
 

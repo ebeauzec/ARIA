@@ -196,7 +196,7 @@
    "status": "approved",
    "family": "ontap",
    "matchOn": "description",
-   "match": "cluster config(?:uration)? backups are not being pushed remotely",
+   "match": "cluster config(?:uration)? backups are not being pushed remotely|no backup destination defined|backup destination url .* has not been defined",
    "cause": "The cluster configuration backups are written only to the cluster itself.",
    "impact": "If {cluster} is lost or its root volume corrupted, there is no off-cluster copy to rebuild the configuration from.",
    "steps": [
@@ -1628,18 +1628,18 @@
    "status": "approved",
    "family": "eseries",
    "match": "dbm \\(storage array configuration\\) corruption may occur",
-   "cause": "Active IQ reports that {node} (SANtricity OS {version}) is exposed to the configuration database (DBM) corruption that NetApp advisory removed-ref describes. The finding says: {detail}",
+   "cause": "Active IQ reports that {node} (SANtricity OS {version}) is exposed to a configuration database (DBM) corruption. The finding says: {detail}",
    "impact": "The corruption is detected after any controller reboot, or after a drive failure in the same Dynamic Disk Pool (DDP). Once detected, the controllers panic (reboot) and lock down to preserve the data (lockdown codes 0ELt and 0ELF), and NetApp Support has to correct it.",
    "steps": [
-    "1. Read bulletin removed-ref (https://kb.netapp.com/removed-link). It is not public, so this report cannot quote it: note which SANtricity OS releases are affected, which release fixes it and any workaround NetApp gives.",
-    "2. Open a NetApp support case now, quoting the bulletin removed-ref, the array's serial number and the SANtricity OS release ({version}), and ask whether this array is affected and which release to move to.",
+    "1. Read the corrective action NetApp attaches to the finding in Active IQ: note which SANtricity OS releases are affected, which release fixes it and any workaround NetApp gives. This report does not quote it.",
+    "2. Open a NetApp support case now, quoting the Active IQ finding, the array's serial number and the SANtricity OS release ({version}), and ask whether this array is affected and which release to move to.",
     "3. Until it is fixed, do not reboot or reset the controllers without agreeing it with NetApp Support: the finding says detection follows any controller reboot or a drive failure in the same DDP. Look at the Recovery Guru regularly (Home > Bell icon > Recover from n problems) and deal with what it lists.",
     "4. Be ready for support: when NetApp Support or the Recovery Guru tells you to, save the RAID configuration database in System Manager with Support > Diagnostics > Collect Configuration Data > Collect. It writes configurationData-<arrayName>-<dateTime>.7z to the browser's Downloads folder (the same data as the CLI command save storageArray dbmDatabase); send it to support. The file Settings > System > Save Storage Array Configuration produces is a script for replicating settings and is not a backup for disaster recovery.",
-    "5. Upgrade to the release the bulletin names as the fix, with the SANtricity OS upgrade procedure (Support > Upgrade center). Active IQ's recommended release for this array is {target|not reported}: check that it is at or above the fixed release in the bulletin. If this array is the storage controller of a StorageGRID appliance (SG5700, SG6000), upgrade SANtricity OS from the Grid Manager instead: Maintenance > System > Software update > SANtricity OS update, after applying the latest StorageGRID hotfix.",
+    "5. Upgrade to the release NetApp names as the fix, with the SANtricity OS upgrade procedure (Support > Upgrade center). Active IQ's recommended release for this array is {target|not reported}: check that it is at or above the fixed release NetApp names. If this array is the storage controller of a StorageGRID appliance (SG5700, SG6000), upgrade SANtricity OS from the Grid Manager instead: Maintenance > System > Software update > SANtricity OS update, after applying the latest StorageGRID hotfix.",
     "6. If the controllers are already locked down (the 7-segment display shows 0ELt or 0ELF and System Manager reports Alternate Controller Database Error), contact your NetApp Technical Support Engineer: the lockdown message itself says so, and NetApp's own articles on this lockdown describe a restore of the database that can fail and needs support."
    ],
    "options": [
-    "Option A: Upgrade to the release the bulletin names as the fix (recommended once it is known).",
+    "Option A: Upgrade to the release NetApp names as the fix (recommended once it is known).",
     "Option B: Stay on the current release with reboots avoided and a support case open, until the upgrade window.",
     "Option C: Ask NetApp Support whether the array should be moved to the fixed release as an emergency change."
    ],
@@ -1650,7 +1650,6 @@
     "rollback": "Nothing to roll back in steps 1 to 4; the upgrade is not reversed on your own (see the SANtricity upgrade procedure)."
    },
    "sources": [
-    "https://kb.netapp.com/removed-link",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-support/collect-configuration-data.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-settings/save-storage-array-configuration.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-support/upgrade-controller-software-and-firmware.html",
@@ -1700,17 +1699,17 @@
    "approvedAt": "2026-10-17"
   },
   {
-   "id": "eseries.removed-ref-upgrade-failure",
+   "id": "eseries.santricity-upgrade-certificate-failure",
    "status": "approved",
    "family": "any",
-   "match": "\\bremoved-ref\\b",
-   "cause": "{node} runs SANtricity OS {version}. advisory removed-ref (removed-ref) says the certificate signing and validation in the SANtricity OS releases it lists keeps the controllers from recognising the validity of the firmware certificate, so a SANtricity OS or firmware upgrade fails.",
+   "match": "santricity os and fw upgrade failures",
+   "cause": "{node} runs SANtricity OS {version}. NetApp reports that the certificate signing and validation in the SANtricity OS releases it lists keeps the controllers from recognising the validity of the firmware certificate, so a SANtricity OS or firmware upgrade fails.",
    "impact": "The upgrade fails with 'Missing alternate trust chain for DLP file' and the event 'A certificate failed authentication' (type 5083), so the array cannot be brought to a newer release with the normal procedure. NetApp's article on this error says the affected releases were withdrawn from the Support Site until the fixed releases are published.",
    "steps": [
     "1. Know the symptoms: a SANtricity OS upgrade (System Manager, or SMcli with download storagearray firmware) fails with 'The firmware download failed because the controller cannot process the request. Failure reason: Missing alternate trust chain for DLP file.' On a StorageGRID appliance it fails the same way on the Software update and SANtricity OS update pages of the Grid Manager. The E-Series event log (System Manager, Support section, Events) and the major event log in a support bundle show event type 5083: 'A certificate failed authentication'.",
     "2. Know the releases: NetApp's article lists SANtricity OS 11.80x, 11.80.1x (GA, R1, R2 and R3) and 11.90x before R2 as affected, and says their download is disabled on the Support Site until the fix is released (11.80.1R4 and 11.90R2). This array runs {version}.",
-    "3. Read bulletin removed-ref (https://kb.netapp.com/removed-link). It is not public, so this report cannot quote it: note the route NetApp gives to a fixed release and any workaround.",
-    "4. Open a NetApp support case quoting removed-ref, the array's serial number, the SANtricity OS release ({version}), the event 5083 text and the name of the upgrade file that failed, and ask for the supported way to reach a fixed release.",
+    "3. Read the corrective action NetApp attaches to the finding in Active IQ: note the route it gives to a fixed release and any workaround. This report does not quote it.",
+    "4. Open a NetApp support case quoting the Active IQ finding, the array's serial number, the SANtricity OS release ({version}), the event 5083 text and the name of the upgrade file that failed, and ask for the supported way to reach a fixed release.",
     "5. For an E-Series array that belongs to a StorageGRID appliance (SG5700, SG6000, SG6100): its SANtricity OS must stay at a version your StorageGRID release supports, and that list might not yet include the fixed release. Check the supported SANtricity OS versions for the appliance at NetApp Downloads: StorageGRID Appliance or in the NetApp Interoperability Matrix Tool before choosing the target. Apply the latest StorageGRID hotfix first, then upgrade from the Grid Manager: Maintenance > System > Software update > SANtricity OS update.",
     "6. For a standalone E-Series array, once a fixed release is available to you, upgrade with the SANtricity OS upgrade procedure (Support > Upgrade center)."
    ],
@@ -1725,7 +1724,6 @@
     "rollback": "Nothing to roll back in steps 1 to 4."
    },
    "sources": [
-    "https://kb.netapp.com/removed-link",
     "https://kb.netapp.com/on-prem/E-Series/SANtricity-OS-KBs/E-Series_SANtricity_OS_upgrade_fails_with_missing_alternate_trust_chain_for_DLP_file_message",
     "https://docs.netapp.com/us-en/storagegrid-appliances/sg6000/upgrading-santricity-os-on-storage-controllers-using-grid-manager-sg6000.html",
     "https://docs.netapp.com/us-en/e-series-santricity/sm-support/upgrade-controller-software-and-firmware.html"
@@ -1886,6 +1884,672 @@
    "sources": [
     "https://docs.netapp.com/us-en/ontap/volumes/enable-disable-background-deduplication-aff-task.html",
     "https://docs.netapp.com/us-en/ontap/volumes/manage-aggregate-level-deduplication-aff-task.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.broadcast-domain-single-port",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "broadcast domain contains one port",
+   "vars": {
+    "domains": "Broadcast-domains?\\s+(.+?)\\s+only contain",
+    "bd1": "Broadcast-domains?\\s+([A-Za-z0-9_.-]+)"
+   },
+   "cause": "On {cluster}, the broadcast domain(s) {domains|named in the finding} contain only one port.",
+   "impact": "A LIF in a broadcast domain with a single port cannot fail over to another port when the node or the port fails, because there is no other port in the domain to fail over to.",
+   "steps": [
+    "1. See the domains and their ports: network port broadcast-domain show ; network port show -fields broadcast-domain,mtu,link",
+    "2. For each domain, find a second port that is cabled to the same network (and VLAN), preferably on another node, so that a node failure leaves a port to fail over to. If there is none, cable one before changing anything.",
+    "3. Add the port to the broadcast domain: network port broadcast-domain add-ports -broadcast-domain {bd1|<broadcast-domain>} -ports <node>:<port>  (several ports: <node1>:<port>,<node2>:<port>). A port belongs to one domain only: if the port is in another domain or in none, remove it from there first with network port broadcast-domain remove-ports.",
+    "4. Check that LIFs can fail over: network interface show -failover  and look at the failover group and policy of the LIFs that use the domain.",
+    "5. If a domain is a leftover that nothing uses, remove its LIFs first and then the domain, rather than leaving a one-port domain behind."
+   ],
+   "options": [
+    "Option A: Add a second port from another node to each one-port domain (recommended).",
+    "Option B: Remove a domain that nothing uses."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; adding a port does not move LIFs",
+    "rollback": "network port broadcast-domain remove-ports -broadcast-domain <name> -ports <node>:<port>"
+   },
+   "sources": [
+    "https://kb.netapp.com/on-prem/ontap/Ontap_OS/OS-KBs/Broadcast_domain_contains_only_one_port",
+    "https://docs.netapp.com/us-en/ontap-cli/network-port-broadcast-domain-add-ports.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.svm-language",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "data svms should have consistent language",
+   "cause": "Data SVMs on {cluster} have different language encodings. The finding says: {detail}",
+   "impact": "A SnapMirror relationship between volumes of different languages fails to be established, and restores between them can be affected.",
+   "steps": [
+    "1. List the languages: vserver show -fields language ; volume show -fields language",
+    "2. Choose one language for the data SVMs, the one most of them use unless a technical requirement dictates another. NetApp recommends the .UTF-8 form, for example en_US.UTF-8; the SVM default is C.UTF-8.",
+    "3. For SVMs that will get new volumes, set the default for those volumes: vserver modify -vserver <svm> -language <language>. This sets the default for the SVM's volumes created afterwards; volumes that already exist keep the language they have.",
+    "4. A volume's own language is not something to change on your own: NetApp's command reference says to contact technical support to change the language of a volume, and the only change documented is from a *.UTF-8 language to utf8mb4 (ONTAP 9.7P1 and later, non-disruptive, not for SnapMirror source and destination volumes). For other cases create a new volume with the right language and copy the data into it with a file-based copy.",
+    "5. Before any move, check how the volume is accessed: volume show -vserver <svm> -volume <volume> -fields security-style,language"
+   ],
+   "options": [
+    "Option A: Standardise new SVMs and volumes on one language and plan a migration for the volumes that differ (recommended).",
+    "Option B: Keep the difference where a technical requirement needs it, and record why; do not set up SnapMirror between volumes of different languages."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap-cli/vserver-modify.html",
+    "https://docs.netapp.com/us-en/ontap-cli/volume-modify.html",
+    "https://kb.netapp.com/on-prem/ontap/da/NAS/NAS-KBs/Can_the_volume_language_be_changed_after_creation_in_ONTAP"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.lun-volume-junction-path",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "volumes with lun\\(s\\) with junction path",
+   "vars": {
+    "vols": "configured:\\s*(.+?)(?:\\.\\s|$)",
+    "vol1": "configured:\\s*([A-Za-z0-9_.-]+)"
+   },
+   "cause": "Volumes that hold LUNs also have a junction path, which makes them reachable from NFS and SMB: {vols}.",
+   "impact": "A junction path is the route NAS clients use to reach a volume. A volume that holds LUNs and is also mounted in the NAS namespace exposes the LUN files to NAS clients, which is a risk to the LUNs.",
+   "steps": [
+    "1. Find the SVM and the state of the volume: volume show -volume {vol1|<volume>} -fields vserver,state,junction-path,junction-active",
+    "2. Make sure nothing legitimate uses the volume over NFS or SMB: check its export policy and SMB shares with the application owner. Unmounting ends new NAS sessions to the volume and to the volumes mounted below its junction.",
+    "3. Unmount it: volume unmount -vserver {svm} -volume {vol1|<volume>}",
+    "4. Do NOT take the volume offline to finish the job: taking a volume offline makes all the LUNs in it unavailable. Unmounting is enough here because SAN hosts do not use the junction path.",
+    "5. Check: volume show -vserver {svm} -volume {vol1|<volume>} -fields state,junction-path,junction-active ; lun show -vserver {svm} -volume {vol1|<volume>} -fields state,mapped",
+    "6. Repeat for the other volumes in the finding."
+   ],
+   "options": [
+    "Option A: Unmount the junction of volumes that hold only LUNs (recommended).",
+    "Option B: Keep the junction where the volume is genuinely shared with NAS clients, and record why."
+   ],
+   "ticket": {
+    "risk": "Medium",
+    "window": "Quiet period; NAS sessions to the volume end",
+    "rollback": "volume mount -vserver <svm> -volume <volume> -junction-path <path>  (existing export policies and SMB shares are kept)."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/nfs-admin/mount-unmount-existing-volumes-nas-namespace-task.html",
+    "https://docs.netapp.com/us-en/ontap-cli/volume-unmount.html",
+    "https://docs.netapp.com/us-en/ontap-cli/volume-offline.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.svm-root-security-style",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "svm root volume security style",
+   "vars": {
+    "rsvm": "SVM\\s*-\\s*([A-Za-z0-9_.-]+)"
+   },
+   "cause": "The root volume of SVM {rsvm|named in the finding} has the mixed security style. The finding says: {detail}",
+   "impact": "A volume created without a security style inherits the style of the SVM root volume, so a mixed root spreads mixed permissions to new volumes, which can cause permission problems if it is not set up carefully.",
+   "steps": [
+    "1. See the styles in the SVM: volume show -vserver {rsvm|<svm>} -fields volume,security-style ; and the root volume: vserver show -vserver {rsvm|<svm>} -fields rootvolume",
+    "2. Choose the style that matches the data volumes of the SVM: NetApp's guidance is that the root volume has the same style as the other volumes in the SVM, and for SMB workloads such as Hyper-V and SQL Server over SMB that is NTFS. Choose NTFS or UNIX unless there is a specific reason for mixed.",
+    "3. Change it: volume modify -vserver {rsvm|<svm>} -volume <root-volume> -security-style ntfs  (or unix)",
+    "4. Check: volume show -vserver {rsvm|<svm>} -fields volume,security-style",
+    "5. Remember that existing data volumes keep their own style; only volumes created afterwards without a style inherit the root's. Changing the style of a data volume with data is a separate decision (NetApp's articles on it say ONTAP enforces the new style's permissions only once the permissions have been propagated from a client)."
+   ],
+   "options": [
+    "Option A: Set the root volume to the style the data volumes use (recommended).",
+    "Option B: Keep mixed where a documented requirement needs it."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "volume modify -vserver <svm> -volume <root-volume> -security-style mixed"
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/smb-hyper-v-sql/verify-security-style-svm-root-volume-ntfs-task.html",
+    "https://kb.netapp.com/on-prem/ontap/Ontap_OS/OS-KBs/What_is_security_styles_for_SVM_root_volume"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.cifs-oplocks",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "cifs oplock settings are not properly configured",
+   "vars": {
+    "qtree": "qtree:([A-Za-z0-9_.-]+)"
+   },
+   "cause": "A CIFS share or qtree on SVM {svm} has oplocks disabled. The finding says: {detail}",
+   "impact": "Oplocks let clients lock files and cache content locally. Without them there are more operations to the storage, which can degrade performance.",
+   "steps": [
+    "1. See the settings. Share: vserver cifs share show -vserver {svm} -fields share-properties  (oplocks is among the properties when enabled). Qtree: volume qtree show -vserver {svm} -fields oplock-mode",
+    "2. Decide whether disabling was deliberate (some applications need it). If it was not, enable it.",
+    "3. Share: vserver cifs share properties add -vserver {svm} -share-name <share> -share-properties oplocks. Disabling oplocks on a share takes precedence over the volume setting and turns off opportunistic and lease oplocks, so a share that lacks the property has no oplocks even when its volume has them.",
+    "4. Qtree{?qtree} {qtree}{/?}: volume qtree oplocks -vserver {svm} -volume <volume> -qtree <qtree> -oplock-mode enable  (oplocks are enabled on volumes by default; a qtree takes the volume's setting unless one was set on it).",
+    "5. Check again with the commands of step 1."
+   ],
+   "options": [
+    "Option A: Enable oplocks again on shares and qtrees where nothing requires them off (recommended).",
+    "Option B: Keep them off where the application vendor requires it, and record why."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; clients pick it up on new opens",
+    "rollback": "vserver cifs share properties remove -vserver <svm> -share-name <share> -share-properties oplocks"
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/smb-admin/enable-disable-oplocks-existing-shares-task.html",
+    "https://docs.netapp.com/us-en/ontap/smb-admin/commands-oplocks-volumes-qtrees-reference.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.autosupport-truncation",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "asup truncation identification and avoidance",
+   "cause": "AutoSupport data from {cluster} is truncated or skipped during collection or delivery. The finding says: {detail}",
+   "impact": "If content is missing from an AutoSupport message, proactive case avoidance, AutoSupport alerts and efficient reactive support may not be available or may be delayed. The logs can still be pulled from the system by hand while they are present.",
+   "steps": [
+    "1. See which files are affected: system node autosupport manifest show -node * -status *-limit",
+    "2. Read the status. collection-truncated-file-size-limit is expected: some files have hard-coded budgets that cannot be changed, and NetApp says that truncation can be ignored. The statuses that matter are collection-truncated-size-limit, collection-skipped-size-limit, collection-truncated-time-limit, collection-skipped-time-limit and delivery-skipped-size-limit.",
+    "3. For delivery-skipped-size-limit on SMTP (the default SMTP delivery budget is 5 MB, the HTTPS one 50 MB): change the transport to HTTPS, which NetApp recommends: system node autosupport modify -transport https -support enable. HTTPS is also needed for AutoSupport OnDemand and for uploading large files such as core dumps. Allow HTTPS from the cluster to NetApp (through your proxy if you use one).",
+    "4. If SMTP must stay, raise the SMTP message size to one your mail servers accept: system node autosupport modify -max-smtp-size <size>.",
+    "5. Send again what was cut: system node autosupport history retransmit -node <node> -seq-num <number>.",
+    "6. Check: system node autosupport show -fields transport,support,max-smtp-size ; system node autosupport check show"
+   ],
+   "options": [
+    "Option A: Switch the transport to HTTPS (recommended).",
+    "Option B: Stay on SMTP with a larger message size limit."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "system node autosupport modify -transport smtp  (with the mail host settings that were in place)"
+   },
+   "sources": [
+    "https://kb.netapp.com/on-prem/ontap/Ontap_OS/OS-KBs/AutoSupport_manifest_is_reporting_collection_of_files_as_truncated_or_skipped_in_ONTAP_9",
+    "https://docs.netapp.com/us-en/ontap/system-admin/setup-autosupport-task.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.autosupport-to-netapp-address",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "autosupport \"-to\" parameter includes autosupport",
+   "cause": "The AutoSupport -to list on {cluster} contains NetApp's own address. The finding says: {detail}",
+   "impact": "The -to parameter is for your own addresses. Messages for NetApp go by the transport (HTTPS), so the same message can arrive twice, once by HTTPS and once by SMTP, which can cause automation failures and cases not being created.",
+   "steps": [
+    "1. See the list: system node autosupport show -fields to,transport,support",
+    "2. Set -to to your own recipients only, without NetApp's address: system node autosupport modify -to <your-address-1>,<your-address-2>  (use an empty list if you want no e-mail copies).",
+    "3. Make sure NetApp still receives the messages by the transport: system node autosupport modify -support enable -transport https",
+    "4. Check: system node autosupport show -fields to,transport,support ; and test the delivery: system node autosupport invoke -type test"
+   ],
+   "options": [
+    "Option A: Remove the NetApp address from -to and keep HTTPS as the route to NetApp (recommended)."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "system node autosupport modify -to <the previous list>"
+   },
+   "sources": [
+    "https://kb.netapp.com/on-prem/ontap/Ontap_OS/OS-KBs/Alerts_Event__Autosupport_to_parameter_includes_autosupport_netapp_on_System_Mgr",
+    "https://docs.netapp.com/us-en/ontap/system-admin/setup-autosupport-task.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.inodes-high",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "amount of inodes used",
+   "vars": {
+    "vols": "(?:using at least \\d+% of the available inodes:)\\s*(.+?)\\.?$"
+   },
+   "cause": "{?vols}These volumes on {cluster} are close to the file (inode) limit: {vols}.{:}Volumes on {cluster} are close to the file (inode) limit.{/?} The finding says: {detail}",
+   "impact": "When a volume reaches its file limit no more files can be created on it, even though it still has free space. ONTAP reports this as wafl.vol.outOfInodes (\"file system is out of inodes\").",
+   "steps": [
+    "1. Read the limit and the use for each volume (advanced privilege): set -privilege advanced ; volume show -vserver {svm} -volume <volume> -fields size,files,files-used,files-maximum-possible",
+    "2. files is the limit now in force, files-used is what is in use, files-maximum-possible is the most the volume can have. If files equals files-maximum-possible, the limit cannot be raised further: increase the size of the volume (the file limit grows with it when it was not set by hand: volume modify -vserver {svm} -volume <volume> -size <new-size>) or delete files.",
+    "3. If the volume cannot grow, raise the limit by hand. NetApp's rule when the growth is not known: current files x 1.02, for a migration 2% above the source file count. Then: volume modify -vserver {svm} -volume <volume> -files <new-limit>",
+    "4. ONTAP refuses a value above files-maximum-possible: it cannot support more than one inode per 4 KB of disk space.",
+    "5. Confirm and go back to normal privilege: volume show -vserver {svm} -volume <volume> -fields files,files-used ; set -privilege admin"
+   ],
+   "options": [
+    "Option A: Grow the volume, which raises the file limit with it (when the limit was not set by hand).",
+    "Option B: Raise the file limit by about 2% (or what the growth needs), within the maximum for the volume's size.",
+    "Option C: Remove files or move data to another volume."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "A file limit cannot be lowered below the files in use; the size of the volume can be reduced with volume modify -size when it has room."
+   },
+   "sources": [
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Storage_Software/ONTAP_OS/How_to_increase_the_maximum_number_of_files_for_a_flexible_volume",
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Storage_Software/ONTAP_OS/FAQ_-_ONTAP_maximum_number_of_inodes_(maxfiles)",
+    "https://docs.netapp.com/us-en/ontap-cli/volume-modify.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.nfs-unix-windows-name-mapping",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "unix to windows name mapping is failing",
+   "vars": {
+    "vservers": "vservers? impacted:\\s*(.+?)\\.?$"
+   },
+   "cause": "An NFS client request on {cluster} could not be mapped from a UNIX user name to a Windows user name{?vservers} (SVMs named in the finding: {vservers}){/?}. The finding says: {detail}",
+   "impact": "NFS clients can be denied access to volumes or qtrees with the NTFS security style. ONTAP logs secd.nfsAuth.noNameMap.",
+   "steps": [
+    "1. See the failure and the user it concerns in the EMS log: event log show -message-name secd.nfsAuth.noNameMap. The secd log of the node named in the message, at the same time, shows the client IP address that sent the request.",
+    "2. See where name mappings are looked up for the SVM: vserver services name-service ns-switch show -vserver {svm|<svm>} -database namemap",
+    "3. If the source order includes files, look for an entry for the UNIX user: vserver name-mapping show -vserver {svm|<svm>} -direction unix-win",
+    "4. If there is none, create an explicit mapping for each user listed in the error: vserver name-mapping create -vserver {svm|<svm>} -direction unix-win -position <number> -pattern <unix-user> -replacement <domain\\user>",
+    "5. Make sure the Windows user you map to has the permissions the data needs on the NTFS security style volume. A UNIX user name should not be the same as the user name in Active Directory.",
+    "6. Test it with the verification described in the linked NetApp page and confirm that secd.nfsAuth.noNameMap stops: event log show -message-name secd.nfsAuth.noNameMap"
+   ],
+   "options": [
+    "Option A: Explicit name mapping for each UNIX user that needs access (recommended).",
+    "Option B: Review whether those clients should reach NTFS security style volumes at all."
+   ],
+   "security": true,
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "vserver name-mapping delete -vserver <svm> -direction unix-win -position <number>"
+   },
+   "sources": [
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Storage_Software/ONTAP_OS/Event_message%3A_secd.nfsAuth.noNameMap",
+    "https://docs.netapp.com/us-en/ontap-cli/vserver-name-mapping-create.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.unexpected-bootarg",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "unexpected bootargument is set",
+   "cause": "A boot argument that is meant for an automated non-disruptive upgrade (ANDU) is still set on {cluster}. The finding says: {detail}",
+   "impact": "bootarg.gb.override.lmgr.veto and bootarg.gb.override.sms.veto make ONTAP override vetoes during a giveback. Left set when no upgrade is running, a giveback can disrupt service, and the lock manager override can make CIFS clients lose their file locks and reconnect.",
+   "steps": [
+    "1. Make sure no automated upgrade is running now, because the arguments belong to one: cluster image show-update-progress",
+    "2. If one is running, leave the arguments alone until it has finished; ANDU unsets them when it completes.",
+    "3. If none is running, the arguments must be unset. NetApp's article names the two arguments and the risk but does not list the command; follow the linked page, or ask NetApp support, so that the unset is done the way NetApp documents it, on each node named in the finding.",
+    "4. Run the check again after the next AutoSupport message from the cluster to see the finding clear."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Outside an upgrade; no outage",
+    "rollback": "None needed: the arguments are only meant to exist during an upgrade."
+   },
+   "sources": [
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Storage_Software/ONTAP_OS/Unexpected_bootargument_is_set_-_Active_IQ_Wellness_Risk",
+    "https://docs.netapp.com/us-en/ontap-cli/cluster-image-show-update-progress.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.fpolicy-no-server",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "fpolicy is enabled and no longer being u|no fpolicy servers are currently connected",
+   "cause": "FPolicy is enabled on {cluster} but no FPolicy server is connected. The finding says: {detail}",
+   "impact": "NetApp flags the system to prevent a performance impact from an FPolicy that is enabled but not served. FPolicy adds work to every operation it monitors, and its cost depends on the operations monitored, the number of servers, the policies that screen the same operation and the response time of the server.",
+   "steps": [
+    "1. See the policies and whether they are enabled: vserver fpolicy show ; vserver fpolicy policy show",
+    "2. See which servers each engine uses and whether they are connected: vserver fpolicy show-engine ; vserver fpolicy policy external-engine show",
+    "3. If the solution is still in use, restore the connection: check that the FPolicy server is running and reachable from the SVM's data LIFs, and that the external engine has the right primary servers and port. The partner solution's documentation covers its side.",
+    "4. If the solution is no longer used, remove the configuration: vserver fpolicy disable -vserver {svm|<svm>} -policy-name <policy> ; then delete the policy with vserver fpolicy policy delete and the engine with vserver fpolicy policy external-engine delete once nothing uses them.",
+    "5. To measure what FPolicy costs while it is enabled, NetApp gives: statistics start -object fpolicy -sample-id <id> ; statistics show -sample-id <id> (also the objects fpolicy_policy and fpolicy_server)."
+   ],
+   "options": [
+    "Option A: Reconnect the server if the solution is still needed.",
+    "Option B: Disable and remove the FPolicy configuration if it is no longer used (recommended then)."
+   ],
+   "thirdParty": "An FPolicy partner solution (for example a file-activity or antivirus product) is affected; coordinate with its owner before disabling the policy.",
+   "ticket": {
+    "risk": "Low",
+    "window": "Outside a large migration; no outage",
+    "rollback": "vserver fpolicy enable -vserver <svm> -policy-name <policy> -sequence-number <number>"
+   },
+   "sources": [
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Storage_Software/ONTAP_OS/What_is_the_performance_impact_on_NAS_when_using_FPolicy_in_ONTAP%3F",
+    "https://docs.netapp.com/us-en/ontap-cli/vserver-fpolicy-disable.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.native-vlan-degraded",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "native vlan port is degraded",
+   "cause": "A native (untagged) VLAN port on {cluster} reports degraded because ONTAP finds no layer 2 reachability on it. The finding says: {detail}",
+   "impact": "The finding itself describes this as usually cosmetic with no impact. NetApp's article describes the same picture after an upgrade to ONTAP 9.13.1: the native ports a0a, e0a or e1c show degraded while the ports with VLANs (for example a0a-100) show healthy.",
+   "steps": [
+    "1. Read the state of the ports: network port show -node {node|*} ; network port reachability show -node {node|*}",
+    "2. A native port with no-reachability while its tagged VLAN ports show ok matches the case in NetApp's article. For an interface group look at the members: network port ifgrp show",
+    "3. Check that data is not affected: network interface show -is-home false ; network interface show -fields status-oper",
+    "4. The article lists the symptom and the EMS messages (vifmgr.reach.unassn) but no change to make; if clients are affected, or the port is in no broadcast domain you expect, open a case and give the output of the commands above."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; read-only checks",
+    "rollback": "None: nothing is changed."
+   },
+   "sources": [
+    "https://kb.netapp.com/onprem/ontap/da/NAS/Native_VLAN_ports_show_degraded_after_upgrade_to_ONTAP_9.13.1",
+    "https://docs.netapp.com/us-en/ontap-cli/network-port-reachability-show.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.ifgrp-health",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "port in an ifgrp is in a broken state|ifgrp configuration check|interface groups? with sequential|igrp\\(s\\) are configured with no ports",
+   "vars": {
+    "ifgrp": "(?:interface group|ifgrp|ports? in an ifgrp)\\s+(a\\d+[a-z]+)"
+   },
+   "cause": "An interface group on {cluster} is not set up as NetApp recommends{?ifgrp} ({ifgrp}){/?}. The finding says: {detail}",
+   "impact": "An interface group with fewer than 2 ports gives no redundancy, one with no ports cannot serve data, ports in the broken state do not pass traffic (redundancy and throughput are lost), and sequential load balancing can degrade performance.",
+   "steps": [
+    "1. See the group, its function, its members and the ports in use: network port ifgrp show -node {node|*}",
+    "2. Read the state of the member ports and the switch side: network port show -node {node|*} ; and for LACP, from the node shell, twice with 2 minutes between to see the counters change: system node run -node {node|<node>} -command ifconfig (the node shell command to run is ifconfig -v)",
+    "3. For ports in a broken state: check the cable, the SFP and the switch port and its LACP/port-channel configuration, then re-check step 1. Link errors on a member show in: system node run -node {node|<node>} -command ifstat (the node shell command to run is ifstat <port>)",
+    "4. For a group with fewer than 2 ports, or none, add a port of the same speed from the right broadcast domain: network port ifgrp add-port -node {node|<node>} -ifgrp {ifgrp|<ifgrp>} -port <port>",
+    "5. For sequential load balancing, the distribution function is set when the group is created (network port ifgrp create -distr-func). NetApp's finding recommends a different one; see the linked page for the function that fits your switch configuration before you change it, because the group must be recreated and its LIFs moved off first.",
+    "6. Confirm: network port ifgrp show -node {node|*}"
+   ],
+   "ticket": {
+    "risk": "Medium",
+    "window": "Maintenance window: a group change can interrupt the LIFs on it",
+    "rollback": "network port ifgrp remove-port -node <node> -ifgrp <ifgrp> -port <port>"
+   },
+   "sources": [
+    "https://kb.netapp.com/on-prem/ontap/da/NAS/NAS-KBs/How_to_troubleshoot_LACP_issues_in_ONTAP_9.2",
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Storage_Software/ONTAP_OS/Troubleshooting_Ethernet_Network_Ports_in_ONTAP_using_ifstat",
+    "https://docs.netapp.com/us-en/ontap-cli/network-port-ifgrp-add-port.html",
+    "https://docs.netapp.com/us-en/ontap-cli/network-port-ifgrp-show.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.hwassist-inactive",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "hardware assisted takeover is enabled but is inactive",
+   "cause": "Hardware-assisted takeover is enabled on {cluster} but its monitor is inactive. The finding says: {detail}",
+   "impact": "Hardware-assisted takeover lets the Service Processor tell the partner at once that a node has failed, so the takeover does not wait for the heartbeat to stop. While it is inactive, a takeover after a hardware failure is slower.",
+   "steps": [
+    "1. Read the state and the reason: storage failover hwassist show",
+    "2. For \"Fail to bind UDP socket\", the address in Hwassist IP is wrong: it must be the node management IP address of the node itself. Correct it for each node: storage failover modify -node <node> -hwassist-partner-ip <partner-node-management-ip> and, if the port differs from the one the partner listens on, -hwassist-partner-port <port>. The \"Corrective Action\" line of the output names the exact command.",
+    "3. Test the link between the nodes: storage failover hwassist test -node *",
+    "4. If the test times out (\"No response from partner\"), check the network path between the nodes' management addresses and the Service Processors, then test again.",
+    "5. Confirm Monitor Status is active on both nodes: storage failover hwassist show"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "storage failover modify -node <node> -hwassist-partner-ip <previous-address>"
+   },
+   "sources": [
+    "https://kb.netapp.com/on-prem/ontap/OHW/OHW-KBs/Hwassist_network_configuration_errors_with_Fail_to_bind_UDP_socket_error",
+    "https://docs.netapp.com/us-en/ontap/high-availability/ha_how_hardware-assisted_takeover_works.html",
+    "https://docs.netapp.com/us-en/ontap-cli/storage-failover-hwassist-show.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.unowned-drives",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "unowned drives or partitions present|disk with incorrect ownership",
+   "cause": "{cluster} has drives or partitions that no node owns. The finding says: {detail}",
+   "impact": "Unassigned drives and partitions are not available for data storage or as hot spares, and unowned disks do not get new firmware.",
+   "steps": [
+    "1. List them: storage disk show -container-type unassigned ; and for partitions: storage disk show -partition-ownership",
+    "2. Check each one is meant for this cluster, and for a drive with a foreign system ID that it is not owned by another system, before you assign it.",
+    "3. Assign it to the node that should own it: storage disk assign -disk <disk> -owner <node>. To assign every unowned drive a node sees: storage disk assign -all true -node <node>",
+    "4. If automatic assignment should do this, see the setting: storage disk option show -fields autoassign",
+    "5. Confirm none is left, and that the drives show as spare: storage disk show -container-type unassigned ; storage aggregate show-spare-disks"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "storage disk removeowner -disk <disk>"
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap-cli/storage-disk-assign.html",
+    "https://docs.netapp.com/us-en/ontap-cli/storage-disk-show.html",
+    "https://docs.netapp.com/us-en/ontap-cli/storage-disk-option-show.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.lifs-not-home",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "lifs are not home",
+   "cause": "Network interfaces on {cluster} are not on their home ports. The finding says: {detail}",
+   "impact": "Uneven network load: the interfaces sit on a port that may carry more traffic, and a later failover or giveback may have fewer places to go.",
+   "steps": [
+    "1. List the interfaces that are away from home: network interface show -is-home false -fields home-node,home-port,curr-node,curr-port",
+    "2. Before sending one back, make sure the home port is up and in the right broadcast domain: network port show -node <home-node> ; network port reachability show -node <home-node>",
+    "3. Send them home: network interface revert -vserver {svm|*} -lif <lif> (or network interface revert -vserver * -lif * for every interface).",
+    "4. So that they return by themselves after a failure, turn on auto-revert: network interface modify -vserver <svm> -lif <lif> -auto-revert true",
+    "5. Confirm: network interface show -is-home false"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Outside peak hours: a revert briefly interrupts the connections on that interface",
+    "rollback": "network interface migrate -vserver <svm> -lif <lif> -destination-node <node> -destination-port <port>"
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap-cli/network-interface-revert.html",
+    "https://docs.netapp.com/us-en/ontap-cli/network-interface-show.html",
+    "https://docs.netapp.com/us-en/ontap-cli/network-interface-modify.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.ha-license-mismatch",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "software licenses match on both nodes of ha pair",
+   "cause": "The licenses on the two nodes of an HA pair in {cluster} are not the same. The finding says: {detail}",
+   "impact": "If a license is not on both partners, its features may not be available after a takeover, which can disrupt service.",
+   "steps": [
+    "1. List the licenses with the node they are on: system license show -fields serial-number,package,owner,expiration",
+    "2. Compare the two partners package by package and note the ones missing on one of them. Note that from ONTAP 9.10.1 a license is a NetApp license file (NLF) that enables several features at once.",
+    "3. Add the missing license from the license file or key NetApp issued for that node's serial number: system license add -license-code <code>",
+    "4. Remove a stale entry only when you are sure it is not in use: system license delete -serial-number <serial> -package <package>",
+    "5. Confirm the state and that nothing is out of compliance: system license show-status ; system license show"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "system license delete -serial-number <serial> -package <package>"
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap/system-admin/manage-licenses-concept.html",
+    "https://docs.netapp.com/us-en/ontap-cli/system-license-show.html",
+    "https://docs.netapp.com/us-en/ontap-cli/system-license-add.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.snapmirror-update-failure",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "snapmirror relationship failed to update",
+   "cause": "A SnapMirror relationship on {cluster} failed to update. The finding says: {detail}",
+   "impact": "Updates for the affected volumes keep failing until the cause is dealt with, so the destination falls behind the source and the recovery point grows.",
+   "steps": [
+    "1. Read the error on the destination: snapmirror show -destination-path <destination-svm>:<destination-volume> -instance. Look at Healthy, Unhealthy Reason and Last Transfer Error. You get the same text from: snapmirror update -destination-path <destination-svm>:<destination-volume>",
+    "2. Find that error in NetApp's SnapMirror Update Failures Resolution Guide (the linked page): it lists the common errors for volume SnapMirror and SVM-DR, each with its solution.",
+    "3. Two cases follow from the error text. A transfer that did not start because the relationship is quiesced: snapmirror resume -destination-path <destination-svm>:<destination-volume>. An exported Snapshot copy that no longer exists on the source (\"a resync is required\"): snapmirror resync -destination-path <destination-svm>:<destination-volume>.",
+    "4. Where the error names a peer cluster or a volume that cannot be found, check the peering and the interfaces first: cluster peer show ; vserver peer show ; network interface show -service-policy default-intercluster",
+    "5. After the fix, run an update and confirm it is healthy: snapmirror update -destination-path <destination-svm>:<destination-volume> ; snapmirror show -destination-path <destination-svm>:<destination-volume> -fields healthy,lag-time,last-transfer-error"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; a resync can transfer a lot of data, so use a quiet period",
+    "rollback": "snapmirror quiesce -destination-path <destination-svm>:<destination-volume>"
+   },
+   "sources": [
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Protection_and_Security/SnapMirror/SnapMirror_Update_Failures_Resolution_Guide",
+    "https://docs.netapp.com/us-en/ontap-cli/snapmirror-show.html",
+    "https://docs.netapp.com/us-en/ontap-cli/snapmirror-resync.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.ems-destination",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "ems event destination is not configured",
+   "cause": "{cluster} has no EMS event notification destination. The finding says: {detail}",
+   "impact": "An important EMS event is not pushed to a monitoring service unless a destination is configured.",
+   "steps": [
+    "1. See what exists. ONTAP 9 delivers events by rules: filters select the events, destinations say where they go, and notifications join the two. A default configuration is made at installation, and it is switched off by removing its notifications: event notification show ; event notification destination show ; event filter show",
+    "2. Create a destination for your monitoring service, for example an e-mail address: event notification destination create -name <name> -email <address>",
+    "3. Join it to a filter. The built-in filters cannot be changed, but they can be used or copied: event notification create -filter-name default-trap-events -destinations <name>",
+    "4. If an SNMP trap host is the target: system snmp traphost add -peer-address <host>",
+    "5. Confirm: event notification show"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "event notification delete -ID <id>"
+   },
+   "sources": [
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Storage_Software/ONTAP_OS/FAQ%3A_Overview_of_Event_Management_System_for_ONTAP_9",
+    "https://docs.netapp.com/us-en/ontap-cli/event-notification-destination-create.html",
+    "https://docs.netapp.com/us-en/ontap-cli/event-notification-create.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.system-health-alerts",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "system health alerts",
+   "cause": "{cluster} has raised system health alerts. The finding says: {detail}",
+   "impact": "The impact is what the alert says; it can include system availability.",
+   "steps": [
+    "1. List the alerts, with the subsystem and the corrective action ONTAP gives: system health alert show -instance",
+    "2. Look at the state of each subsystem: system health status show ; system health subsystem show",
+    "3. Deal with the cause the alert names (its Corrective Action line). Alerts clear by themselves when the condition is gone.",
+    "4. If an alert has been dealt with by hand and should not be reported again, acknowledge it: system health alert modify -node <node> -monitor <monitor> -alert-id <id> -acknowledge true",
+    "5. Confirm: system health alert show"
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Depends on the alert",
+    "rollback": "system health alert modify -node <node> -monitor <monitor> -alert-id <id> -acknowledge false"
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/ontap-cli/system-health-alert-show.html",
+    "https://docs.netapp.com/us-en/ontap-cli/system-health-alert-modify.html"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.crc-errors",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "crc error check for data nic ports|crc errors on data port",
+   "vars": {
+    "port": "data port\\s+([a-z0-9]+)"
+   },
+   "cause": "A data network port on {cluster} has CRC errors{?port} ({port}){/?}. The finding says: {detail}",
+   "impact": "High CRC error counts or link resets cause packet loss, and are typically caused by physical defects in the port, the SFP or the cable.",
+   "steps": [
+    "1. Read the counters for the port from the node shell: system node run -node {node|<node>} -command ifstat (the node shell command to run is ifstat {port|<port>}). The counters are cumulative from boot or from the last clear.",
+    "2. Clear them and read again after some time to see whether the errors still grow: system node run -node {node|<node>} -command ifstat (the node shell command to run is ifstat -z {port|<port>})",
+    "3. If they grow, replace the parts in the path one at a time, starting with the cable and then the SFP, and check the switch port for errors.",
+    "4. If the errors continue with new parts, the port itself is the suspect: open a case with the ifstat output."
+   ],
+   "ticket": {
+    "risk": "Medium",
+    "window": "Maintenance window if the port carries traffic without a redundant path",
+    "rollback": "Put the previous cable or SFP back."
+   },
+   "sources": [
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Storage_Software/ONTAP_OS/Troubleshooting_Ethernet_Network_Ports_in_ONTAP_using_ifstat"
+   ],
+   "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
+   "approvedAt": "2026-10-17"
+  },
+  {
+   "id": "ontap.mdv-crs-placement",
+   "status": "approved",
+   "family": "ontap",
+   "matchOn": "description",
+   "match": "mdv_crs volumes located on the same ha pair",
+   "cause": "The MetroCluster metadata volumes (MDV_CRS) of {cluster} are on the same HA pair. The finding says: {detail}",
+   "impact": "Locating the MDV_CRS volumes on the same HA pair can lead to outages in certain disaster scenarios and can prevent a switchover.",
+   "steps": [
+    "1. See where the metadata volumes are: volume show -fields volume,aggregate -volume MDV_CRS*",
+    "2. NetApp's best practice is to have them on two different mirrored data aggregates, on an eight-node MetroCluster spread over two HA pairs. If both are on one aggregate, one of them has to move.",
+    "3. Move the secondary metadata volume to another aggregate in the way the MetroCluster service guide describes (\"Moving a metadata volume in MetroCluster configurations\"); the article puts the system in advanced privilege (set -privilege advanced) for it.",
+    "4. Check the MetroCluster afterwards and that the volumes are on separate aggregates: metrocluster check run ; metrocluster check show ; volume show -fields volume,aggregate -volume MDV_CRS*"
+   ],
+   "ticket": {
+    "risk": "Medium",
+    "window": "Maintenance window; the move is online but run it when the MetroCluster is healthy",
+    "rollback": "Move the volume back with the same procedure."
+   },
+   "sources": [
+    "https://kb.netapp.com/Advice_and_Troubleshooting/Data_Protection_and_Security/MetroCluster/How_are_MDV_volumes_supposed_to_be_located_over_aggregates_%3F",
+    "https://docs.netapp.com/us-en/ontap-cli/metrocluster-check-show.html"
    ],
    "approvedBy": "automatic (valid, and every command and menu path checked against NetApp documentation)",
    "approvedAt": "2026-10-17"

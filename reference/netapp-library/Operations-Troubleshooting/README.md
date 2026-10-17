@@ -32,8 +32,8 @@
 - Triage order (per the Resolution Guide): confirm whether latency is client-perceived (network/host path) vs. cluster-perceived (`qos statistics volume latency show`, disk/aggregate utilization) before assuming a storage-side root cause — a large share of "ONTAP is slow" tickets resolve to host multipathing/queue-depth or network-path misconfiguration, not the array. Cross-check against [Host-Integration-Cabling](../Host-Integration-Cabling/README.md) and [Networking-Performance](../Networking-Performance/README.md) for the host/network side of that triage.
 
 ## Support tooling
-- [NetApp Interoperability Matrix Tool](https://mysupport.netapp.com/matrix) (support login required) — always the authoritative source for supported host OS/HBA/multipath/hypervisor/protocol combinations; don't rely solely on TRs, which lag IMT updates.
-- [NetApp Config Advisor](https://mysupport.netapp.com/site/tools/tool-eula/activeiq-configadvisor) (support login required) — automated config/cabling validation, useful pre- and post-change.
+- NetApp Interoperability Matrix Tool (support login required) — always the authoritative source for supported host OS/HBA/multipath/hypervisor/protocol combinations; don't rely solely on TRs, which lag IMT updates.
+- NetApp Config Advisor (support login required) — automated config/cabling validation, useful pre- and post-change.
 - [NetApp Hardware Universe](https://hwu.netapp.com/) — platform specs, port maps, and physical planning reference.
 
 ## Notes

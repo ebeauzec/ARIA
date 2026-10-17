@@ -39,7 +39,7 @@
 
 ## Rubrik
 - Mechanism: Rubrik triggers ONTAP snapshots via NetApp APIs and was the first backup vendor granted access to the **SnapDiff API**, which lets Rubrik enumerate changed data for cloud archival in seconds/minutes instead of hours.
-- [NetApp Support Site — Rubrik alliance info](https://mysupport.netapp.com/site/policies-and-offerings/rubrik) (support login required)
+- NetApp Support Site — Rubrik alliance info (support account required)
 
 ## Cohesity
 - [Configure and register NetApp ONTAP — Cohesity DataProtect docs](https://docs.cohesity.com/baas/data-protect/configure-register-netapp.htm)

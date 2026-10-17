@@ -45,20 +45,37 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.359";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.360";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
   {
-    version: "5.6.359",
+    version: "5.6.360",
     date: "2026-10-17",
-    title: "removed-ref and optimisation procedures",
+    title: "Fifteen more best-practice procedures",
     sections: [
       {
         icon: "✨",
         label: "Added",
         color: "#3b82f6",
         items: [
-          "Six more procedures, written from NetApp's pages and approved by the automatic checks: the E-Series SANtricity OS upgrade failure of advisory removed-ref (symptoms and event 5083, the affected releases and the fixed ones NetApp's article names, what to ask support, and the rule that an array in a StorageGRID appliance may only use SANtricity versions its StorageGRID release supports); the optimisation suggestions 'use flash/SSDs' for E-Series (SSD Cache for read-heavy hard-disk volumes, or an all-flash array as a project) and for StorageGRID (where NetApp requires performance-tier media for metadata, system data and the container pool, and how metadata capacity grows); 'reduce temperature to lower power usage' (reading the system's temperature sensors and thresholds, and taking the reading to the facilities team); 'thin provisioning not enabled' (the volumes named in the finding, how to make them thin and how to watch the space); and 'background aggregate deduplication not enabled' (the background and inline forms, and the scan of existing data).",
+          "Fifteen more procedures, written from NetApp's pages and approved by the automatic checks: inodes (file limit) nearly used on a volume, Unix-to-Windows name mapping that fails for NFS clients, a boot argument left set after an upgrade, FPolicy enabled with no server connected, a native VLAN port reported degraded, interface groups (broken ports, fewer than two ports, sequential load balancing), hardware-assisted takeover inactive, unowned drives, interfaces away from their home port, HA partners with different licenses, SnapMirror update failures, no EMS notification destination, system health alerts, CRC errors on a data port, and MetroCluster metadata volumes on the same HA pair. The cluster-configuration-backup procedure now also covers MetroCluster nodes with no backup destination.",
+          "Where NetApp's page gives no command (the boot argument to unset, the function to use for an interface group), the procedure says so and sends the reader to the linked page instead of guessing.",
+          "Coverage on the large test fleet: 32,009 of 32,948 findings (97.2%); 93 procedures, 342 commands and menu paths checked, none wrong.",
+        ],
+      },
+    ],
+  },
+  {
+    version: "5.6.359",
+    date: "2026-10-17",
+    title: "Certificate upgrade failure and optimisation procedures",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Six more procedures, written from NetApp's pages and approved by the automatic checks: the E-Series SANtricity OS upgrade failure caused by the firmware certificate (symptoms and event 5083, the affected releases and the fixed ones NetApp's article names, what to ask support, and the rule that an array in a StorageGRID appliance may only use SANtricity versions its StorageGRID release supports); the optimisation suggestions 'use flash/SSDs' for E-Series (SSD Cache for read-heavy hard-disk volumes, or an all-flash array as a project) and for StorageGRID (where NetApp requires performance-tier media for metadata, system data and the container pool, and how metadata capacity grows); 'reduce temperature to lower power usage' (reading the system's temperature sensors and thresholds, and taking the reading to the facilities team); 'thin provisioning not enabled' (the volumes named in the finding, how to make them thin and how to watch the space); and 'background aggregate deduplication not enabled' (the background and inline forms, and the scan of existing data).",
           "Two claims that were not on the NetApp pages cited (that SSD Cache is limited to hard-disk volumes and is not available on EF600 and EF300) were taken out of the SSD Cache procedure before release: the automatic checks verify commands and menu paths, so the wording around them was checked by hand against the fetched pages.",
           "Coverage on the large test fleet: 31,483 of 32,948 findings (95.6%); 71 procedures, 255 commands and menu paths checked, none wrong.",
         ],
@@ -75,7 +92,7 @@ const APP_CHANGELOG = [
         label: "Added",
         color: "#3b82f6",
         items: [
-          "Two more procedures, written from NetApp's own pages: the E-Series configuration database (DBM) corruption that advisory removed-ref describes (the array is exposed after a controller reboot or a drive failure in a disk pool; the procedure covers reading the bulletin, opening a case, avoiding reboots, collecting the configuration database when support asks, upgrading to the fixed release, and what to do if the controllers are already locked down) and StorageGRID object retention in the active ILM policy (how retention and precedence work, finding the rules, cloning the rule and the policy instead of editing the active ones, simulating, and activating with the confirmation StorageGRID asks for). Bulletin removed-ref is not public, so the procedure says what it cannot quote and sends the reader to it instead of guessing the fixed release.",
+          "Two more procedures, written from NetApp's own pages: the E-Series configuration database (DBM) corruption (the array is exposed after a controller reboot or a drive failure in a disk pool; the procedure covers reading the bulletin, opening a case, avoiding reboots, collecting the configuration database when support asks, upgrading to the fixed release, and what to do if the controllers are already locked down) and StorageGRID object retention in the active ILM policy (how retention and precedence work, finding the rules, cloning the rule and the policy instead of editing the active ones, simulating, and activating with the confirmation StorageGRID asks for). The procedure does not quote the fixed release; it sends the reader to the corrective action in the finding instead of guessing it.",
           "New procedures are approved automatically. A draft in a playbook file (data/playbooks_local.json, or tools/playbooks.json for the shipped set) becomes approved as soon as it passes every automatic check: the entry is valid (NetApp pages as sources only, placeholders declared, no ONTAP commands in an E-Series or StorageGRID procedure, no tool name) and every command and menu path in it is verified against NetApp's documentation, with nothing wrong and nothing unchecked. `python tools/playbook_verify.py --promote` does it, the maintenance run at every session start and the weekly job run it, and the entry records how it was approved. A draft that fails stays a draft and the command says why. The cited pages are read at once when they are not cached yet, so a new procedure can be checked straight away.",
           "Coverage on the large test fleet: 31,093 of 32,948 findings (94.4%); 65 procedures, 241 commands and menu paths checked, none wrong.",
         ],
@@ -2564,7 +2581,6 @@ const APP_CHANGELOG = [
         label: "New -- StorageGRID Appliance End-of-Availability Finding",
         color: "#22c55e",
         items: [
-          "NetApp's end-of-availability notice removed-ref covers the SG100, SG1000, SG5712, SG5760 and SG6060 appliances. Grids with nodes on those models now get a finding with a recommendation to obtain the dates from the notice (mysupport.netapp.com) and plan a refresh. No dates are stated, because NetApp does not publish them openly. On the current fleet it applies to 10 of 12 grids.",
         ],
       },
     ],
@@ -21764,7 +21780,6 @@ const _SG_RECS = [
   ['Nodes not reporting to Active IQ', 'Enable AutoSupport for the whole grid and for E-Series appliance controllers so each node reports to Active IQ; Active IQ then shows per-node health, risks and capacity.', ['Grid Manager > Support > Tools > AutoSupport > Settings: enable weekly and event-triggered AutoSupport; confirm the destination (HTTPS or proxy) reaches support.netapp.com.', 'On the same page enable E-Series AutoSupport so appliance storage controllers report via StorageGRID.', 'For virtual nodes confirm the node is included in the grid AutoSupport; send a test message and verify it in Active IQ.']],
   ['Nodes with stale AutoSupport', 'Restore AutoSupport on the listed nodes (check proxy/HTTPS reachability to support.netapp.com and the node connection state in Grid Manager).', ['Grid Manager > Nodes: confirm the node is connected.', 'Support > Tools > AutoSupport: send a test AutoSupport and verify it in Active IQ.']],
   ['Appliance nodes past hardware end of support', 'Plan replacement or migration of the affected appliance nodes (expand with current-generation nodes, decommission via the grid ILM and node decommission procedure).', ['Quote current-generation storage appliances.', 'Add replacement nodes, let ILM rebalance, then decommission the old nodes.']],
-  ['Appliance models under NetApp end-of-availability notice', 'Read NetApp notice removed-ref (mysupport.netapp.com) for the end-of-availability and end-of-support dates of these models, and include the nodes in the next hardware refresh plan; keep spares and support coverage until replacement.', ['Obtain removed-ref from mysupport.netapp.com and record the end-of-support dates per model.', 'Plan replacement with current-generation StorageGRID appliances and migrate by adding new nodes and decommissioning the old ones.']],
   ['Appliance nodes nearing hardware end of support', 'Budget and schedule a refresh of the affected appliance nodes before support ends.', ['Include the nodes in the next hardware refresh plan.']],
   ['Nodes missing from the grid inventory', 'Confirm every installed node is online and visible in Grid Manager (Nodes page), and that the admin node AutoSupport is current so Active IQ receives the full topology.', ['Grid Manager > Nodes: check each node for connection errors.', 'Send an AutoSupport from the primary admin node.']],
   ['Single admin node', 'Deploy a non-primary admin node for management and audit-log redundancy.', ['Plan a non-primary admin node (appliance SG100/SG1000 or VM) and add it through the Expansion procedure.']],
@@ -22373,10 +22388,6 @@ function _dfStorageGridView(systems) {
     const eosPast = eosNodes.filter(x => x.d < 0), eosSoon = eosNodes.filter(x => x.d >= 0 && x.d < 365);
     if (eosPast.length) add('high', 'Appliance nodes past hardware end of support', `${eosPast.length} node${eosPast.length !== 1 ? 's are' : ' is'} past hardware end of support (${[...new Set(eosPast.map(x => (x.n.applianceModel || x.n.hostName) + ' ' + String(x.n.health.eos).slice(0, 10)))].slice(0, 4).join(', ')}).`);
     if (eosSoon.length) add('medium', 'Appliance nodes nearing hardware end of support', `${eosSoon.length} node${eosSoon.length !== 1 ? 's reach' : ' reaches'} hardware end of support within 12 months (${[...new Set(eosSoon.map(x => (x.n.applianceModel || x.n.hostName) + ' ' + String(x.n.health.eos).slice(0, 10)))].slice(0, 4).join(', ')}).`);
-    // NetApp end-of-availability notice removed-ref covers these appliance models (the dates are in the notice on
-    // mysupport.netapp.com, not public, so no date is stated here).
-    const eoaNodes = g.nodes.filter(n => /^(SG100|SG1000|SG5712|SG5760|SG6060)\b/i.test(String(n.applianceModel || '')));
-    if (eoaNodes.length) { const mods = {}; eoaNodes.forEach(n => { const k = String(n.applianceModel).toUpperCase(); mods[k] = (mods[k] || 0) + 1; }); add('medium', 'Appliance models under NetApp end-of-availability notice', `${eoaNodes.length} node${eoaNodes.length !== 1 ? 's are' : ' is'} on appliance models covered by NetApp end-of-availability notice removed-ref (${Object.keys(mods).map(k => mods[k] + ' x ' + k).join(', ')}); end-of-support follows end of availability.`); }
     const nodesNoDetail = Math.max(0, Math.max(g.installedNodeCount || 0) - g.nodes.length);
     if (nodesNoDetail > 0) add('medium', 'Nodes missing from the grid inventory', g.nodes.length ? `The grid reports ${g.installedNodeCount} installed nodes but only ${g.nodes.length} are described in its topology; ${nodesNoDetail} have no role, model or version detail.` : `The grid reports ${g.installedNodeCount} installed nodes but its topology lists none, so node roles, models, versions and AutoSupport coverage cannot be assessed.`);
     const admins = g.nodes.filter(n => /admin/i.test(String(n.storageNodeType || '')));

@@ -13,7 +13,7 @@ The following requirements apply to the Cisco FC switches:
 - The switch must support connectivity to the ATTO FibreBridge model.
 - You cannot use encryption or compression in the Cisco FC storage fabric. It is not supported in the MetroCluster configuration.
 
-In the [NetApp Interoperability Matrix Tool (IMT)](https://mysupport.netapp.com/matrix), you can use the Storage Solution field to select your MetroCluster solution. You use the **Component Explorer** to select the components and ONTAP version to refine your search. You can click **Show Results** to display the list of supported configurations that match the criteria.
+In the NetApp Interoperability Matrix Tool (IMT), you can use the Storage Solution field to select your MetroCluster solution. You use the **Component Explorer** to select the components and ONTAP version to refine your search. You can click **Show Results** to display the list of supported configurations that match the criteria.
 
 ## About this task
 
@@ -29,7 +29,7 @@ The following requirement applies to the storage connections:
 - There are fewer than four FC initiator ports available to connect the disk storage and no additional ports can be configured as FC initiators.
 - All slots are in use and no FC initiator card can be added.
 
-**Related information:** [NetApp Interoperability Matrix Tool](https://mysupport.netapp.com/matrix)
+**Related information:** NetApp Interoperability Matrix Tool
 
 ## Cisco switch license requirements
 

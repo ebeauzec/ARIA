@@ -1,8 +1,8 @@
 {
-  "version": "5.6.359",
+  "version": "5.6.360",
   "major": 5,
   "minor": 6,
-  "patch": 359,
+  "patch": 360,
   "date": "2026-10-17",
-  "notes": "removed-ref upgrade-failure and optimisation procedures (flash, temperature, thin provisioning, aggregate deduplication)"
+  "notes": "Procedures for inodes, name mapping, FPolicy, interface groups, hardware-assisted takeover, unowned drives, LIFs, licenses, SnapMirror failures, EMS destinations, health alerts, CRC errors and MDV placement"
 }

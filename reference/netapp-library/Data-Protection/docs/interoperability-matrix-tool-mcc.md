@@ -4,7 +4,7 @@ Fetched: 2026-07-07
 
 When setting up the MetroCluster configuration, you can use the Interoperability Tool to ensure you are using supported software and hardware versions.
 
-[NetApp Interoperability Matrix Tool](https://mysupport.netapp.com/matrix)
+NetApp Interoperability Matrix Tool
 
 After opening the Interoperability Matrix, you can use the Storage Solution field to select your MetroCluster solution.
 

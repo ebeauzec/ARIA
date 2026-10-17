@@ -292,7 +292,7 @@ Beginning with Cloud Volumes ONTAP 9.13.1, L8s_v3 is supported as a VM type in A
 
 Beginning June 25, 2025, NetApp has restricted the bring your own license (BYOL) licensing model for Cloud Volumes ONTAP. The restriction applies to all customers and Cloud Volumes ONTAP deployments in AWS, Azure, and Google Cloud. The only exemptions are the U.S. Public Sector customers and China region deployments.
 
-NetApp support and services will continue until your BYOL contract expires, but your expired licenses will not be renewed or extended. When your BYOL licenses expire, you must replace them with capacity-based licenses purchased through your cloud marketplace subscriptions. Contact your NetApp accounts team or customer success representatives to discuss your options of conversion. See noticeé removed-ref.
+NetApp support and services will continue until your BYOL contract expires, but your expired licenses will not be renewed or extended. When your BYOL licenses expire, you must replace them with capacity-based licenses purchased through your cloud marketplace subscriptions. Contact your NetApp accounts team or customer success representatives to discuss your options of conversion.
 
 ## 29 May 2025
 

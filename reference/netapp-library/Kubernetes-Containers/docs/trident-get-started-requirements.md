@@ -34,7 +34,7 @@ To use Trident, you need one or more of the following supported backends:
 - Cloud Volumes ONTAP
 - Google Cloud NetApp Volumes
 - NetApp All SAN Array (ASA)
-- On-premises FAS, AFF, or ASA r2 (iSCSI, NVMe/TCP, and FC) running ONTAP versions under NetApp full or limited support. See [Software Version Support](https://mysupport.netapp.com/site/version-support).
+- On-premises FAS, AFF, or ASA r2 (iSCSI, NVMe/TCP, and FC) running ONTAP versions under NetApp full or limited support. See Software Version Support.
 - NetApp HCI/Element software 11 or above
 
 ## Trident support for KubeVirt and OpenShift Virtualization

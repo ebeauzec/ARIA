@@ -34,7 +34,9 @@ SKIP_SUFFIX = ('_FAILED.md',)
 # the library was compiled for one person; the shipped copy reads as written for any engineer
 _NAME = [(re.compile(r"\bEugene's\b"), "the engineer's"), (re.compile(r'\bEugene\b'), 'the engineer'),
          (re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'), '[e-mail address omitted]'),
-         (re.compile(r'\b([A-Za-z0-9_.-]+)@\d{1,3}(?:\.\d{1,3}){3}\b'), r'\1@<host>')]
+         (re.compile(r'\b([A-Za-z0-9_.-]+)@\d{1,3}(?:\.\d{1,3}){3}\b'), r'\1@<host>'),
+         # links into NetApp's customer-bulletin and support-portal areas are not shipped (the text of the link is kept)
+         (re.compile(r'\[([^\]]+)\]\(https?://[^)\s]*(?:removed-link|removed-link|mysupport\.netapp\.com)[^)\s]*\)'), r'\1')]
 
 
 def clean(text):

@@ -57,7 +57,7 @@ Example configuration — connecting four DS224 shelves with SSD drives and six 
 
 Before you begin:
 - Your system must already be installed in a rack if it was not shipped in a system cabinet.
-- Your configuration must be using supported hardware models and software versions. In the [NetApp Interoperability Matrix Tool (IMT)](https://mysupport.netapp.com/matrix), use the **Storage Solution** field to select your MetroCluster solution, the **Component Explorer** to select components and ONTAP version, and **Show Results** to display supported configurations.
+- Your configuration must be using supported hardware models and software versions. In the NetApp Interoperability Matrix Tool (IMT), use the **Storage Solution** field to select your MetroCluster solution, the **Component Explorer** to select components and ONTAP version, and **Show Results** to display supported configurations.
 - Each FC controller must have one FC port available for one bridge to connect to it.
 - You must be familiar with how to handle SAS cables and the considerations and best practices for installing and cabling disk shelves (see the *Installation and Service Guide* for your disk shelf model).
 - The computer you are using to set up the bridges must be running an ATTO-supported web browser to use the ATTO ExpressNAV GUI (see the *ATTO Product Release Notes* on the ATTO web site for supported browsers).

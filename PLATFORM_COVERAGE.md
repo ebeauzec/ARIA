@@ -132,7 +132,7 @@ scope.
 | Shelf module firmware summary | `SHELVES_SUMMARY_FIELDS` | ✅ harvested via scoped fallback (v5.6.221) |
 | E-Series / StorageGRID controller, port, WWPN | not in schema | ❌ genuinely unavailable |
 | VMware StorageGRID node model/drive/version/health | not in schema | ❌ genuinely unavailable |
-| Per-model StorageGRID appliance EOS dates | not published via API | ❌ (EOA notice removed-ref flagged, no dates) |
+| Per-model StorageGRID appliance EOS dates | not published via API | ❌ |
 | SP/BMC, BIOS, DQP for StorageGRID / E-Series | not reported | ❌ genuinely unavailable |
 | Non-controller Active IQ records (SnapMirror licence entries, licence managers, storage switches, product types NON_FILER/SWITCH/UNKNOWN/AIDE_DCN) | `systems(productTypes: [...])` | ✅ harvested into `otherProductSystems` (382 on the live fleet); hidden by Active IQ's default filter, so earlier versions never saw them |
 | Parts-logistics hub/depot status | only RMA parts exposed | ❌ genuinely unavailable |

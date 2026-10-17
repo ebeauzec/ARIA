@@ -37,7 +37,7 @@ Use the following table to verify whether your combination is affected. If your 
 NetApp strongly recommends that you enable console logging on the devices that you are using and take the following actions when performing this procedure:
 
 - Leave AutoSupport enabled during maintenance.
-- Trigger a maintenance AutoSupport message before and after maintenance to disable case creation for the duration of the maintenance activity. See the Knowledge Base article [How to suppress automatic case creation during scheduled maintenance windows](https://kb.netapp.com/removed-link).
+- Trigger a maintenance AutoSupport message before and after maintenance to disable case creation for the duration of the maintenance activity. See the Knowledge Base article How to suppress automatic case creation during scheduled maintenance windows.
 - Enable session logging for any CLI session. For instructions on how to enable session logging, review the "Logging Session Output" section in the Knowledge Base article [How to configure PuTTY for optimal connectivity to ONTAP systems](https://kb.netapp.com/on-prem/ontap/Ontap_OS/OS-KBs/How_to_configure_PuTTY_for_optimal_connectivity_to_ONTAP_systems).
 
 ## Example naming in this procedure
@@ -154,7 +154,7 @@ You must verify the health and connectivity of the MetroCluster configuration pr
       ```
       metrocluster check show
       ```
-   6. Run Config Advisor. See [NetApp Downloads: Config Advisor](https://mysupport.netapp.com/site/tools/tool-eula/activeiq-configadvisor).
+   6. Run Config Advisor. See NetApp Downloads: Config Advisor.
    7. After running Config Advisor, review the tool's output and follow the recommendations in the output to address any issues discovered.
 
 2. Verify that the cluster is healthy:

@@ -23,4 +23,4 @@ The StorageGRID doc site includes information such as:
 - [StorageGRID 11.7 documentation](https://docs.netapp.com/us-en/storagegrid-117/index.html)
 - [StorageGRID 11.6 documentation](https://docs.netapp.com/us-en/storagegrid-116/index.html)
 - [StorageGRID 11.5 documentation](https://docs.netapp.com/us-en/storagegrid-115/index.html)
-- [StorageGRID 11.4 documentation](https://mysupport.netapp.com/documentation/productlibrary/index.html?productID=61023)
+- StorageGRID 11.4 documentation
