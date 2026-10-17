@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.347 (2026-10-17)
+
+### Fixed
+- TAM Success Plan: the account health score appeared as the last bullet of the list of platforms and node counts (it was a line starting with an asterisk, which the Word converter read as another list item). It is now its own sentence under the list: 'Account health score: 49/100 (Grade F), calculated from the findings, support, lifecycle and capacity data collected from Active IQ.'
+- Platform lists in the documents say what a model code is. Active IQ reports some models as a bare number or a code: an E-Series array as '3000', '5700' or '2806' is now 'E-Series 3000' and so on, 'CDvM200' is 'CDvM200 (Cloud Volumes ONTAP)', 'FDvM300' is 'FDvM300 (ONTAP Select)', and 'SG6060' as an E-Series record is 'SG6060 (E-Series array of a StorageGRID appliance)'.
+- Platform lists in the documents use the names the systems are sold under, not the product codes Active IQ reports: 'AFF-A800' is 'AFF A800', 'C190' is 'AFF C190', 'FDvM300' is 'ONTAP Select (FDvM300)', 'CDvM200' is 'Cloud Volumes ONTAP (CDvM200)', and an E-Series array reported as '5700', '3000', '6000' or '2806' is 'NetApp E5700', 'EF300', 'EF600' or 'E2800' (E-Series). The rewrite runs on every document and deliverable, so a code in a table or a sentence is named the same way.
+
 ## 5.6.346 (2026-10-17)
 
 ### Fixed

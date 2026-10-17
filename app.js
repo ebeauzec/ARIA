@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.346";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.347";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.347",
+    date: "2026-10-17",
+    title: "Health score no longer a list item; model codes explained in platform lists",
+    sections: [
+      {
+        icon: "🔧",
+        label: "Fixed",
+        color: "#22c55e",
+        items: [
+          "TAM Success Plan: the account health score appeared as the last bullet of the list of platforms and node counts (it was a line starting with an asterisk, which the Word converter read as another list item). It is now its own sentence under the list: 'Account health score: 49/100 (Grade F), calculated from the findings, support, lifecycle and capacity data collected from Active IQ.'",
+          "Platform lists in the documents say what a model code is. Active IQ reports some models as a bare number or a code: an E-Series array as '3000', '5700' or '2806' is now 'E-Series 3000' and so on, 'CDvM200' is 'CDvM200 (Cloud Volumes ONTAP)', 'FDvM300' is 'FDvM300 (ONTAP Select)', and 'SG6060' as an E-Series record is 'SG6060 (E-Series array of a StorageGRID appliance)'.",
+          "Platform lists in the documents use the names the systems are sold under, not the product codes Active IQ reports: 'AFF-A800' is 'AFF A800', 'C190' is 'AFF C190', 'FDvM300' is 'ONTAP Select (FDvM300)', 'CDvM200' is 'Cloud Volumes ONTAP (CDvM200)', and an E-Series array reported as '5700', '3000', '6000' or '2806' is 'NetApp E5700', 'EF300', 'EF600' or 'E2800' (E-Series). The rewrite runs on every document and deliverable, so a code in a table or a sentence is named the same way.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.346",
     date: "2026-10-17",
@@ -22205,9 +22222,20 @@ function _dfScopeCountText(systems) {
   return `${units.length} system${units.length !== 1 ? 's' : ''}` + (parts.length ? ` (${parts.join(', ')})` : '') + (nodes !== units.length ? `, ${nodes} nodes in all` : '');
 }
 // Platform mix lines: { label, count }. StorageGRID is broken out by node role / appliance model from the grid roster.
+// Active IQ reports some models as a bare number (an E-Series array: 3000, 5700, 2806) or as a virtual platform code (CDvM200 on Cloud Volumes ONTAP, FDvM300 on
+// ONTAP Select); the label says what kind of system it is, so a list of models can be read without knowing the codes.
+function _dfModelLabel(s) {
+  const m = String(s.platform || s.model || '').trim(); if (!m) return 'Unknown';
+  const fam = _platformFamily(s), pt = String(s.platformType || '');
+  if (fam === 'eseries' && /^\d+$/.test(m)) return _marketingModel(m);
+  if (fam === 'eseries' && /^SG\d/i.test(m)) return `${m} (E-Series array of a StorageGRID appliance)`;
+  if (/cloud volumes ontap/i.test(pt)) return /^cvo$/i.test(m) ? 'Cloud Volumes ONTAP' : `Cloud Volumes ONTAP (${m})`;
+  if (/ontap.?select/i.test(pt)) return `ONTAP Select (${m})`;
+  return _marketingModel(m, pt);
+}
 function _dfPlatformMix(systems) {
   const mix = {}; const add = (k, n) => { mix[k] = (mix[k] || 0) + n; };
-  (systems || []).forEach(s => { if (_platformFamily(s) !== 'storagegrid') add(s.platform || 'Unknown', 1); });
+  (systems || []).forEach(s => { if (_platformFamily(s) !== 'storagegrid') add(_dfModelLabel(s), 1); });
   const v = _dfStorageGridView(systems);
   v.grids.forEach(g => {
     g.nodes.forEach(n => { const role = String(n.storageNodeType || 'Node'); const f = _dfSgForm(n); add(`StorageGRID ${role} (${f.label})`, 1); });
@@ -28004,7 +28032,7 @@ This TAM Success Plan aligns storage operations to ITIL Change Control, NIST/SAN
 hardening, and NetApp Best Practices across ${_effCount} system${_effCount !== 1 ? 's' : ''} spanning:
 ${platformLines}
 
-* ACCOUNT HEALTH SCORE: ${formatHealthScoreText(targetSystems)}
+Account health score: ${formatHealthScoreText(targetSystems)}, calculated from the findings, support, lifecycle and capacity data collected from Active IQ.
 
 * STAKEHOLDER MATRIX & RACI [OWNERSHIP + PRIMARY CONTACTS]
   TAM:                  ${activeTAMOwner}
@@ -40298,9 +40326,33 @@ const _DF_UNBRAND = [
   [/\b(?:this|the) tool's\b/g, "this analysis's"],
   [/\b(?:this|the) tool\b/g, 'this analysis']
 ];
+// Active IQ reports product codes (AFF-A800, C190, 5700, FDvM300); documents use the names the systems are sold under
+const _E_SERIES_NAMES = { '2800': 'E2800', '2806': 'E2800', '2812': 'E2800', '2824': 'E2800', '2860': 'E2800', '3000': 'EF300', '4000': 'E4000', '5700': 'E5700', '5724': 'E5700', '5760': 'E5700', '6000': 'EF600', '600': 'EF600' };
+function _marketingModel(code, platformType) {
+  const m = String(code == null ? '' : code).trim(); if (!m) return m;
+  const pt = String(platformType || '');
+  if (/^\d+$/.test(m)) return _E_SERIES_NAMES[m] ? `NetApp ${_E_SERIES_NAMES[m]} (E-Series)` : `E-Series ${m}`;
+  let x = m.replace(/^(AFF|ASA|FAS)[-_ ]?([A-Z]?\d+\w*)$/i, (a, f, n) => /^FAS$/i.test(f) ? `FAS${n.toUpperCase()}` : `${f.toUpperCase()} ${n.toUpperCase()}`);
+  if (x !== m) return x;
+  if (/^C\d{2,3}$/i.test(m)) return `AFF ${m.toUpperCase()}`;                       // C190, C250, C400, C800 are AFF C-Series
+  if (/^FDvM\d+/i.test(m)) return `ONTAP Select (${m})`;
+  if (/^CDvM\d+/i.test(m)) return `Cloud Volumes ONTAP (${m})`;
+  if (/^CVO$/i.test(m)) return 'Cloud Volumes ONTAP';
+  if (/^(E|EF)\d{3,4}$/i.test(m)) return `NetApp ${m.toUpperCase()} (E-Series)`;
+  return m;
+}
+// codes inside running text (a list line, a table cell): only whole tokens in a recognisable shape
+function _dfMarketingNames(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(/\b(AFF|ASA)-([A-Z]?\d{2,4}\w?)\b/g, (a, f, n) => `${f} ${n}`)
+    .replace(/(^|[^\w(])FDvM(\d+)\b(?! ?\()/g, (a, pre, n) => `${pre}ONTAP Select (FDvM${n})`)
+    .replace(/(^|[^\w(])CDvM(\d+)\b(?! ?\()/g, (a, pre, n) => `${pre}Cloud Volumes ONTAP (CDvM${n})`);
+}
 function _dfUnbrand(text) {
-  if (typeof text !== 'string' || !/ARIA|AIQ Advisor|\b(?:this|the) tool\b/.test(text)) return text;
-  let t = text;
+  if (typeof text !== 'string') return text;
+  let t = _dfMarketingNames(text);
+  if (!/ARIA|AIQ Advisor|\b(?:this|the) tool\b/.test(t)) return t;
   _DF_UNBRAND.forEach(([re, to]) => { t = t.replace(re, to); });
   return t;
 }
