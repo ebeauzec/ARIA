@@ -54,7 +54,7 @@ ARIA never writes a procedure itself and never fetches one at run time; it runs 
 |---|---|
 | `id` | 3-61 characters: lower-case letters, digits, `.` `-` `_`. A local entry with the id of a shipped one replaces it. |
 | `status` | `approved` (used), `draft` (waits for a person; listed in the coverage card), `rejected` (a local `rejected` entry switches off the shipped one with that id). |
-| `family` | `ontap`, `eseries`, `storagegrid` or `any`. |
+| `family` | `ontap`, `eseries`, `storagegrid` or `any`. A finding whose category names StorageGRID or E-Series/SANtricity counts as that product's even when its system record is classed by a model code. |
 | `match` | A regular expression (case-insensitive) tested on the finding's title and detail text. Entries are tried in file order, shipped first. |
 | `matchOn` | Optional: `description` tests the title only. |
 | `vars` | Names to pull from the finding text: each value is a regular expression whose first group becomes `{name}`. |
@@ -63,9 +63,10 @@ ARIA never writes a procedure itself and never fetches one at run time; it runs 
 | `security` | `true` lists it in the Security Brief's hardening procedures. |
 | `ticket` | `risk`, `window` and `rollback` for the change ticket. Without it the ticket says low risk and "set it back with the same modify command". |
 | `sources` | Required: the NetApp pages the procedure was written from; printed under the steps. |
+| `groupKey`, `compact`, `advisoryRef` | For a procedure one upgrade serves for many findings (the advisories an ONTAP, SANtricity or StorageGRID upgrade closes): `groupKey` (for example `SANtricity upgrade to {target} (fixes security advisories)`) names the group the documents print once per system, `compact` is the one-line form shown in each finding's own plan, `advisoryRef` is the id listed for the system. |
 | `noVerify`, `note` | Leave out the closing "confirm the finding clears" step; replace the closing note about syntax. |
 
-Placeholders: `{cluster}`, `{node}`, `{svm}`, `{policy}`, `{version}`, `{model}`, `{ref}` (the advisory link), and any name declared in `vars`. A value ARIA cannot find is printed as `<name>`, never guessed. A placeholder that is not declared makes the entry invalid (the coverage card names the problem).
+Placeholders: `{cluster}`, `{node}`, `{svm}`, `{policy}`, `{version}`, `{model}`, `{ref}` (the advisory link), `{detail}` (the finding's own detail text), `{target}` (the release the finding asks for, "Upgrade to SANtricity 11.90R6", otherwise the release Active IQ recommends for the system), `{recommended}`, `{finding}` (the CVE or the NetApp advisory id), `{cve}`, `{advisory}`, and any name declared in `vars` (a regular expression tested on the finding's title, detail and recommendation). A value ARIA cannot find is printed as `<name>`, never guessed; `{name|text}` prints `text` instead when there is no value. A placeholder that is not declared makes the entry invalid (the coverage card names the problem).
 
 ## Rules for writing one
 

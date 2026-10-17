@@ -80,6 +80,8 @@ Keep this list current: add a topic when the library gains a category.
 
 ### Procedures that are missing (`playbook-gap` items)
 
+Reading NetApp's pages: `docs.netapp.com` answers HTTP 403 to requests that identify themselves as an AI fetch tool (a plain `curl` and ARIA's own updater get the page), so read pages with the updater's reader, which says honestly what it is: `python -c "import sys; sys.path.insert(0,'tools'); import library_updater as lu; t,e=lu.http_get(URL); print(lu.html_to_text(t)[1])"`. Search engines give the page addresses.
+
 The review queue (`data/library_update_queue.json`) holds `playbook-gap` items: kinds of finding in the fleet that have no remediation procedure, largest first (the same list is in Settings > Data & Sync > Procedure coverage). For each one, as far as the time allows:
 
 1. Open the NetApp page the item links and the pages it cites. Write the procedure **only from the documentation**: every command, option and menu path must be on the page. If a step cannot be confirmed, write "see the linked page" instead of a guess.

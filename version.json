@@ -1,8 +1,8 @@
 {
-  "version": "5.6.353",
+  "version": "5.6.354",
   "major": 5,
   "minor": 6,
-  "patch": 353,
+  "patch": 354,
   "date": "2026-10-17",
-  "notes": "Procedures are data files a person approves; coverage and gaps are recorded and shown, and queued for the maintenance job"
+  "notes": "E-Series and StorageGRID procedures written from NetApp's pages; coverage 94.3%"
 }

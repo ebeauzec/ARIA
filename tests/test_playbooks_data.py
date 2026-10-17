@@ -157,6 +157,27 @@ class EngineTests(unittest.TestCase):
         self.assertIn('Configure remote login (SSH)', text)
         self.assertNotIn('ONTAP 9 command reference', text)
 
+    def test_santricity_advisory_gets_a_grouped_upgrade_procedure(self):
+        risk = {'description': 'CVE-2099-0002 Example Vulnerability in NetApp Products',
+                'riskDetail': 'E-Series/EF-Series SANtricity OS (controller firmware) has been determined to have a version or configuration exposed to a vulnerability. NTAP-20990101-0002.',
+                'recommendation': 'Upgrade to SANtricity 11.90R6 which includes the patch for this vulnerability.', 'advisoryUrl': 'https://security.netapp.com/advisory/ntap-20990101-0002/'}
+        sys_ = dict(self.tp.sysr(platform='2806'), santricityVersion='11.80.1R2', ontapVersion='11.80.1R2')
+        out = self.tp.run([{'risk': risk, 'sys': sys_}])[0]
+        self.assertIsNotNone(out)
+        text = ' '.join(out['steps'])
+        self.assertIn('SANtricity OS 11.90R6', text)
+        self.assertIn('Support > Upgrade center', text)
+        self.assertNotIn('undefined', json.dumps(out))
+        self.assertNotIn('ONTAP 9 command reference', text)
+
+    def test_storagegrid_advisory_uses_the_recommended_release(self):
+        risk = {'description': 'CVE-2099-0003 Example Vulnerability in StorageGRID', 'riskDetail': 'StorageGRID Webscale has been determined to have a version or configuration exposed to a vulnerability. Advisory ID: NTAP-20990101-0003.',
+                'recommendation': 'Upgrade to the latest recommended OS version that resolves this vulnerability.'}
+        sys_ = dict(self.tp.sysr(platform='SG6060'), recommendedOSVersion='11.9.0.8')
+        out = self.tp.run([{'risk': risk, 'sys': sys_}])[0]
+        self.assertIsNotNone(out)
+        self.assertIn('11.9.0.8', ' '.join(out['steps']))
+
 
 if __name__ == '__main__':
     unittest.main()

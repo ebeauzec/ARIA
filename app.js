@@ -45,9 +45,26 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.353";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.354";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.354",
+    date: "2026-10-17",
+    title: "SANtricity and StorageGRID procedures from NetApp's documentation",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "SANtricity (E-Series) and StorageGRID procedures, written from NetApp's own documentation pages (read this session) and shipped in tools/playbooks.json: SANtricity OS and NVSRAM upgrade for the advisories a newer controller release fixes (one procedure per array, grouped by target release, with the 11.70.5 prerequisite, the Recovery Guru check, signed-firmware rule, transfer-now/activate-later option and the post-upgrade inventory check); drive firmware upgrade (online and offline, the prerequisites, the errors that stop it); media scan frequency; hot spare coverage; drawer loss protection; Recovery Guru entries; drives past six years (logical replace); remote login (SSH), now written from the page itself. StorageGRID: software upgrade (version check, hotfix first, recovery package, prechecks, primary Admin Node, approving nodes, completion checks), NTP servers, stored object compression (with the FabricPool and range-read cautions), Object Lock for versioned buckets, and site capacity (adding volumes, shelves or nodes).",
+          "Coverage on the large test fleet: 31,074 of 32,946 findings (94.3%); E-Series 70% (from 0% for most kinds), StorageGRID 42%. The rest are optimisation suggestions (use flash), bugs whose fix is in a support article that is not public (DBM corruption, the SANtricity upgrade-failure bulletin), and a few kinds not yet written; they are listed in Settings > Data & Sync > Procedure coverage.",
+          "The playbook format gained: {name|text} (a default for a value the finding does not give), built-in values {target} (the release the finding or Active IQ asks for), {finding}, {advisory}, {cve}, {detail}, {recommended}, family 'any', and groupKey / compact / advisoryRef so one upgrade procedure serves all of an array's advisories (SANtricity and StorageGRID, as ONTAP). The Implementation Plans, Change Tickets, Handover Brief and Risk & Remediation Brief say 'systems' instead of 'clusters' for these. Findings the tool raises itself after a system is enriched (StorageGRID site capacity) now get their procedure too.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.353",
     date: "2026-10-17",
@@ -23046,7 +23063,7 @@ const _PB_SECURITY = /ontap upgrade to|ontap upgrade for|multi-admin|fips|data-a
 // Change tickets for the procedures: one ticket per finding type, covering every cluster it applies to, with the pre-check, the change, the verification and
 // the rollback. Risk and window follow what the change does to running service; the rollback is specific where ONTAP has a way back and says so where it has not.
 const _PB_TICKET = [
-  { rx: /ontap upgrade/i, risk: 'Medium', win: 'Planned maintenance window; rolling upgrade, no outage for HA pairs', back: 'Going back to the previous release is possible only in the cases NetApp documents (system node revert-to, with Support) and is not offered for every pair of releases; so validate and estimate first, keep the previous image on the nodes (system node image show), and do not use features of the new release until the cluster is confirmed healthy.' },
+  { rx: /(ontap|santricity|storagegrid) upgrade/i, risk: 'Medium', win: 'Planned maintenance window; rolling upgrade, no outage for HA pairs', back: 'Going back to the previous release is possible only in the cases NetApp documents (system node revert-to, with Support) and is not offered for every pair of releases; so validate and estimate first, keep the previous image on the nodes (system node image show), and do not use features of the new release until the cluster is confirmed healthy.' },
   { rx: /multi-admin/i, risk: 'Low', win: 'Any; no outage', back: 'Disable with: security multi-admin-verify modify -enabled false (this itself needs approval once rules exist). Remove a rule with security multi-admin-verify rule delete.' },
   { rx: /fips/i, risk: 'Medium', win: 'Maintenance window; TLS listeners restart', back: 'security config modify -interface SSL -is-fips-enabled false' },
   { rx: /export rule/i, risk: 'Medium', win: 'Business hours with the application owner present; a wrong client list blocks access', back: 'Restore the clientmatch recorded in step 1: vserver export-policy rule modify -vserver <svm> -policyname <policy> -ruleindex <n> -clientmatch 0.0.0.0/0' },
@@ -23061,30 +23078,31 @@ const _PB_TICKET = [
   { rx: /broadcast domain/i, risk: 'Medium', win: 'Maintenance window; ports change membership', back: 'Move the port back: network port broadcast-domain add-ports / remove-ports with the layout recorded in step 1.' }
 ];
 // A cluster is upgraded once, to the highest release any of its advisories asks for, so each cluster belongs to one upgrade group: the one for that release.
-function _pbVerKey(k) { const m = String(k).match(/(\d+)\.(\d+)\.(\d+)(?:P(\d+))?/); return m ? ((+m[1] * 1000 + +m[2]) * 1000 + +m[3]) * 1000 + (+m[4] || 0) : 0; }
+function _pbVerKey(k) { const m = String(k).match(/(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[PR](\d+))?/); return m ? (((+m[1] * 1000 + +m[2]) * 1000 + (+m[3] || 0)) * 1000 + (+m[4] || 0)) * 1000 + (+m[5] || 0) : 0; }
+const _PB_UPGRADE = /^(ONTAP|SANtricity|StorageGRID) upgrade/;
 function _pbBestUpgrade(systems) {
   const best = new Map();
   (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
     const k = r.hasPlaybook && r.remediationPlan && r.remediationPlan.groupKey;
-    if (!k || !/^ONTAP upgrade to /.test(k)) return;
-    const n = _unitOf(sys).name, cur = best.get(n);
+    if (!k || !/^(ONTAP|SANtricity|StorageGRID) upgrade to /.test(k)) return;
+    const n = _unitOf(sys).name + '|' + k.split(' ')[0], cur = best.get(n);
     if (!cur || _pbVerKey(k) > _pbVerKey(cur)) best.set(n, k);
   }));
   return best;
 }
 // the plan of one advisory, rewritten for the group: a single upgrade closes all of a cluster's advisories
-function _pbUpgradeText(plan) {
+function _pbUpgradeText(plan, product) {
   const st = (plan.fullSteps || plan.steps || []).slice();
-  if (st.length) st[0] = '1. Read the advisories this upgrade fixes (listed per cluster below; each is at https://security.netapp.com/advisory/): note the affected and fixed releases and any mitigation NetApp lists.';
-  return { ...plan, impact: 'The installed ONTAP release contains vulnerabilities and bugs that a newer release fixes; until the cluster is upgraded the advisories listed per cluster stay open.', fullSteps: st, steps: st };
+  if (st.length) st[0] = '1. Read the advisories this upgrade fixes (listed per system below; each is at https://security.netapp.com/advisory/): note the affected and fixed releases and any mitigation NetApp lists.';
+  return { ...plan, impact: `The installed ${product || 'ONTAP'} release contains vulnerabilities and bugs that a newer release fixes; until the system is upgraded the advisories listed per system stay open.`, fullSteps: st, steps: st };
 }
-function _pbSortGroups(a, b) { const ua = /^ONTAP upgrade/.test(a.key) ? 0 : 1, ub = /^ONTAP upgrade/.test(b.key) ? 0 : 1; return ua - ub || b.units.size - a.units.size || a.key.localeCompare(b.key); }
+function _pbSortGroups(a, b) { const ua = _PB_UPGRADE.test(a.key) ? 0 : 1, ub = _PB_UPGRADE.test(b.key) ? 0 : 1; return ua - ub || b.units.size - a.units.size || a.key.localeCompare(b.key); }
 function _dfAppendProcedureTickets(doc, systems) {
   if (typeof doc !== 'string') return doc;
   const groups = new Map(), best = _pbBestUpgrade(systems);
   (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
     if (!r.hasPlaybook || !r.remediationPlan) return;
-    const u = _unitOf(sys), gk = r.remediationPlan.groupKey, up = /^ONTAP upgrade to /.test(gk || ''), eff = up ? (best.get(u.name) || gk) : gk;
+    const u = _unitOf(sys), gk = r.remediationPlan.groupKey, up = /^(ONTAP|SANtricity|StorageGRID) upgrade to /.test(gk || ''), eff = up ? (best.get(u.name + '|' + gk.split(' ')[0]) || gk) : gk;
     const key = eff || String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: null, sev: r.severity };
     if (!g.plan && (!up || gk === eff)) g.plan = r.remediationPlan;
     if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || ''), refs: new Set() }); if (r.remediationPlan.advisoryRef) g.units.get(u.name).refs.add(r.remediationPlan.advisoryRef);
@@ -23093,11 +23111,11 @@ function _dfAppendProcedureTickets(doc, systems) {
   const list = [...groups.values()].filter(g => g.plan).sort(_pbSortGroups);
   if (!list.length) return doc;
   const RULE = '='.repeat(80), CAP = 30, shown = list.slice(0, CAP);
-  let o = `\n${RULE}\nCHANGE TICKETS FOR THE PROCEDURES\n${RULE}\n${list.length} change${list.length !== 1 ? 's' : ''}, one per finding type, each covering every cluster it applies to. Take the cluster's configuration backup first (system configuration backup create -node <node> -backup-type cluster), check health before and after (cluster show ; storage failover show ; system health alert show), and follow the change control rules above.\n`;
+  let o = `\n${RULE}\nCHANGE TICKETS FOR THE PROCEDURES\n${RULE}\n${list.length} change${list.length !== 1 ? 's' : ''}, one per finding type, each covering every system it applies to. Take the cluster's configuration backup first (system configuration backup create -node <node> -backup-type cluster), check health before and after (cluster show ; storage failover show ; system health alert show), and follow the change control rules above.\n`;
   shown.forEach((g, i) => {
     const names = [...g.units.keys()], t = g.plan.ticket || _PB_TICKET.find(x => x.rx.test(g.key)) || { risk: 'Low', win: 'Any; no outage expected', back: 'Record the current value with the show command in step 1; to roll back, set it back with the same modify command.' };
-    const gp = /^ONTAP upgrade/.test(g.key) ? _pbUpgradeText(g.plan) : g.plan, steps = (gp.fullSteps || gp.steps || []).filter(x => /^\d+\./.test(String(x)));
-    o += `\nCHG-P${String(i + 1).padStart(2, '0')}  ${g.key}\n  Clusters (${names.length}): ${names.slice(0, 10).join(', ')}${names.length > 10 ? ', ...' : ''}\n  Reason:   ${/^ONTAP upgrade/.test(g.key) ? 'The installed ONTAP release has security advisories and bugs that a newer release fixes (listed per cluster below).' : g.plan.cause}\n  Risk of the change: ${t.risk}.  Window: ${t.win}.\n  Pre-check: take the configuration backup and run the health commands above; step 1 records the current setting.\n  Change (commands written for ${names[0]}; repeat on each cluster with its own names):\n${steps.map(x => '    ' + x).join('\n')}\n  Verify:   the show command in the last step returns the new setting; the finding clears in Active IQ after the next AutoSupport.\n  Rollback: ${t.back}\n`;
+    const gp = _PB_UPGRADE.test(g.key) ? _pbUpgradeText(g.plan, g.key.split(' ')[0]) : g.plan, steps = (gp.fullSteps || gp.steps || []).filter(x => /^\d+\./.test(String(x)));
+    o += `\nCHG-P${String(i + 1).padStart(2, '0')}  ${g.key}\n  Systems (${names.length}): ${names.slice(0, 10).join(', ')}${names.length > 10 ? ', ...' : ''}\n  Reason:   ${_PB_UPGRADE.test(g.key) ? `The installed ${g.key.split(' ')[0]} release has security advisories and bugs that a newer release fixes (listed per system below).` : g.plan.cause}\n  Risk of the change: ${t.risk}.  Window: ${t.win}.\n  Pre-check: take the configuration backup and run the health commands above; step 1 records the current setting.\n  Change (commands written for ${names[0]}; repeat on each system with its own names):\n${steps.map(x => '    ' + x).join('\n')}\n  Verify:   the show command in the last step returns the new setting; the finding clears in Active IQ after the next AutoSupport.\n  Rollback: ${t.back}\n`;
     if (names.length > 1) o += `  Per cluster:\n` + [...g.units.values()].slice(0, 8).map(u => `    ${u.name} (${u.customer || '-'}): ${u.refs.size ? u.refs.size + ' finding' + (u.refs.size !== 1 ? 's' : '') + ' fixed: ' + [...u.refs].slice(0, 4).join(', ') : String(u.detail).replace(/\s+/g, ' ').slice(0, 180)}`).join('\n') + (names.length > 8 ? `\n    ... and ${names.length - 8} more` : '') + '\n';
   });
   if (list.length > shown.length) o += `\n${list.length - shown.length} further finding types have a procedure; the complete procedures are in the Implementation Plans and the Risk & Remediation Brief.\n`;
@@ -23109,7 +23127,7 @@ function _dfAppendProcedures(doc, systems, kind) {
   (systems || []).forEach(sys => (sys.risks || []).forEach(r => {
     if (!r.hasPlaybook || !r.remediationPlan) return;
     if (kind === 'sec' && !r.remediationPlan.security && !_PB_SECURITY.test(String(r.remediationPlan.groupKey || r.description || ''))) return;
-    const u = _unitOf(sys), gk = r.remediationPlan.groupKey, up = /^ONTAP upgrade to /.test(gk || ''), eff = up ? (best.get(u.name) || gk) : gk;
+    const u = _unitOf(sys), gk = r.remediationPlan.groupKey, up = /^(ONTAP|SANtricity|StorageGRID) upgrade to /.test(gk || ''), eff = up ? (best.get(u.name + '|' + gk.split(' ')[0]) || gk) : gk;
     const key = eff || String(r.description || '').replace(/\s+/g, ' ').trim(), g = groups.get(key) || { key, units: new Map(), plan: null, sev: r.severity };
     if (!g.units.has(u.name)) g.units.set(u.name, { name: u.name, customer: sys.customerName || '', detail: String(r.riskDetail || ''), nodes: new Set(), refs: new Set() });
     g.units.get(u.name).nodes.add(sys.systemName); if (r.remediationPlan.advisoryRef) g.units.get(u.name).refs.add(r.remediationPlan.advisoryRef);
@@ -23124,16 +23142,16 @@ function _dfAppendProcedures(doc, systems, kind) {
   let o = head(kind === 'sec' ? 'Hardening procedures for the findings on these systems' : 'Procedures for the findings on these systems');
   o += `${list.length} finding type${list.length !== 1 ? 's' : ''} on ${nUnits} system${nUnits !== 1 ? 's' : ''} have a documented procedure below, with commands written for the cluster, node and SVM the finding names. They follow NetApp's published procedures and best practice; run them under change control, one cluster at a time, and confirm each against the command reference for the release the cluster runs.\n`;
   shown.forEach(g => {
-    const names = [...g.units.keys()], first = names[0], pl = /^ONTAP upgrade/.test(g.key) ? _pbUpgradeText(g.plan) : g.plan;
+    const names = [...g.units.keys()], first = names[0], pl = _PB_UPGRADE.test(g.key) ? _pbUpgradeText(g.plan, g.key.split(' ')[0]) : g.plan;
     o += md ? `\n### ${g.key}\n\n` : `\n  ${g.key}\n`;
-    o += `${md ? '**' : ''}Applies to${md ? '**' : ''}: ${names.length} cluster${names.length !== 1 ? 's' : ''} (${names.slice(0, 8).join(', ')}${names.length > 8 ? ', ...' : ''}). Commands below are written for ${first}.\n`;
+    o += `${md ? '**' : ''}Applies to${md ? '**' : ''}: ${names.length} system${names.length !== 1 ? 's' : ''} (${names.slice(0, 8).join(', ')}${names.length > 8 ? ', ...' : ''}). Commands below are written for ${first}.\n`;
     o += `${md ? '**' : ''}Why it matters${md ? '**' : ''}: ${pl.impact}\n\n${md ? '**' : ''}Steps${md ? '**' : ''}\n` + (pl.fullSteps || pl.steps || []).map(x => `${md ? '' : '  '}${x}`).join(md ? '\n\n' : '\n') + '\n';
     if (names.length > 1) {
       const rows = [...g.units.values()].slice(0, 12);
       const say = u => u.refs.size ? `${u.refs.size} finding${u.refs.size !== 1 ? 's' : ''} fixed by this release: ${[...u.refs].slice(0, 4).join(', ')}${u.refs.size > 4 ? ', ...' : ''}` : cell(u.detail).slice(0, 200);
-      o += md ? `\n| Cluster | Customer | Nodes | What the finding says |\n|---|---|---|---|\n` + rows.map(u => `| ${cell(u.name)} | ${cell(u.customer)} | ${u.nodes.size} | ${say(u)} |`).join('\n') + '\n'
-        : `\n  Cluster / customer / nodes / what the finding says\n` + rows.map(u => `    ${u.name} / ${u.customer || '-'} / ${u.nodes.size} / ${say(u)}`).join('\n') + '\n';
-      if (names.length > rows.length) o += `... and ${names.length - rows.length} more cluster${names.length - rows.length !== 1 ? 's' : ''}; each is listed in the Risk & Remediation Brief.\n`;
+      o += md ? `\n| System | Customer | Nodes | What the finding says |\n|---|---|---|---|\n` + rows.map(u => `| ${cell(u.name)} | ${cell(u.customer)} | ${u.nodes.size} | ${say(u)} |`).join('\n') + '\n'
+        : `\n  System / customer / nodes / what the finding says\n` + rows.map(u => `    ${u.name} / ${u.customer || '-'} / ${u.nodes.size} / ${say(u)}`).join('\n') + '\n';
+      if (names.length > rows.length) o += `... and ${names.length - rows.length} more system${names.length - rows.length !== 1 ? 's' : ''}; each is listed in the Risk & Remediation Brief.\n`;
     }
   });
   if (list.length > shown.length) o += `\n${list.length - shown.length} further finding type${list.length - shown.length !== 1 ? 's' : ''} with a procedure (${list.slice(CAP).map(g => g.key.slice(0, 60)).slice(0, 12).join('; ')}${list.length - CAP > 12 ? '; ...' : ''}): the Risk & Remediation Brief and the Action Planner (Risk Remediation tab) carry the procedure for each.\n`;
@@ -25116,16 +25134,24 @@ async function _ensureDataPlaybooks() {
   try { const r = await fetch('/api/library/playbooks', { cache: 'no-store' }); if (r.ok) { const d = await r.json(); _DATA_PLAYBOOKS = Array.isArray(d.playbooks) ? d.playbooks : []; } } catch (e) { /* the procedures in code still apply */ }
   _dataPlaybooksLoaded = true;
 }
-function _dpFill(text, vars) { return String(text == null ? '' : text).replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, (m, k) => (vars[k] ? vars[k] : `<${k}>`)); }
+// {name} is replaced by its value, {name|text} by the value or, when there is none, by that text; a value that is missing and has no text shows as <name>
+function _dpFill(text, vars, blank) { return String(text == null ? '' : text).replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)(?:\|([^}]*))?\}/g, (m, k, dflt) => (vars[k] ? vars[k] : (dflt != null ? dflt : (blank ? '' : `<${k}>`)))); }
 function _dataPlaybook(risk, sys) {
   if (!_DATA_PLAYBOOKS.length || !risk || !sys) return null;
   const fam = _platformFamily(sys), t = String(risk.description || risk.title || ''), td = t + ' ' + String(risk.riskDetail || '');
+  // a finding whose category names the product belongs to that product, even when its system record is classed by a model code
+  const rfam = /storagegrid/i.test(String(risk.category || '')) ? 'storagegrid' : (/e-?series|santricity/i.test(String(risk.category || '')) ? 'eseries' : fam);
   for (const e of _DATA_PLAYBOOKS) {
-    if (e.family && e.family !== 'any' && e.family !== fam) continue;
+    if (e.family && e.family !== 'any' && e.family !== fam && e.family !== rfam) continue;
     let rx; try { rx = e._rx || (e._rx = new RegExp(e.match, 'i')); } catch (x) { continue; }
     if (!rx.test(e.matchOn === 'description' ? t : td)) continue;
-    const c = _rvCtx(risk, sys), vars = { cluster: c.cluster, node: c.node, version: c.ver, model: c.model, svm: c.svm === '<svm>' ? '' : c.svm, policy: c.policy === '<policy>' ? '' : c.policy, ref: risk.advisoryUrl || '' };
-    Object.entries(e.vars || {}).forEach(([k, r2]) => { try { const m = td.match(new RegExp(r2, 'i')); if (m && m[1]) vars[k] = String(m[1]).replace(/[.,;]+$/, ''); } catch (x) { /* a bad pattern leaves the placeholder */ } });
+    const c = _rvCtx(risk, sys), rec = String(risk.recommendation || ''), tdr = td + ' ' + rec;
+    const vars = { cluster: c.cluster, node: c.node, version: c.ver, model: c.model, svm: c.svm === '<svm>' ? '' : c.svm, policy: c.policy === '<policy>' ? '' : c.policy, ref: risk.advisoryUrl || '',
+      recommended: String(sys.recommendedOSVersion || ''), detail: String(risk.riskDetail || risk.description || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220), advisory: (td.match(/NTAP-\d{8}-\d{4}/i) || [''])[0], cve: (td.match(/CVE-\d{4}-\d+/i) || [''])[0] };
+    vars.finding = vars.cve || vars.advisory;
+    // the release the finding asks for: "Upgrade to ONTAP 9.16.1P16 ...", "Upgrade to SANtricity 11.90R6 ..."; otherwise the release Active IQ recommends for the system
+    vars.target = ((rec.match(/upgrade to\s+(?:ONTAP\s+|SANtricity\s+|StorageGRID\s+)?(\d[0-9A-Za-z.]*)/i) || [])[1] || '').replace(/[.,;]+$/, '') || vars.recommended;
+    Object.entries(e.vars || {}).forEach(([k, r2]) => { try { const m = tdr.match(new RegExp(r2, 'i')); if (m && m[1]) vars[k] = String(m[1]).replace(/[.,;]+$/, ''); } catch (x) { /* a bad pattern leaves the placeholder */ } });
     let body = e;
     if (e.minVersion && fam === 'ontap' && e.belowMin) { const mv = String(e.minVersion).split('.').map(Number); if (!_rvAtLeast(sys, mv[0], mv[1], mv[2] || 0)) body = Object.assign({}, e, e.belowMin); }
     const steps = (body.steps || []).map(x => _dpFill(x, vars));
@@ -25135,16 +25161,24 @@ function _dataPlaybook(risk, sys) {
     steps.push(note);
     if (risk.advisoryUrl) steps.push(`Reference: ${risk.advisoryUrl}`);
     (e.sources || []).forEach(u => steps.push(`Source: ${u}`));
+    // a procedure one upgrade closes for many findings is shown once per cluster: groupKey names the group, compact is the one-line form used in each finding's own plan
     return { cause: _dpFill(body.cause || e.cause, vars), impact: _dpFill(body.impact || e.impact, vars), steps, options: (body.options || e.options || []).map(x => _dpFill(x, vars)), thirdParty: _dpFill(e.thirdParty || '', vars),
-      ticket: e.ticket || null, security: !!e.security, playbookId: e.id };
+      ticket: e.ticket || null, security: !!e.security, playbookId: e.id, groupKey: e.groupKey ? _dpFill(e.groupKey, vars) : '', advisoryRef: e.advisoryRef ? _dpFill(e.advisoryRef, vars, true) : '', compact: e.compact ? e.compact.map(x => _dpFill(x, vars)) : null };
   }
   return null;
 }
 // What the procedures cover: the findings that got none are reported to the server (data/playbook_gaps.json, shown in Settings > Data & Sync, and the largest go
 // into the reference updater's review queue for the maintenance job to write). Nothing is fetched or generated here.
 let _gapSig = '';
+// findings the tool raises itself after a system is enriched (StorageGRID site capacity, for example) get their procedure here, before the coverage is counted
+function applyPlaybooksToFleet(systems) {
+  (systems || state.systems || []).forEach(sys => (sys.risks || []).forEach(r => {
+    if (!r.hasPlaybook) _applyRemedPlaybook(r, Object.assign({}, sys, { ontapVersion: sys.ontapVersion || sys.santricityVersion || sys.sgVersion || '', clusterName: sys.clusterName || sys.systemName }));
+  }));
+}
 async function reportPlaybookGaps(systems) {
   try {
+    applyPlaybooksToFleet(systems);
     const gaps = new Map(); let total = 0, covered = 0;
     (systems || state.systems || []).forEach(sys => (sys.risks || []).forEach(r => {
       total++; if (r.hasPlaybook) { covered++; return; }

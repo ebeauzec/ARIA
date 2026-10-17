@@ -161,11 +161,11 @@
    "cause": "SSH/Telnet remote login to the controllers of {model} is enabled.",
    "impact": "Remote login is meant for NetApp Support at their request. Left on, it gives anyone who can reach the controller management network a shell prompt to attack.",
    "steps": [
-    "1. Confirm with the storage team that NetApp Support is not working on the array now.",
-    "2. In SANtricity System Manager open Hardware, then the Controllers & Components tab, and select controller A.",
-    "3. Select Configure remote login (SSH) (named Change remote login in SANtricity 11.73 and earlier), clear the Enable remote login checkbox and confirm. Active connections end.",
-    "4. Repeat for controller B: the setting is per controller.",
-    "5. If NetApp Support needs it later, turn it on for the session only. On SANtricity 11.74 and later you can also require an SSH key or password for remote login."
+    "1. Confirm with the storage team that NetApp Support is not working on the array now: remote login is meant for technical support only.",
+    "2. In SANtricity System Manager select Hardware, then Controllers and components. Click the controller (the graphic changes to show controllers), then Configure remote login (SSH) in its menu (named Change remote login in SANtricity 11.73 and earlier).",
+    "3. Clear the Enable remote login check box and save. Disabling it ends any current SSH sessions and rejects new logins.",
+    "4. On a duplex array, if remote login is also enabled on the second controller, a confirmation dialog opens and lets you disable it there too; otherwise repeat for the second controller.",
+    "5. If NetApp Support needs it later, turn it on for the session only. On SANtricity 11.74 and later you can require an SSH key, or an SSH key and a password, for remote login (the Authorized public keys list applies to both controllers)."
    ],
    "options": [
     "Option A: Disable on both controllers (recommended).",
@@ -180,6 +180,342 @@
     "window": "Any; open shell sessions to the controller end",
     "rollback": "Tick Enable remote login again in Configure remote login (SSH) on each controller."
    }
+  },
+  {
+   "id": "eseries.santricity-upgrade",
+   "status": "approved",
+   "family": "any",
+   "security": true,
+   "match": "santricity os \\(controller firmware\\) has been determined to have a version or configuration exposed",
+   "groupKey": "SANtricity upgrade to {target} (fixes security advisories)",
+   "advisoryRef": "{finding}",
+   "compact": [
+    "1. Upgrade {node} to SANtricity OS {target} in System Manager (Support > Upgrade center > Begin SANtricity OS software upgrade). One upgrade fixes every finding in the group \"SANtricity upgrade to {target}\"; the full procedure is in the Implementation Plans."
+   ],
+   "cause": "The SANtricity OS (controller software) on {node} is {version}; NetApp's advisory for {finding} is fixed in a later release.",
+   "impact": "Until the controller software is upgraded the advisories listed for this array stay open.",
+   "steps": [
+    "1. Read the advisory ({ref}) for the fixed release and any mitigation. The release asked for is SANtricity OS {target}; the array runs {version}.",
+    "2. Check the path: systems must be running SANtricity OS 11.70.5 to upgrade to 11.80.x or later, so an older array needs an intermediate upgrade first.",
+    "3. Make sure the array is healthy. In System Manager open Home, click the Bell icon, then the Recover from n problems link: the Recovery Guru should list nothing. A hot spare in use, an incomplete volume group, a controller that is not Optimal and similar conditions stop an upgrade.",
+    "4. Download the files to your management client: on the NetApp Support site choose Downloads, then Downloads, then E-Series SANtricity OS Controller Software. Digitally signed firmware is required from 8.42, and an unsigned file is rejected. Download the Controller NVSRAM file as well (its name looks like N2800-830000-000.dlp).",
+    "5. If the array has one controller, or no multipath driver is installed on the hosts, stop I/O first. A two-controller array with a multipath driver needs no stop.",
+    "6. In System Manager select Support > Upgrade center. Under SANtricity OS software upgrade click Begin SANtricity OS software upgrade, Browse to the OS file and to the NVSRAM file. To move the load off peak, tick Transfer files now, but do not start the upgrade (activate later) and activate later.",
+    "7. Click Start and confirm. The pre-upgrade health check can be cancelled; transfer and activation cannot. Do not change the array and keep power on while it runs. The controllers fail over during activation, so performance is lower until it finishes.",
+    "8. Click Save log for the record (drive_upgrade_log-timestamp.txt).",
+    "9. Check: all components show on the Hardware page, and Support > Upgrade center > software and firmware inventory shows the new versions. Custom NVSRAM settings are lost at activation: apply them again."
+   ],
+   "options": [
+    "Option A: Upgrade the OS and NVSRAM together in a planned window (recommended).",
+    "Option B: Transfer now and activate in the off-peak window.",
+    "Option C: Until the upgrade, restrict access to the array's management interfaces to the management network and record a time-limited exception."
+   ],
+   "thirdParty": "Check host compatibility in the NetApp Interoperability Matrix Tool before the upgrade. If this array is the storage controller of a StorageGRID appliance (SG5700, SG6000), upgrade SANtricity OS from the Grid Manager instead: Maintenance > System > Software update > SANtricity OS update, after applying the latest StorageGRID hotfix; the NVSRAM is upgraded with it (see the appliance page in the sources).",
+   "ticket": {
+    "risk": "Medium",
+    "window": "Planned window; controllers fail over during activation",
+    "rollback": "Do not downgrade SANtricity OS on your own: a downgrade is only done as technical support instructs. Validate the files first, keep the pre-upgrade configuration saved, and transfer now/activate later to test on one array first."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-support/upgrade-controller-software-and-firmware.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/um-manage/upgrade-controller-firmware.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-interface/recover-from-problems-using-recovery-guru.html",
+    "https://docs.netapp.com/us-en/storagegrid-appliances/sg6000/upgrading-santricity-os-on-storage-controllers-using-grid-manager-sg6000.html"
+   ]
+  },
+  {
+   "id": "eseries.media-scan-frequency",
+   "status": "approved",
+   "family": "eseries",
+   "match": "media scan frequency is high",
+   "vars": {
+    "days": "media scan frequency of (\\d+) days"
+   },
+   "cause": "Background media scans on {node} are set to run over {days} days.",
+   "impact": "A high media scan frequency may wear certain drive models out sooner than their expected life.",
+   "steps": [
+    "1. In System Manager select Storage > Volumes, click the ellipsis icon, then Change volume media scan settings. The Change Drive Media Scan Settings window lists every volume.",
+    "2. Keep the Media scan check box ticked (clearing it suspends all media scans) and set the number of days over which the scan runs. The default period is 120 days; a longer period lowers the scan rate. Currently {days} days.",
+    "3. Keep the Media Scan check box ticked for the volumes that should be scanned. Redundancy Check is enabled with it; untick it only for a volume where a redundancy check is not wanted.",
+    "4. Click Save. Media scans run continuously at a constant rate, based on the capacity scanned and the days chosen.",
+    "5. Why the scan matters: it finds and repairs media errors on blocks that applications rarely read, using redundancy data, so a later drive failure does not hit unreadable blocks."
+   ],
+   "options": [
+    "Option A: Set the period to the default 120 days (recommended) unless a drive model's guidance asks otherwise.",
+    "Option B: Keep the shorter period for volumes with data that must be verified more often, and accept the drive wear."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/change-media-scan-settings.html"
+   ]
+  },
+  {
+   "id": "eseries.drive-firmware",
+   "status": "approved",
+   "family": "eseries",
+   "match": "disk firmware is not on the latest revision|downrev drives|exposed to bug cfdisk|drives rapid media error|new eseries drive firmware risk",
+   "cause": "Drives in {node} run firmware older than the release NetApp lists for them. The finding says: {detail}",
+   "impact": "Older drive firmware can carry known faults (media errors, failures, emissions limits) that a later firmware fixes; some are listed by NetApp as a risk of data loss or an outage.",
+   "steps": [
+    "1. Note the drive models the finding names. Read the advisory or bug page the finding links for the firmware version that fixes them.",
+    "2. Before starting: back up the data (disk-to-disk backup, volume copy to a volume group not affected, or a remote mirror); the array and all drives must be Optimal; no configuration change may be running. If a drive can only be upgraded offline, stop I/O to the volumes that use it.",
+    "3. Download the new drive firmware files from the NetApp Support site and unzip them. Files are named like D_HUC101212CSS600_30602291_MS01_2800_0002 with the extension .dlp.",
+    "4. In System Manager select Support > Upgrade center, and under Drive firmware upgrade click Begin drive firmware upgrade. Click Browse and choose the files (up to four, one at a time; two files for the same drive model is a conflict, so keep one). Click Next.",
+    "5. Choose the type: Upgrade all drives online (drives are upgraded one at a time while the array processes I/O) or Upgrade all drives offline (parallel) (faster, but all I/O to the volumes that use the drives must be stopped). Drives with no redundancy must go offline: that covers SSD cache, RAID 0 volume groups, and any degraded pool or volume group.",
+    "6. Select the drives in the first column, click Start and confirm. Do not click Stop unless you must: downloads in progress finish, the rest are cancelled, and stopping can cause data loss or unavailable drives.",
+    "7. Click Save log (drive_upgrade_log-timestamp.txt). If an error stops the upgrade (a hot spare in use, an incomplete volume group, a controller not Optimal), open the Recovery Guru (Home > Bell icon > Recover from n problems) and correct it; log, configuration database and MEL errors are for technical support."
+   ],
+   "options": [
+    "Option A: Online upgrade for drives that support it, in a quiet period (recommended).",
+    "Option B: Offline (parallel) upgrade in a maintenance window for drives that need it."
+   ],
+   "thirdParty": "On a StorageGRID appliance (SG5700, SG6000, SG6100) follow the appliance's own drive firmware procedure (see the sources): the appliance may need to be in maintenance mode, and SSDs use the offline method.",
+   "ticket": {
+    "risk": "Medium",
+    "window": "Quiet period (online) or maintenance window (offline)",
+    "rollback": "A drive firmware upgrade is not reversed from System Manager; check the bulletin for the firmware the finding names, upgrade one array first and watch the Recovery Guru before the next."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-support/upgrade-drive-firmware.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-interface/recover-from-problems-using-recovery-guru.html",
+    "https://docs.netapp.com/us-en/storagegrid-appliances/sg6000/upgrading-drive-firmware-using-santricity-system-manager-online.html"
+   ]
+  },
+  {
+   "id": "eseries.hot-spare-coverage",
+   "status": "approved",
+   "family": "eseries",
+   "match": "hot spare coverage check",
+   "cause": "No hot spare drive is assigned on {node}, although it has volume groups.",
+   "impact": "If a drive in a RAID 1, 5 or 6 volume group fails there is nothing to rebuild onto automatically, so the group runs without redundancy until a drive is replaced by hand.",
+   "steps": [
+    "1. Check which drives are assigned: Hardware page; hot spares show as pink drive bays.",
+    "2. Choose unassigned drives in Optimal state with the same media type (for example SSD) and interface (for example SAS) as the drives to protect, and a capacity equal to or larger than the used capacity of those drives. Do not assign a drive smaller than the largest drive in the array unless its capacity covers the used capacity.",
+    "3. Select Hardware > Drives, click an unassigned (gray) drive, then Assign hot spare. If the drive is secure-enabled, System Manager asks for a Secure Erase first: that deletes everything on it, so check it is the right drive.",
+    "4. Confirm the dialog. The drive turns pink. NetApp's recommended coverage is two hot spares per drive set; the finding's own guide is about 2% of the drive count.",
+    "5. Pools do not use hot spares: they reserve preservation capacity inside the pool (Storage > Pools and volume groups > ellipsis > Edit Settings), so a pool-only array does not need this."
+   ],
+   "options": [
+    "Option A: Assign two hot spares per drive set (recommended).",
+    "Option B: Move the data to pools, which reserve preservation capacity instead."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "Hot spares are un-assigned from the Hardware page (select the pink drive and remove the hot spare assignment) if the drive is needed elsewhere."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/assign-hot-spares-hardware.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/hot-spare-drives.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/change-configuration-settings-for-a-pool.html"
+   ]
+  },
+  {
+   "id": "eseries.drawer-loss-protection",
+   "status": "approved",
+   "family": "eseries",
+   "match": "drawer loss protection is not enabled",
+   "vars": {
+    "groups": "Volume Groups\\s+([^.]+?)(?:\\s+are not protected|\\.)"
+   },
+   "cause": "Volume groups on {node} ({groups}) are not protected against the loss of a drawer.",
+   "impact": "If communication with one drawer of a drive shelf is lost, volumes in these groups can lose access to their data, and cache data can be lost.",
+   "steps": [
+    "1. See where the drives are: Hardware page, shelf and drawer of each drive of the listed groups.",
+    "2. Understand the rule: drawer loss protection is decided by where a group's drives sit. For a volume group it needs drives in at least three shelves or drawers (RAID 1: two); with RAID 5 each drive must be in a separate drawer, and with RAID 6 no more than two in one drawer; RAID 0 cannot have it. For a pool it needs the drives in at least five drawers with an equal number of drives from each. Protection is not guaranteed once a drive in the group has failed.",
+    "3. The System Manager pages describe choosing it when a group is created: in Storage > Pools and volume groups, create the group and pick the candidate whose Drawer Loss Protection field shows it is available. NetApp's pages do not describe changing the drive placement of an existing group, so plan a new group of the right shape and a move of the data to it with the application owner.",
+    "4. When a drive fails, replace it promptly: a hot spare can take a position that loses the protection, and the copyback after the replacement restores it.",
+    "5. When you replace a drive logically (Hardware > Drives > Logically replace), pick a replacement that keeps shelf and drawer loss protection."
+   ],
+   "options": [
+    "Option A: Build new volume groups or pools with drawer loss protection and move the data to them (recommended).",
+    "Option B: Accept the risk for non-critical data and record an exception."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/create-volume-group.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-storage/create-pool-manually.html",
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/replace-drive-logically-hardware.html"
+   ]
+  },
+  {
+   "id": "eseries.recovery-guru-entries",
+   "status": "approved",
+   "family": "eseries",
+   "match": "recovery guru entries? available",
+   "cause": "{node} reports a condition in its Recovery Guru. The finding says: {detail}",
+   "impact": "The array is not operating optimally; a Needs Attention condition left open can hide the next fault.",
+   "steps": [
+    "1. In System Manager select Home, click the Bell icon, then the link Recover from n problems at the top centre. The Recovery Guru opens.",
+    "2. Select the first problem in the summary list and follow its recovery procedure. Use the replacement instructions where a part has failed. Correct the problems in the order listed, because related problems affect each other. Several failures of a power supply or a fan canister are listed as one problem.",
+    "3. Click Recheck to confirm the fix. For an asynchronous mirror group problem click Clear first, then Recheck.",
+    "4. The array icon moves from Needs Attention to Optimal when all are corrected; a Fixing icon shows while an operation such as reconstruction runs.",
+    "5. Click the Save icon to keep the Recovery Guru details (recoveryGuru-...html) in the change record."
+   ],
+   "options": [
+    "Option A: Work through the list now (recommended)."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-interface/recover-from-problems-using-recovery-guru.html"
+   ]
+  },
+  {
+   "id": "eseries.hdd-six-years",
+   "status": "approved",
+   "family": "eseries",
+   "match": "hdd\\(s\\) at or over six years of operating life|hdd at or over six years",
+   "cause": "{node} has hard drives that are six years or more old.",
+   "impact": "The expected reliable life of an enterprise hard drive is five years; the likelihood of failure rises the longer it is in service, and a rebuild after one failure stresses the others.",
+   "steps": [
+    "1. List the old drives and the volume groups or pools they belong to (Hardware page, drive details), and order replacements of the same media type, interface and at least the same capacity.",
+    "2. Keep the array healthy meanwhile: hot spares or preservation capacity in place, and the Recovery Guru empty (Home > Bell icon > Recover from n problems).",
+    "3. Replace them one at a time with an unassigned drive in Optimal state that has the same attributes: Hardware > Drives, click the old drive, Logically replace, choose the replacement (pick one that keeps shelf and drawer loss protection), and click Replace. The data is copied to the new drive; the old drive goes to Unassigned, or Failed if you ticked Fail drive after it is replaced.",
+    "4. Wait for each copy to finish before starting the next.",
+    "5. If the whole shelf is old, plan its replacement as a project (migrate the volumes to a new array or shelf) instead of drive by drive."
+   ],
+   "options": [
+    "Option A: Replace drives in a planned sequence (recommended).",
+    "Option B: Refresh the array or shelf and migrate the data."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/e-series-santricity/sm-hardware/replace-drive-logically-hardware.html"
+   ]
+  },
+  {
+   "id": "storagegrid.software-upgrade",
+   "status": "approved",
+   "family": "storagegrid",
+   "security": true,
+   "match": "storagegrid webscale has been determined to have a version or configuration exposed|storagegrid.* has been determined to have a version",
+   "groupKey": "StorageGRID upgrade to {target|the recommended release} (fixes security advisories)",
+   "advisoryRef": "{finding}",
+   "compact": [
+    "1. Upgrade the grid to {target|the StorageGRID release Active IQ recommends} in Grid Manager (Maintenance > System > Software update > StorageGRID upgrade). One upgrade fixes every finding in the group \"StorageGRID upgrade\"; the full procedure is in the Implementation Plans."
+   ],
+   "cause": "StorageGRID {version} is affected by NetApp's advisory {finding}; the fix is in a later release ({target|the release Active IQ recommends}).",
+   "impact": "Until the grid is upgraded the advisories listed for it stay open.",
+   "steps": [
+    "1. Read the advisory ({ref}) for the fixed release. Target release: {target|the release Active IQ recommends for this grid (the Upgrade page in Grid Manager shows it)}; the grid runs {version}.",
+    "2. Check the installed version: sign in to the Grid Manager and select Help > About. NetApp recommends the latest hotfix for each release before going on to the next, and an upgrade needs the previous major version installed: if the grid is several releases behind, install each upgrade file and its latest hotfix in order. In some cases a hotfix must be applied to avoid a risk of data loss; read the release notes of each.",
+    "3. Download the upgrade file (.upgrade) and the hotfix from NetApp Downloads: StorageGRID. If nodes run on Linux hosts, install the RPM or DEB package on every host first.",
+    "4. Do not start if the grid is almost full and capacity is urgently needed; finish the upgrade in good time.",
+    "5. Select Maintenance > System > Software update, and from the StorageGRID upgrade tile select Upgrade. The Upgrade page shows the recommended path: install the versions and hotfixes in the order shown.",
+    "6. Select files: Browse to the upgrade file (and a hotfix file, applied with it); wait for the green check after the code signature check; Continue.",
+    "7. Run prechecks: enter the provisioning passphrase, Download recovery package, check you can open it (including Passwords.txt) and copy the .zip to two safe, separate places (it holds keys and passwords). Select Run prechecks and resolve every error; warnings may stay. If custom firewall ports are open, contact technical support before going on.",
+    "8. Select Start upgrade. The primary Admin Node is upgraded first (up to 30 minutes) and the Grid Manager is not usable meanwhile (another Admin Node, if online, can show progress).",
+    "9. Upgrade the other nodes: download a new recovery package when asked, then Approve nodes. Services on a node stop and the node reboots, so approve only nodes that are ready; approved nodes of one type go one at a time; upgrade a whole site before the next. New features are usable only when all nodes are done.",
+    "10. After the last node: the Final upgrade steps finish by themselves (new features within about an hour). Check that services are normal, no unexpected alerts are open, and client connections work."
+   ],
+   "options": [
+    "Option A: Upgrade to the recommended release with its latest hotfix in a planned window (recommended).",
+    "Option B: Apply the latest hotfix of the current release first when the advisory is fixed there."
+   ],
+   "thirdParty": "Check S3/Swift client and load-balancer compatibility with the target release in the NetApp Interoperability Matrix Tool. For appliance nodes the StorageGRID Appliance Installer is updated automatically during the upgrade.",
+   "ticket": {
+    "risk": "Medium",
+    "window": "Planned window; each node's services stop and it reboots during its turn",
+    "rollback": "A StorageGRID software upgrade is not rolled back by the customer: keep the recovery package, upgrade a site at a time, and contact technical support if a node fails."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/storagegrid/upgrade/performing-upgrade.html",
+    "https://docs.netapp.com/us-en/storagegrid/upgrade/verifying-installed-version-of-storagegrid.html",
+    "https://docs.netapp.com/us-en/storagegrid/maintain/applying-hotfix.html"
+   ]
+  },
+  {
+   "id": "storagegrid.ntp-servers",
+   "status": "approved",
+   "family": "storagegrid",
+   "match": "external server ntp redundancy check|less than the recommended .* external ntp servers",
+   "cause": "The grid has fewer than the recommended four external NTP servers.",
+   "impact": "This can result in connectivity issues and services that do not start; if only one node at a site can reach the time sources, timing breaks when it goes down.",
+   "steps": [
+    "1. Know the design: at each site at least two nodes take the primary NTP role and synchronise to a suggested minimum of four (maximum six) external sources and to each other; every other node is an NTP client of those.",
+    "2. Gather the IPv4 addresses of at least four NTP servers that speak NTP, are Stratum 3 or better, and can be reached from at least two nodes at each site. On production, do not use the Windows Time (W32Time) service on a Windows version earlier than Windows Server 2016.",
+    "3. Select Maintenance > Network > NTP servers. In the Servers section add, update or remove entries (four to six).",
+    "4. Enter the provisioning passphrase and select Save. The page is disabled until the update finishes.",
+    "5. If every NTP server fails the connection test after saving, stop and contact technical support."
+   ],
+   "options": [
+    "Option A: Four to six servers, reachable from two nodes per site (recommended)."
+   ],
+   "ticket": {
+    "risk": "Low",
+    "window": "Any; no outage",
+    "rollback": "Maintenance > Network > NTP servers: restore the previous list and save with the provisioning passphrase."
+   },
+   "sources": [
+    "https://docs.netapp.com/us-en/storagegrid/maintain/configuring-ntp-servers.html"
+   ]
+  },
+  {
+   "id": "storagegrid.object-compression",
+   "status": "approved",
+   "family": "storagegrid",
+   "match": "enable compression to conserve space",
+   "cause": "Stored object compression is off on the grid ({node} reports it).",
+   "impact": "Compressible objects use more physical storage than they need.",
+   "steps": [
+    "1. Check first that it suits the data: do not enable it unless the stored data is compressible. Objects a client already compressed do not shrink further. Do not enable it if NetApp FabricPool uses this grid.",
+    "2. Check the clients: with compression on, S3 clients should avoid GetObject calls for a byte range, because StorageGRID has to decompress the object to serve them; such reads can time out, so raise the client read timeout if range reads are unavoidable.",
+    "3. Select Configuration > System > Storage settings > Object compression, tick Compress stored objects and select Save. The setting applies in about a minute.",
+    "4. Compare storage use before and after on new objects; it does not recompress objects already stored."
+   ],
+   "options": [
+    "Option A: Enable for grids storing compressible data and not used by FabricPool (recommended where it applies).",
+    "Option B: Leave it off and record why."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/storagegrid/admin/configuring-stored-object-compression.html"
+   ]
+  },
+  {
+   "id": "storagegrid.versioning-object-lock",
+   "status": "approved",
+   "family": "storagegrid",
+   "match": "versioning enabled but without .*object lock",
+   "cause": "S3 buckets on the grid have versioning on but no S3 Object Lock.",
+   "impact": "Object versions in these buckets can still be deleted or changed by a user with the permission, which can conflict with retention or compliance rules.",
+   "steps": [
+    "1. Decide with the data owner which buckets need retention (regulatory, ransomware protection). Object Lock is for those; it is not for every versioned bucket.",
+    "2. Grid administrator, once for the grid: enable the global setting (Configuration > System > S3 Object Lock, Enable S3 Object Lock, Apply). It cannot be disabled afterwards, and the default rule of the active ILM policy must be compliant or the change fails.",
+    "3. Grid administrator, optional: allow S3 Object Lock for existing buckets, allow Compliance mode for the tenant (otherwise only Governance mode), and set a maximum retention period.",
+    "4. Tenant: create new buckets with S3 Object Lock enabled (Tenant Manager, Tenant Management API or S3 API); or, where the grid administrator allowed it, enable it on an existing bucket. Versioning is enabled automatically and cannot be suspended on a locked bucket.",
+    "5. Set a default retention mode and period on the bucket if every object should be retained (they apply to new objects only), and set per-object retention from the S3 client where needed.",
+    "6. Remember what each mode does: in Compliance mode an object cannot be deleted until its retain-until-date and that date can only be extended; in Governance mode users with the special permission can bypass it."
+   ],
+   "options": [
+    "Option A: Enable Object Lock on the buckets that hold retained data (recommended).",
+    "Option B: Keep versioning only, and rely on access policy, for data with no retention requirement."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/storagegrid/tenant/using-s3-object-lock.html",
+    "https://docs.netapp.com/us-en/storagegrid/ilm/enabling-s3-object-lock-globally.html",
+    "https://docs.netapp.com/us-en/storagegrid/tenant/changing-bucket-versioning.html"
+   ]
+  },
+  {
+   "id": "storagegrid.site-capacity",
+   "status": "approved",
+   "family": "storagegrid",
+   "match": "site .* capacity above|capacity above \\d+%",
+   "cause": "A site of the grid is filling up. The finding says: {detail}",
+   "impact": "As Storage Nodes fill, new writes go to the nodes with free space, and ILM placement can no longer be met at the full site.",
+   "steps": [
+    "1. Look at your ILM rules first: where and when to add capacity depends on how replicated and erasure-coded objects are placed.",
+    "2. Choose how to add: more storage volumes to existing Storage Nodes (a software-based node supports up to 48; an SG6060 takes one or two expansion shelves of 16 volumes each, an SG6160 one or two of 60; other appliances cannot add volumes; an existing volume cannot be resized), or more Storage Nodes at the site (no more than 10 in one expansion).",
+    "3. Check before you start: no recovery, upgrade or other expansion is running at the site, and all data-repair operations from earlier recoveries are complete.",
+    "4. Add enough nodes to keep write performance: writes go in proportion to free space, so a few new nodes next to nearly full ones will carry most of the new writes.",
+    "5. Metadata lives on volume 0 only: adding volumes does not add metadata capacity, adding Storage Nodes does.",
+    "6. Follow the expansion procedure for the type of node you add, from the expansion guide in the sources."
+   ],
+   "options": [
+    "Option A: Add Storage Nodes to the site (also grows metadata capacity).",
+    "Option B: Add volumes or expansion shelves to existing nodes when the model allows it.",
+    "Option C: Review ILM placement so the site is not holding more copies than the rules need."
+   ],
+   "sources": [
+    "https://docs.netapp.com/us-en/storagegrid/expand/guidelines-for-adding-object-capacity.html",
+    "https://docs.netapp.com/us-en/storagegrid/admin/managing-full-storage-nodes.html"
+   ]
   }
  ]
 }

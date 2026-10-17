@@ -24,8 +24,8 @@ QUEUE_NAME = 'library_update_queue.json'
 QUEUE_LIMIT = 25            # gap items kept in the review queue at once
 FAMILIES = ('ontap', 'eseries', 'storagegrid', 'any')
 STATUSES = ('approved', 'draft', 'rejected')
-KNOWN_VARS = {'cluster', 'node', 'svm', 'policy', 'version', 'model', 'target', 'ref'}
-_PLACEHOLDER = re.compile(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}')
+KNOWN_VARS = {'cluster', 'node', 'svm', 'policy', 'version', 'model', 'target', 'ref', 'recommended', 'advisory', 'cve', 'detail', 'finding'}
+_PLACEHOLDER = re.compile(r'\{([a-zA-Z_][a-zA-Z0-9_]*)(?:\|[^}]*)?\}')
 
 
 def _jload(path):
@@ -84,6 +84,7 @@ def validate(e):
         bad.append('sources (the NetApp pages the procedure was written from) is required')
     declared = set((e.get('vars') or {}).keys()) | KNOWN_VARS
     texts = [str(e.get('cause') or ''), str(e.get('impact') or '')] + [str(s) for s in (steps or [])] + [str(s) for s in (e.get('options') or [])]
+    texts += [str(e.get('groupKey') or ''), str(e.get('advisoryRef') or '')] + [str(x) for x in (e.get('compact') or [])]
     if e.get('belowMin'):
         texts += [str(e['belowMin'].get('cause') or '')] + [str(s) for s in (e['belowMin'].get('steps') or [])]
     for t in texts:

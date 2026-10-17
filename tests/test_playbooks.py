@@ -1,6 +1,6 @@
 """Remediation playbooks (app.js _remedPlaybook): the commands are written for the system and the object the finding names, are gated by release,
 and never leak template text. Runs the real function from app.js under node; skipped when node is not installed."""
-import json, os, shutil, subprocess, sys, unittest
+import json, os, shutil, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE = shutil.which('node')
@@ -9,10 +9,10 @@ HARNESS = r"""
 const fs = require('fs');
 const src = fs.readFileSync(process.argv[1], 'utf8');
 const a = src.indexOf('function _rvVer'), b = src.indexOf('function generateDynamicRemediationPlan');
-const _platformFamily = s => /e-series|^\d{3,4}$/i.test(String(s.platform)) ? 'eseries' : (/storagegrid/i.test(String(s.platform)) ? 'storagegrid' : 'ontap');
+const _platformFamily = s => /e-series|^\d{3,4}$/i.test(String(s.platform)) ? 'eseries' : (/storagegrid|^SG\d/i.test(String(s.platform)) ? 'storagegrid' : 'ontap');
 eval(src.slice(a, b) + ';globalThis._pb = _remedPlaybook; globalThis._setData = d => { _DATA_PLAYBOOKS = d; };');
-_setData(JSON.parse(process.argv[3]));
-const cases = JSON.parse(process.argv[2]);
+_setData(JSON.parse(fs.readFileSync(process.argv[3], 'utf8')));
+const cases = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 console.log(JSON.stringify(cases.map(c => { const r = _pb(c.risk, c.sys); return r ? { cause: r.cause, steps: r.steps, options: r.options } : null; })));
 """
 
@@ -22,7 +22,12 @@ def run(cases, data=None):
         sys.path.insert(0, os.path.join(ROOT, 'tools'))
         import playbooks
         data = playbooks.load(os.path.join(ROOT, 'data'))['playbooks']
-    p = subprocess.run([NODE, '-e', HARNESS, os.path.join(ROOT, 'app.js'), json.dumps(cases), json.dumps(data)], capture_output=True, text=True, timeout=60)
+    with tempfile.TemporaryDirectory() as td:     # the shipped playbooks are too large for a command line on Windows
+        cp, dp = os.path.join(td, 'cases.json'), os.path.join(td, 'data.json')
+        for path, obj in ((cp, cases), (dp, data)):
+            with open(path, 'w', encoding='utf-8') as fh:
+                json.dump(obj, fh)
+        p = subprocess.run([NODE, '-e', HARNESS, os.path.join(ROOT, 'app.js'), cp, dp], capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
 

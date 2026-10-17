@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.6.354 (2026-10-17)
+
+### Added
+- SANtricity (E-Series) and StorageGRID procedures, written from NetApp's own documentation pages (read this session) and shipped in tools/playbooks.json: SANtricity OS and NVSRAM upgrade for the advisories a newer controller release fixes (one procedure per array, grouped by target release, with the 11.70.5 prerequisite, the Recovery Guru check, signed-firmware rule, transfer-now/activate-later option and the post-upgrade inventory check); drive firmware upgrade (online and offline, the prerequisites, the errors that stop it); media scan frequency; hot spare coverage; drawer loss protection; Recovery Guru entries; drives past six years (logical replace); remote login (SSH), now written from the page itself. StorageGRID: software upgrade (version check, hotfix first, recovery package, prechecks, primary Admin Node, approving nodes, completion checks), NTP servers, stored object compression (with the FabricPool and range-read cautions), Object Lock for versioned buckets, and site capacity (adding volumes, shelves or nodes).
+- Coverage on the large test fleet: 31,074 of 32,946 findings (94.3%); E-Series 70% (from 0% for most kinds), StorageGRID 42%. The rest are optimisation suggestions (use flash), bugs whose fix is in a support article that is not public (DBM corruption, the SANtricity upgrade-failure bulletin), and a few kinds not yet written; they are listed in Settings > Data & Sync > Procedure coverage.
+- The playbook format gained: {name|text} (a default for a value the finding does not give), built-in values {target} (the release the finding or Active IQ asks for), {finding}, {advisory}, {cve}, {detail}, {recommended}, family 'any', and groupKey / compact / advisoryRef so one upgrade procedure serves all of an array's advisories (SANtricity and StorageGRID, as ONTAP). The Implementation Plans, Change Tickets, Handover Brief and Risk & Remediation Brief say 'systems' instead of 'clusters' for these. Findings the tool raises itself after a system is enriched (StorageGRID site capacity) now get their procedure too.
+
 ## 5.6.353 (2026-10-17)
 
 ### Added
