@@ -172,9 +172,23 @@ def record_gaps(data_dir, report, now=None):
     return {'gaps': len(items), 'queued': len(top)}
 
 
+def source_watch(data_dir, ld=None):
+    """How many of the NetApp pages the playbooks were written from the reference updater has read, and how many have changed since (open review items)."""
+    ld = ld or load(data_dir)
+    urls = set()
+    for e in ld['playbooks']:
+        for u in e.get('sources') or []:
+            if str(u).startswith('https://docs.netapp.com/') or str(u).startswith('https://security.netapp.com/') or str(u).startswith('https://www.netapp.com/'):
+                urls.add(str(u))
+    pages = (_jload(os.path.join(data_dir, 'library_update_state.json')).get('pages') or {})
+    read = sum(1 for u in urls if (pages.get(u) or {}).get('hash'))
+    changed = [i for i in (_jload(os.path.join(data_dir, QUEUE_NAME)).get('items') or {}).values() if i.get('kind') == 'playbook-source-changed' and i.get('status') == 'open']
+    return {'pages': len(urls), 'read': read, 'changedOpen': len(changed), 'changed': [{'title': i.get('title'), 'url': i.get('url')} for i in changed[:10]]}
+
+
 def status(data_dir):
     g = _jload(os.path.join(data_dir, GAPS_NAME))
     ld = load(data_dir)
     gaps = sorted((g.get('gaps') or {}).values(), key=lambda x: (-x.get('count', 0), x.get('key', '')))
     return {'updated': g.get('updated') or '', 'total': g.get('total'), 'covered': g.get('covered'), 'pct': g.get('pct'), 'history': g.get('history') or [],
-            'gaps': gaps[:60], 'gapTypes': len(gaps), 'playbooks': ld['counts'], 'pending': ld['pending'], 'problems': ld['problems']}
+            'gaps': gaps[:60], 'gapTypes': len(gaps), 'playbooks': ld['counts'], 'sourceWatch': source_watch(data_dir, ld), 'pending': ld['pending'], 'problems': ld['problems']}

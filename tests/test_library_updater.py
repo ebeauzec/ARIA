@@ -122,6 +122,31 @@ class RunTests(unittest.TestCase):
         self.sweep('<p>Known issues: CFBMC-8277, CFBMC-9999.</p>' + FILLER)   # the same id again does not reopen it
         self.assertEqual(lu.status(self.base)['openItems'], 0)
 
+    def test_a_changed_playbook_source_page_queues_a_review_of_that_playbook(self):
+        os.makedirs(os.path.join(self.base, 'tools'))
+        src = 'https://docs.netapp.com/us-en/ontap/example/procedure.html'
+        pb = {'playbooks': [{'id': 'ontap.example', 'status': 'approved', 'family': 'ontap', 'match': 'example', 'cause': 'c', 'impact': 'i', 'steps': ['1. a', '2. b', '3. c'], 'sources': [src]},
+                            {'id': 'ontap.other', 'status': 'approved', 'family': 'ontap', 'match': 'other', 'cause': 'c', 'impact': 'i', 'steps': ['1. a', '2. b', '3. c'], 'sources': [src, 'https://mysupport.netapp.com/x']}]}
+        with open(os.path.join(self.base, 'tools', 'playbooks.json'), 'w') as fh:
+            json.dump(pb, fh)
+        self.assertEqual(lu.playbook_sources(self.base), {src: ['ontap.example', 'ontap.other']})   # a sign-in host is never watched
+        self.assertIn(src, [x['url'] for x in lu.load_sources(self.base)])
+
+        def run(body):
+            pages = {k[2]: page('<p>Unrelated key page.</p>' + FILLER) for k in lu.KEY_PAGES}
+            pages[src] = page(body)
+            return lu.run_update(self.base, {}, fetch=Fetcher(pages), budget=5, log=self.quiet, sleep=lambda s: None)
+        run('<h1>Procedure</h1><p>Run the first command.</p><p>Then run the second command.</p>' + FILLER)       # baseline: nothing queued
+        self.assertEqual([i for i in lu.status(self.base)['queue'] if i['kind'] == 'playbook-source-changed'], [])
+        r = run('<h1>Procedure</h1><p>Run the NEW first command with a new option.</p><p>Then run the second command after a check.</p>' + FILLER)
+        self.assertEqual(r['playbookPages'], 1)
+        items = [i for i in lu.status(self.base)['queue'] if i['kind'] == 'playbook-source-changed']
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['playbooks'], ['ontap.example', 'ontap.other'])
+        self.assertIn('ontap.example', items[0]['title'])
+        run('<h1>Procedure</h1><p>Run the NEW first command with a new option.</p><p>Then run the second command after a check.</p>' + FILLER)       # unchanged again: no second item
+        self.assertEqual(len([i for i in lu.status(self.base)['queue'] if i['kind'] == 'playbook-source-changed']), 1)
+
     def test_unreadable_page_is_reported_and_queued_after_three_runs(self):
         f = Fetcher({})
         for _ in range(3):

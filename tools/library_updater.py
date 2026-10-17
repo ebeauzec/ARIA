@@ -311,6 +311,24 @@ def library_sources(library_root):
     return out
 
 
+def playbook_sources(base_dir):
+    """{url: [playbook ids]} for every approved playbook (tools/playbooks.json and data/playbooks_local.json) and the NetApp pages it lists as sources. Sign-in hosts are left out."""
+    out = {}
+    try:
+        import playbooks as _pb
+        ld = _pb.load(os.path.join(base_dir, 'data'), os.path.join(base_dir, 'tools', 'playbooks.json'))
+    except Exception:
+        return out
+    for e in ld['playbooks']:
+        for u in e.get('sources') or []:
+            h = urllib.parse.urlsplit(str(u)).netloc.lower()
+            if str(u).startswith('https://') and h in ALLOWED_HOSTS and h not in NEVER_HOSTS:
+                out.setdefault(str(u), [])
+                if e['id'] not in out[str(u)]:
+                    out[str(u)].append(e['id'])
+    return out
+
+
 def load_sources(base_dir, library_root=None):
     """Key pages first, then the library's own sources (or the shipped list when there is no library folder); one entry per URL, allowed hosts only."""
     seen, out = set(), []
@@ -333,6 +351,9 @@ def load_sources(base_dir, library_root=None):
     for cat, title, url in lib:
         if url:
             add(cat, title, url, False)
+    # the pages the remediation playbooks were written from: a change to one is a reason to re-read the procedure
+    for url, ids in sorted(playbook_sources(base_dir).items()):
+        add('Playbooks', 'Playbook source (' + ', '.join(ids[:3]) + (', ...' if len(ids) > 3 else '') + ')', url, False)
     return out
 
 
@@ -523,6 +544,7 @@ def run_update(base_dir, cfg=None, fetch=http_get, budget=30, log=print, sleep=t
     batch = keyp + rest[:max(0, budget)]
     hold = aria_holdings(base_dir)
     queue = load_queue(data_dir)
+    pbmap = playbook_sources(base_dir)
     events, checked, failed, changed_n, baselined = [], 0, [], 0, 0
     for n, src in enumerate(batch):
         url = src['url']
@@ -570,6 +592,14 @@ def run_update(base_dir, cfg=None, fetch=http_get, budget=30, log=print, sleep=t
         with open(cache, 'w', encoding='utf-8') as fh:
             fh.write(f'# {title or src["title"]}\nSource: {url}\nFetched: {today}\nAuto-refreshed by the ARIA reference updater (text of the page; no AI). The curated library copy, if any, is separate.\n\n{text}')
         for e in ev:
+            if e['kind'] == 'changed' and url in pbmap:
+                ids = pbmap[url]
+                iid = _item_id('pbsrc', url, digest[:8])
+                queue.setdefault(iid, {'id': iid, 'kind': 'playbook-source-changed', 'category': 'Procedures',
+                                       'title': 'Re-read playbook' + ('s ' if len(ids) != 1 else ' ') + ', '.join(ids[:4]) + (', ...' if len(ids) > 4 else '') + ': its NetApp source page changed',
+                                       'detail': f'{e["addedCount"]} line(s) added, {e["removedCount"]} removed on the page the procedure was written from. Added: ' + ' | '.join(e['added'][:4]) + ('. Removed: ' + ' | '.join(e['removed'][:2]) if e['removed'] else '') +
+                                                 '. Compare the page with the steps of the playbook (docs/PLAYBOOKS.md); if a command, menu path or prerequisite changed, correct the entry (a copy with the same id in data/playbooks_local.json overrides the shipped one), then close this item.',
+                                       'url': url, 'status': 'open', 'firstSeen': today, 'playbooks': ids})
             e.update({'url': url, 'title': src['title'], 'category': src['category']})
             events.append(e)
             if e['kind'] == 'new-version':
@@ -612,7 +642,7 @@ def run_update(base_dir, cfg=None, fetch=http_get, budget=30, log=print, sleep=t
         'startedAt': started.isoformat(), 'finishedAt': datetime.now(timezone.utc).isoformat(), 'sources': len(sources), 'checked': checked, 'baselined': baselined, 'changedPages': changed_n,
         'unreachable': failed[:20], 'gated': [u for u, p in pages.items() if p.get('gated')][:20], 'events': events[:60], 'scannersNeeded': bool(relevant),
         'library': {'found': bool(lib_root), 'entriesRead': [e['heading'] for e in lib['entries']], 'autoMarkedHarvested': auto_marked},
-        'openItems': len(open_items), 'neverChecked': sum(1 for s in sources if s['url'] not in pages or not pages[s['url']].get('hash')),
+        'playbookPages': len(pbmap), 'openItems': len(open_items), 'neverChecked': sum(1 for s in sources if s['url'] not in pages or not pages[s['url']].get('hash')),
         'tables': tables_status(base_dir, pages),
     }
     save_json(os.path.join(data_dir, REPORT_NAME), report)

@@ -45,9 +45,27 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.354";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.355";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.355",
+    date: "2026-10-17",
+    title: "Playbook page watch, workstation structure and automatic upkeep",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Page watch for the remediation playbooks: the reference updater now reads the NetApp pages that every approved playbook lists as its sources (about 26 pages), and when one of them changes (a real change, not a date) it adds a review item that names the playbook(s) and says what was added and removed, so a person re-reads the procedure against the page. Settings > Data & Sync > Procedure coverage shows how many source pages are watched and how many changed since. A sign-in host is never watched.",
+          "Working from more than one workstation: docs/WORKSTATIONS.md describes the shared Google Drive folder as the whole project (code, history, notes, tools, data), what travels and what does not, first-time setup, and the rules for sharing it (one machine at a time, commit and push before leaving, wait for the sync). tools/dev/ holds the development helpers that used to live in a session scratchpad: bootstrap.py (checks a workstation and sets the git hooks), release.py (the version bump in all five places), patchlib.py (line-ending-safe edits for patch scripts), coverage.py and docscan.py (procedure coverage and document scans), devlib.py (test server and browser helpers). None contains a customer name, a token or a machine path.",
+          "Automatic upkeep every time the project is worked on: a Claude Code session-start hook (.claude/settings.json, shared through the folder) runs tools/dev/maintenance.py, which starts a sweep of all the reference updater's sources in the background, then records procedure coverage with a headless load of the fleet, and prints the review queue, the largest procedure gaps, drafts waiting for approval and the standing instruction to work that queue before other work. The weekly scheduled Claude job runs the same routine and now also corrects playbooks whose source page changed and drafts playbooks for the largest gaps. ARIA itself still needs no AI and no internet to run.",
+          "Tests: tests/test_dev_tools.py (6): patch helpers keep CRLF/LF and refuse an ambiguous anchor, the release bump covers every file and survives CRLF, the maintenance report and the no-double-start lock; the updater test covers the playbook page watch.",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.354",
     date: "2026-10-17",
@@ -25200,7 +25218,8 @@ async function loadPlaybookCoverage() {
     const gaps = d.gaps || [], hist = d.history || [];
     const trend = hist.length > 1 && hist[0].total ? ` (${(100 * hist[0].covered / hist[0].total).toFixed(0)}% at the first record)` : '';
     box.innerHTML = `<div style="color:var(--text-secondary);">${d.pct == null ? 'No report yet: it is written after the first load of the fleet.' : `<b>${d.pct}%</b> of the findings in the fleet (${(d.covered || 0).toLocaleString()} of ${(d.total || 0).toLocaleString()}) have a procedure written for their own system${_esc(trend)}; ${d.gapTypes || 0} kinds of finding have none. Recorded ${_esc(ago(d.updated))}.`}
-      <br>Playbooks as data: ${pb.approved || 0} in use (${pb.shipped || 0} shipped, ${pb.local || 0} local)${pb.pending ? `, <b>${pb.pending} draft${pb.pending === 1 ? '' : 's'} waiting for approval</b>` : ''}${pb.invalid ? `, <span style="color:var(--status-critical);">${pb.invalid} invalid</span>` : ''}. The rest are written in the program.</div>`
+      <br>Playbooks as data: ${pb.approved || 0} in use (${pb.shipped || 0} shipped, ${pb.local || 0} local)${pb.pending ? `, <b>${pb.pending} draft${pb.pending === 1 ? '' : 's'} waiting for approval</b>` : ''}${pb.invalid ? `, <span style="color:var(--status-critical);">${pb.invalid} invalid</span>` : ''}. The rest are written in the program.
+      ${(d.sourceWatch && d.sourceWatch.pages) ? `<br>The NetApp pages the procedures were written from: ${d.sourceWatch.pages} watched by the reference updater, ${d.sourceWatch.read} read so far${d.sourceWatch.changedOpen ? `, <b>${d.sourceWatch.changedOpen} changed since (see the review queue above)</b>` : ', none changed'}.` : ''}</div>`
       + ((d.problems || []).length ? `<div style="margin-top:6px;color:var(--status-critical);">${d.problems.slice(0, 4).map(x => _esc(x.id) + ': ' + _esc(x.problems[0])).join('<br>')}</div>` : '')
       + (gaps.length ? `<details style="margin-top:8px;"><summary style="cursor:pointer;color:var(--text-muted);">Findings with no procedure (largest first)</summary><table style="width:100%;border-collapse:collapse;margin-top:6px;">`
         + gaps.slice(0, 25).map(g => `<tr style="border-top:1px solid var(--wa-50);"><td style="padding:3px 8px 3px 0;">${_esc(g.key.replace(/^[a-z]+ \| /, ''))}</td><td style="padding:3px 6px;color:var(--text-muted);white-space:nowrap;">${_esc((g.families || []).join(', '))}</td><td style="padding:3px 0;text-align:right;white-space:nowrap;">${g.count} on ${g.systems}</td></tr>`).join('') + `</table><div style="margin-top:6px;color:var(--text-muted);">The largest are in the review queue above. A procedure is added as a playbook entry (docs/PLAYBOOKS.md): a person approves it, and it applies on the next load, with no new release.</div></details>` : '');

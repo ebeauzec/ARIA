@@ -1,8 +1,8 @@
 {
-  "version": "5.6.354",
+  "version": "5.6.355",
   "major": 5,
   "minor": 6,
-  "patch": 354,
+  "patch": 355,
   "date": "2026-10-17",
-  "notes": "E-Series and StorageGRID procedures written from NetApp's pages; coverage 94.3%"
+  "notes": "Playbook source pages are watched; dev tools and workstation guide; maintenance runs at every session start"
 }

@@ -116,6 +116,7 @@ edges, one previously-claimed edge that turned out to be false, and prioritized 
 | `api_queries.json` | Every Active IQ endpoint, query, mutation and fragment; the program has no query text of its own |
 | `resolution_rules.json` | Finding-resolution wording and product matching, firmware and upgrade-path known issues (a copy in `data/` overrides it) |
 | `tools/library_sources.json` | The page list of the reference updater (key pages and the library's `Source:` urls) |
+| `tools/dev/` | Development helpers (not part of ARIA): `bootstrap.py` (workstation check), `maintenance.py` (the automatic upkeep, run by the Claude Code session-start hook), `release.py`, `patchlib.py`, `coverage.py`, `docscan.py`, `devlib.py`; see its README. How to work from the shared Google Drive folder on more than one workstation: `docs/WORKSTATIONS.md` |
 | `tools/playbooks.py`, `tools/playbooks.json` | Remediation playbooks as data: loader, validation, the gap record (`data/playbook_gaps.json`) and the review-queue items; the shipped set. `data/playbooks_local.json` adds to it. Format and rules: `docs/PLAYBOOKS.md` |
 | `data/library_update_*.json`, `data/library_refreshed/` | Reference updater state, review queue, report and the kept copy of each page read |
 | `data/cisa_kev.json`, `data/advisory_index.json`, `data/advisory_resolutions.json` | CISA KEV catalog, NetApp's CVE-to-advisory index, and the resolution (fixed release / workaround) of each advisory |

@@ -1,6 +1,6 @@
 # ARIA — Active IQ Risk Intelligence Advisor
 
-[![Version](https://img.shields.io/badge/version-5.6.354-0066cc)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.6.355-0066cc)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-3776AB?logo=python&logoColor=white)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
@@ -1004,7 +1004,8 @@ ARIA/
 ├── tests/           ← stdlib unittest suite (python tests/run_tests.py): ASUP parser, library updater, multi-account, StoragePerf, ...
 ├── tools/           ← Runtime tools and developer utilities
 │   ├── library_updater.py  ← The reference updater (stdlib, no AI); library_sources.json is its page list
-│   └── playbooks.py        ← Remediation playbooks as data (playbooks.json) and the record of findings with no procedure
+│   ├── playbooks.py        ← Remediation playbooks as data (playbooks.json) and the record of findings with no procedure
+│   └── dev/                ← Development helpers (bootstrap, maintenance, release, patch library, coverage and document scans); see docs/WORKSTATIONS.md
 │   └── derived_reference.py, eoa_list.py, ontap_release_notes.py, netapp_docs_versions.py  ← Reference tables derived from public NetApp pages
 │   └── asup_parser.py  ← Offline AutoSupport bundle parser (imported by server.py)
 │   └── firmware_harvester.py, reference_harvester.py  ← Firmware version and IMT interop harvesters

@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.6.355 (2026-10-17)
+
+### Added
+- Page watch for the remediation playbooks: the reference updater now reads the NetApp pages that every approved playbook lists as its sources (about 26 pages), and when one of them changes (a real change, not a date) it adds a review item that names the playbook(s) and says what was added and removed, so a person re-reads the procedure against the page. Settings > Data & Sync > Procedure coverage shows how many source pages are watched and how many changed since. A sign-in host is never watched.
+- Working from more than one workstation: docs/WORKSTATIONS.md describes the shared Google Drive folder as the whole project (code, history, notes, tools, data), what travels and what does not, first-time setup, and the rules for sharing it (one machine at a time, commit and push before leaving, wait for the sync). tools/dev/ holds the development helpers that used to live in a session scratchpad: bootstrap.py (checks a workstation and sets the git hooks), release.py (the version bump in all five places), patchlib.py (line-ending-safe edits for patch scripts), coverage.py and docscan.py (procedure coverage and document scans), devlib.py (test server and browser helpers). None contains a customer name, a token or a machine path.
+- Automatic upkeep every time the project is worked on: a Claude Code session-start hook (.claude/settings.json, shared through the folder) runs tools/dev/maintenance.py, which starts a sweep of all the reference updater's sources in the background, then records procedure coverage with a headless load of the fleet, and prints the review queue, the largest procedure gaps, drafts waiting for approval and the standing instruction to work that queue before other work. The weekly scheduled Claude job runs the same routine and now also corrects playbooks whose source page changed and drafts playbooks for the largest gaps. ARIA itself still needs no AI and no internet to run.
+- Tests: tests/test_dev_tools.py (6): patch helpers keep CRLF/LF and refuse an ambiguous anchor, the release bump covers every file and survives CRLF, the maintenance report and the no-double-start lock; the updater test covers the playbook page watch.
+
 ## 5.6.354 (2026-10-17)
 
 ### Added
