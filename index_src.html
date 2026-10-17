@@ -42,11 +42,11 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   
   <!-- CSS Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=5.6.344-1">
+  <link rel="stylesheet" href="styles.css?v=5.6.345-1">
   
   <!-- Load Chart.js locally -->
-  <script src="chart.js?v=5.6.344-1"></script>
-  <script src="pptxgen.bundle.js?v=5.6.344-1"></script>
+  <script src="chart.js?v=5.6.345-1"></script>
+  <script src="pptxgen.bundle.js?v=5.6.345-1"></script>
 <script>
   /* theme: 'dark' (default), 'light' or 'system'; applied before the page paints */
   (function () { var m = 'dark'; try { m = localStorage.getItem('aria_theme') || 'dark'; } catch (e) {}
@@ -695,9 +695,11 @@
                     <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Cluster / Grid / Array <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
                     <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Customer <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
                     <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Model <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
-                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Raw TB <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
-                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Used TB <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
-                    <th style="padding:8px 10px;font-weight:600;min-width:160px;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Utilization <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" title="The nodes' raw capacity added up" onclick="sortTamTable(this)">Raw TB <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" title="What is left of raw capacity after RAID parity, spares and reserves, the nodes' figures added up" onclick="sortTamTable(this)">Usable TB <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" title="Physical capacity used, the nodes' figures added up" onclick="sortTamTable(this)">Used TB <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" title="Used TB divided by Usable TB, calculated here. A value above 100% means the used figure includes capacity outside the local aggregates, for example an object-store tier" onclick="sortTamTable(this)">Used / usable <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
+                    <th style="padding:8px 10px;font-weight:600;min-width:160px;cursor:pointer;user-select:none;" title="The utilization Active IQ reports for the fullest node. Active IQ does not say how it is derived: it is not Used / Raw and often not Used / Usable, so it can differ from the Used / usable column" onclick="sortTamTable(this)">Utilization (Active IQ) <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
                     <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Growth/day <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
                     <th style="padding:8px 10px;font-weight:600;text-align:right;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Runway <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
                     <th style="padding:8px 10px;font-weight:600;cursor:pointer;user-select:none;" onclick="sortTamTable(this)">Source <span class="tam-sort-icon" style="opacity:0.4;font-size:0.6rem;">⇅</span></th>
@@ -1687,9 +1689,9 @@
   <input type="file" id="importFileInput" style="display: none;" accept=".json" onchange="handleJSONImport(event)">
 
   <!-- Javascript File -->
-  <script src="aria-api.js?v=5.6.344-1"></script>
-  <script src="data/reference_library.js?v=5.6.344-1"></script>
-  <script src="app.js?v=5.6.344-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
+  <script src="aria-api.js?v=5.6.345-1"></script>
+  <script src="data/reference_library.js?v=5.6.345-1"></script>
+  <script src="app.js?v=5.6.345-1" onerror="alert('❌ FATAL: app.js failed to load. Check the browser console (F12) for details.')"></script>
   <script>
     // Verify app.js parsed OK — if APP_VERSION is undefined, the file had a parse error
     if (typeof APP_VERSION === 'undefined') {

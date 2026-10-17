@@ -1,8 +1,8 @@
 {
-  "version": "5.6.344",
+  "version": "5.6.345",
   "major": 5,
   "minor": 6,
-  "patch": 344,
+  "patch": 345,
   "date": "2026-10-17",
-  "notes": "Sweep of the Action Planner and deliverables; pointers to complete lists; What changed and 30/60/90 scorecard; Word table fix"
+  "notes": "Risk trend counts the same systems on comparable days; capacity table shows usable and used/usable; documents unbranded; heading and logistics fixes"
 }

@@ -1646,73 +1646,75 @@ def _maybe_send_webhook_alert(db, result, account_label):
 
 
 def _get_fleet_trend(db, days=90, customer_name=None, serials=None):
-    """Aggregate system_snapshots across ALL systems (or one customer, if
-    given) into one row per date: total critical/high risks, total open
-    critical cases, and how many distinct systems were captured that day.
+    """One row per snapshot date for the systems in scope: risks by severity, open severity 1 and 2 cases, ransomware protection on and off, lapsed
+    contracts, the average efficiency ratio and how many records were counted.
 
-    Per-system trend already existed (_get_system_history, used by the CSM
-    tab's history panel) but there was no fleet-wide or customer-wide view --
-    a TAM/MSP had no way to see "is my whole book of business trending up or
-    down in risk" over time, only one system at a time. Reuses the same
-    system_snapshots data already captured on every harvest; no new capture
-    logic needed.
+    The rows are comparable from one day to the next. Snapshots are taken from whatever a harvest returned that day, and the harvests of the early weeks
+    covered different systems and, on some days, stored no risks at all; adding up what was captured made the totals jump and fall for reasons that have
+    nothing to do with the estate. So (1) only the systems of the latest snapshot are counted, on every day, and (2) a day is marked `valid: false` when
+    fewer than 70% of those systems were captured, or when far more of them than today have no risks recorded (a harvest that stored none). `coverage` is
+    the share of those systems captured that day. Callers draw and compare only the valid days.
     """
+    sel = "SELECT snapshot_date, serial_number, snapshot_json FROM system_snapshots WHERE snapshot_date >= date('now', ?)"
     if serials is not None:
-        # watchlist / group scope: restrict to that list of serial numbers
         wanted = set(str(x) for x in serials)
-        rows = [r for r in db.execute("""
-            SELECT snapshot_date, snapshot_json, serial_number FROM system_snapshots
-            WHERE snapshot_date >= date('now', ?)
-            ORDER BY snapshot_date ASC
-        """, (f"-{days} days",)).fetchall() if r[2] in wanted]
-        rows = [(r[0], r[1]) for r in rows]
+        rows = [r for r in db.execute(sel + " ORDER BY snapshot_date ASC", (f"-{days} days",)).fetchall() if str(r[1]) in wanted]
     elif customer_name:
-        rows = db.execute("""
-            SELECT snapshot_date, snapshot_json FROM system_snapshots
-            WHERE snapshot_date >= date('now', ?) AND customer_name = ?
-            ORDER BY snapshot_date ASC
-        """, (f"-{days} days", customer_name)).fetchall()
+        rows = db.execute(sel + " AND customer_name = ? ORDER BY snapshot_date ASC", (f"-{days} days", customer_name)).fetchall()
     else:
-        rows = db.execute("""
-            SELECT snapshot_date, snapshot_json FROM system_snapshots
-            WHERE snapshot_date >= date('now', ?)
-            ORDER BY snapshot_date ASC
-        """, (f"-{days} days",)).fetchall()
+        rows = db.execute(sel + " ORDER BY snapshot_date ASC", (f"-{days} days",)).fetchall()
 
     by_date = {}
-    for date_str, snap_json in rows:
+    for date_str, serial, snap_json in rows:
         try:
             rec = json.loads(snap_json)
         except Exception:
             continue
-        d = by_date.setdefault(date_str, {"date": date_str, "critical": 0, "high": 0, "medium": 0, "low": 0, "openCriticalCases": 0, "systemCount": 0,
-                                          "arpEnabled": 0, "arpDisabled": 0, "contractsLapsed": 0, "_effSum": 0.0, "_effN": 0})
+        by_date.setdefault(date_str, {})[str(serial)] = rec
+    if not by_date:
+        return []
+    dates = sorted(by_date)
+    cohort = set(by_date[dates[-1]])
+
+    def _no_risks(rec):
         rc = rec.get("riskCounts") or {}
-        d["critical"] += int(rc.get("critical") or 0)
-        d["high"] += int(rc.get("high") or 0)
-        d["medium"] += int(rc.get("medium") or 0)
-        d["low"] += int(rc.get("low") or 0)
-        d["openCriticalCases"] += int(rec.get("openCriticalCases") or 0)
-        d["systemCount"] += 1
-        # measures the snapshots already hold, so the history is complete from the first snapshot
-        if rec.get("isARPEnabled") is True:
-            d["arpEnabled"] += 1
-        elif rec.get("isARPEnabled") is False:
-            d["arpDisabled"] += 1
-        end = str(rec.get("contractEndDate") or "")[:10]
-        if rec.get("contractActive") is False or (end and end < date_str):
-            d["contractsLapsed"] += 1
-        try:
-            eff = float(rec.get("efficiencyRatio"))
-            if eff > 0:
-                d["_effSum"] += eff
-                d["_effN"] += 1
-        except (TypeError, ValueError):
-            pass
-    out = sorted(by_date.values(), key=lambda x: x["date"])
-    for d in out:
-        n = d.pop("_effN")
-        d["avgEfficiency"] = round(d.pop("_effSum") / n, 2) if n else None
+        return not any(int(rc.get(k) or 0) for k in ("critical", "high", "medium", "low"))
+
+    def _zero_share(recs):
+        return (sum(1 for r in recs.values() if _no_risks(r)) / len(recs)) if recs else 1.0
+
+    ref_zero = _zero_share({k: v for k, v in by_date[dates[-1]].items() if k in cohort})
+    out = []
+    for date_str in dates:
+        recs = {k: v for k, v in by_date[date_str].items() if k in cohort}
+        coverage = (len(recs) / len(cohort)) if cohort else 0.0
+        d = {"date": date_str, "critical": 0, "high": 0, "medium": 0, "low": 0, "openCriticalCases": 0, "systemCount": len(recs),
+             "arpEnabled": 0, "arpDisabled": 0, "contractsLapsed": 0, "coverage": round(coverage, 3)}
+        eff_sum, eff_n = 0.0, 0
+        for rec in recs.values():
+            rc = rec.get("riskCounts") or {}
+            d["critical"] += int(rc.get("critical") or 0)
+            d["high"] += int(rc.get("high") or 0)
+            d["medium"] += int(rc.get("medium") or 0)
+            d["low"] += int(rc.get("low") or 0)
+            d["openCriticalCases"] += int(rec.get("openCriticalCases") or 0)
+            if rec.get("isARPEnabled") is True:
+                d["arpEnabled"] += 1
+            elif rec.get("isARPEnabled") is False:
+                d["arpDisabled"] += 1
+            end = str(rec.get("contractEndDate") or "")[:10]
+            if rec.get("contractActive") is False or (end and end < date_str):
+                d["contractsLapsed"] += 1
+            try:
+                eff = float(rec.get("efficiencyRatio"))
+                if eff > 0:
+                    eff_sum += eff
+                    eff_n += 1
+            except (TypeError, ValueError):
+                pass
+        d["avgEfficiency"] = round(eff_sum / eff_n, 2) if eff_n else None
+        d["valid"] = bool(recs) and coverage >= 0.7 and _zero_share(recs) <= ref_zero + 0.25
+        out.append(d)
     return out
 
 

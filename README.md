@@ -1,6 +1,6 @@
 # ARIA — Active IQ Risk Intelligence Advisor
 
-[![Version](https://img.shields.io/badge/version-5.6.344-0066cc)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.6.345-0066cc)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-3776AB?logo=python&logoColor=white)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
@@ -470,7 +470,7 @@ Storage efficiency and capacity intelligence:
 - **SnapMirror** — async/sync relationship counts (shown for ONTAP only; never for a StorageGRID or E-Series node)
 - **StorageGRID** — licensed and used capacity per grid (more in the Action Planner StorageGRID tab)
 - **Capacity Projection Chart** — toggle between **Aggregate** (fleet-wide) and **Per Node** (individual node trend lines)
-- **Capacity Breakdown by Cluster, Grid or Array** — one row per unit: used capacity and growth added up over its nodes, raw capacity the sum of the node figures (checked against Active IQ's own cluster total), utilisation of the fullest node, the shortest runway. Capacity is shown as TB below 1,000 and PB from 1,000 up, everywhere in the app, from one formatter. Sorting by Runway sorts by days (an over-limit system first, *> 10 Yrs* last)
+- **Capacity Breakdown by Cluster, Grid or Array** — one row per unit: Raw TB, Usable TB (what is left of raw after RAID parity, spares and reserves), Used TB (the nodes' figures added up), **Used / usable** (calculated, so the columns reconcile; above 100% when the used figure includes capacity outside the local aggregates, such as an object-store tier) and Active IQ's own utilization for the fullest node, labelled as Active IQ's: Active IQ does not say how that percentage is derived and it is often neither used / raw nor used / usable. Capacity is shown as TB below 1,000 and PB from 1,000 up, everywhere in the app, from one formatter. Sorting by Runway sorts by days (an over-limit system first, *> 10 Yrs* last)
 
 > **Per Node toggle:** Click **Per Node** in the top-right of the chart to see each cluster node as a separate trend line. Raw TB shows "N/A" where the API reports capacity at cluster-aggregate level only — used TB and utilisation fall back to the actual monthly telemetry data (the same source the chart uses).
 
@@ -605,6 +605,10 @@ Besides the deliverables, **every Action Planner tab** has a **Download Word** b
 ### What every narrative deliverable opens with
 
 Each narrative deliverable starts with a **Decisions needed** block: the top five actions, each with why it matters, a suggested timing and an owner. The Health & Lifecycle Report also carries the full plan table (type of change, timing, owner), an **Upgrade Sequence** (clusters in waves: pre-release, unsupported or critical first; MetroCluster DR site first), **Hardware Refresh Planning** (order-by and migrate-by dates, TB to migrate) and a **Capacity Trend** from Active IQ's monthly cluster history (drained or decommissioning clusters and temporary spikes are called out).
+
+### Unbranded documents
+
+Every document and deliverable is an interpretation of the data collected from NetApp Active IQ, and says so in one basis line under its title; none names the tool that produced it. Active IQ's own figures are labelled as Active IQ's, and anything derived from them is marked *derived*.
 
 ### Progress, and where a long list is
 
