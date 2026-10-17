@@ -1,6 +1,6 @@
 # ARIA — Active IQ Risk Intelligence Advisor
 
-[![Version](https://img.shields.io/badge/version-5.6.342-0066cc)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.6.343-0066cc)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-3776AB?logo=python&logoColor=white)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)]()
@@ -113,7 +113,7 @@ not feature-count:
 
 ## 2. What It Delivers
 
-In a single sync, the tool harvests your complete fleet telemetry from the Active IQ API, enriches it with a curated Reference Library and ARIA Knowledge Base Intelligence engine, and renders it as a fully interactive dashboard with 15 downloadable customer-facing deliverables — each enriched with fleet-relevant KB references, actionable CLI commands, and estimated remediation effort.
+In a single sync, the tool harvests your complete fleet telemetry from the Active IQ API, enriches it with a curated Reference Library and ARIA Knowledge Base Intelligence engine, and renders it as a fully interactive dashboard with 16 downloadable customer-facing deliverables — each enriched with fleet-relevant KB references, actionable CLI commands, and estimated remediation effort.
 
 **Harvested from Active IQ:**
 - Every system and cluster across your entire portfolio
@@ -154,7 +154,7 @@ In a single sync, the tool harvests your complete fleet telemetry from the Activ
 - **Known exploited vulnerabilities (CISA KEV)** — each KEV CVE that NetApp has an advisory for, listed against a system only on evidence (Active IQ reported it, or NetApp's advisory publishes a fixed release for the product and the installed release is below it). The CVEs not counted are listed with the reason. Overview card and Security Posture Brief section.
 - **Security hardening scorecard** — ten controls (ransomware protection, snapshots on all data volumes, Vscan, open NFS export rules, self-encrypting drive locking, cluster peering encryption, remote configuration backups, NTP and DNS redundancy, open critical or high advisories) plus three for the automatic-update settings (a notify-only system is a gap, an automatic one is not, one that reports nothing is *not reported*), each tied to the Active IQ check that evidences a gap, worded exactly: *no gap raised* is not *confirmed*. Controls Active IQ does not report are listed with the command that shows them on the array.
 - **SnapMirror health** — Active IQ's API gives only the number of relationships per cluster, so health is built from the findings it raises, in four classes — updates failing, destination disrupted, MetroCluster, and cluster peering or intercluster network — never from invented lag figures.
-- **Configuration review** — the configuration problems that sit beside unowned drives, grouped with what to do and the command that shows each: a card in an unsupported slot, shelf cabling, takeover not possible, automatic giveback off, cluster LIFs and ports, intercluster LIFs, a Service Processor with no address, AutoSupport over SMTP or plain HTTP. Most are Active IQ findings; three are *ARIA comparisons* of the inventory Active IQ reports (HA partners with different cards in the same slot, ports of one broadcast domain with different MTUs, AutoSupport over HTTP), labelled as such and to be confirmed on the array. Overview card and a section in the documents.
+- **Configuration review** — the configuration problems that sit beside unowned drives, grouped with what to do and the command that shows each: a card in an unsupported slot, shelf cabling, takeover not possible, automatic giveback off, cluster LIFs and ports, intercluster LIFs, a Service Processor with no address, AutoSupport over SMTP or plain HTTP. Most are Active IQ findings; three are *ARIA comparisons* of the inventory Active IQ reports (HA partners with different cards in the same slot, ports of one broadcast domain with different MTUs, AutoSupport over HTTP), labelled as such and to be confirmed on the array. Overview card, a **Configuration Review** tab in the Action Planner (with deliverable P) and a section in the other documents.
 - **Unowned drives**, **What changed** (newly raised risks, and a comparison of daily snapshots with the coverage it can honestly claim), and **automatic update settings** per system.
 - **Minimum safe release per ONTAP line**, one upgrade target per system on the line it already runs, and findings that Active IQ still shows although the installed release contains the fix, reported as one *check in Active IQ* action instead of upgrade work.
 - **Success Plans drafted and kept current** — a complete, measurable plan with milestones, dated actions, stakeholders and notes, written to Active IQ and updated after every harvest (see [Success Plan Management](#success-plan-management)).
@@ -454,6 +454,8 @@ The **Controller Node Port Assignments** card draws the selected controller's **
 
 **Security hardening scorecard** (also in the Security Posture Brief): the controls above, each with *no gap raised / gap raised / not reported*, plus the controls Active IQ does not report with the command that shows each on the array. **Risk acknowledgement** is written by the server with the token of the Active IQ account that owns the system, using Active IQ's five justifications and an expiry; an acknowledgement can be withdrawn from the Technical Risks tab or the risk detail, shows who/when/why, and every change is in a log with an Undo button.
 
+**Action Planner documents built from the customer's data.** The Executive Summary (position, estate, decisions needed with owner and timing, risk, support and lifecycle, capacity, protection, configuration), Operational Guidelines and Next Steps (priority actions now / next / later, the ONTAP upgrade order, the checks before and after a change with cautions that apply only to the platforms present, change control, review cadence) and Network Switch and Fabric Validation (each physical switch once, what needs action, the inventory) are written from the scope's own data, in Word and text.
+
 ### Support & Ops
 
 Contract status pipeline (Active / Expiring / Expired cards), EOS/EOA lifecycle timeline sorted by urgency, and a filterable support case view (Open / Processing / Closed) with case age and system attachment.
@@ -476,7 +478,7 @@ Storage efficiency and capacity intelligence:
 
 ### Action Planner
 
-The core reporting engine. Click **Generate** to build every section (28 tabs in five groups). Use the tab row to navigate; every tab has a **Download Word** button. See [Section 6](#6-action-planner--all-sections) for full detail on each section.
+The core reporting engine. Click **Generate** to build every section (29 tabs in five groups, including the Configuration Review). Use the tab row to navigate; every tab has a **Download Word** button. See [Section 6](#6-action-planner--all-sections) for full detail on each section.
 
 ### Remediation Tracker
 
@@ -579,6 +581,7 @@ All deliverables are generated in the browser from your local data. Nothing is u
 | **M** | **Account Handover & Transition Brief** | TAM Transitions | Environment inventory, personnel, risk posture, contract status, recent activity, talking points (internal); StorageGRID and Platform Insights sections |
 | **N** | **Customer Value Report** | TAM / Exec | Text, one heading per slide: executive summary, value delivered, security and planning, optimisation opportunities, renewals, decisions needed; Platform Insights on the second slide |
 | **O** | **Customer Health & Lifecycle Report** | Customer-facing | Paste-ready report: at a glance, decisions needed, estate table, support and lifecycle (software and hardware windows), security (risks vs CVEs explained), monitoring, capacity and trend, data protection incl. MetroCluster per pair, cases, recommended plan, upgrade sequence, hardware refresh planning; StorageGRID and Platform Insights sections |
+| **P** | **Configuration Review** | TAM / Storage Ops | Every misconfiguration and wrong placement (card in an unsupported slot, shelf cabling, takeover and giveback, cluster network, intercluster LIFs, Service Processor, AutoSupport transport, unowned drives, HA partners with different cards): what to do, the commands, and the clusters; Active IQ findings and ARIA comparisons labelled separately |
 | — | **Fleet Inventory CSV** | Data Export / ITAM / CMDB Reconciliation | Complete system inventory with all enriched fields, exportable to Excel |
 | — | **Config State JSON** | Backup | Full application configuration state for import/export across environments |
 
@@ -931,6 +934,7 @@ The desktop program runs the same server as `python server.py`, in a window of i
 | **Many values show "Unknown" / "Not reported" (shelf firmware, risks, cases, recommendations, renewals)** | Account has no `unfiltered_system_access` privilege (watchlist-scoped only), so unscoped Active IQ queries are rejected | Fixed in v5.6.221: ARIA falls back to the auto-discovered watchlists. Restart the server and run a forced harvest (`/api/harvest?force=1`). Anything still "Not reported" is a genuine Active IQ limit, see *Data Active IQ does not provide* below |
 | **HTTP 401 on the first sync although the token is right** | A system proxy that cannot be authenticated to (common on macOS with VPN or security gateways) answers the token request | ARIA retries once without the proxy (5.6.309) and keeps using the direct path when it works. Run **Settings > Connection > Connection check**; `ARIA_NO_PROXY=1` forces direct. A token pasted with a trailing newline, quotes or `Bearer ` is cleaned automatically |
 | **First sync on a new install shows an empty page** | Large fleet, harvest still running | Fixed in 5.6.306: the page keeps watching and shows progress until data arrives. The Connection check shows each account's last harvest and warnings |
+| **A harvest returned far fewer systems than the one before (for example 255 of 1,697)** | A page of the systems list kept failing (timeout, dropped connection, proxy error page, 429/5xx). Before 5.6.343 the partial list was saved as complete | 5.6.343 retries the page and, if it still fails, keeps the previous harvest's missing systems and warns in Settings (*the systems list ended early*). Run the Connection check and force a harvest (`/api/harvest?force=1`) once the network is stable |
 | **An account shows a warning in Settings > Data & Sync** | Its last harvest failed (usually a refresh token Active IQ no longer accepts); the old data is not current | Create a new refresh token in Active IQ and paste it in Settings > Connection |
 | **Success Plan was created but shows fewer milestones/actions than the preview** | Active IQ refused some items | The alert lists them; open the plan and press **Complete missing items** |
 | **Success Plans are not updating after a harvest** | Automatic updates are off, the page was not open, or the plan has no stored structure | Tick *Update plans in Active IQ automatically* on the Success Plans tab, keep ARIA open through a harvest, or press *Update Active IQ from ARIA's measurement* in the plan |

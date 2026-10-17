@@ -45,9 +45,28 @@ const API_BASE = locOrigin.startsWith("http") ? "/api" : AIQ_REST_DEFAULT;
     });
   };
 })();
-const APP_VERSION = "5.6.342";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
+const APP_VERSION = "5.6.343";   // MUST match version.json and APP_CHANGELOG[0].version (drives the nav footer and the What's New modal)
 
 const APP_CHANGELOG = [
+  {
+    version: "5.6.343",
+    date: "2026-10-17",
+    title: "Harvest paging fix, Configuration Review tab, Executive Summary, Guidelines and Switch documents rebuilt, Word banner fix",
+    sections: [
+      {
+        icon: "✨",
+        label: "Added",
+        color: "#3b82f6",
+        items: [
+          "Fixed: a harvest could be saved as complete when its systems list had stopped early. If the request for page 2 or later of the systems query timed out, dropped, hit a proxy error page or got a 429/5xx answer, the paging loop ended quietly and the partial fleet was saved over the good cache (255 systems of 1,697 in one real harvest, shown until the next harvest). Such a page is now retried (3, 6 and 12 seconds apart); if it still fails the harvest is marked incomplete, the systems of the previous harvest that it lacks are kept and marked, and the warning in Settings says so. Ten tests cover it.",
+          "New Configuration Review tab in the Action Planner (its tab shows the number of findings) and a new deliverable, P. Configuration Review: every misconfiguration and wrong placement with what to do, the commands, and the clusters; findings are grouped by area (high availability, cluster network, hardware, disks, management), ordered by severity, with the unowned drives in detail and the clusters that have more than one finding. Word and text downloads like the other documents.",
+          "Rebuilt from the customer's own data, as proper documents in Word and text: the Executive Summary (overall position, estate at a glance, decisions needed with owner and timing, risk and security with where the risk is concentrated, support, contracts and lifecycle, capacity, data protection, configuration; it was five counts and a sentence), Operational Guidelines and Next Steps (the priority actions grouped now / next / later, the ONTAP upgrade order, the checks before and after a change with the cluster-specific cautions for MetroCluster, ASA, StorageGRID, E-Series, VMware, Kubernetes and switches, change control and the review cadence; it was a fixed block of generic text that named VMware and Trident whether or not the customer had them) and Network Switch and Fabric Validation (each physical switch once instead of once per node, with a summary, the switches that need action and what to do, the inventory and firmware by model).",
+          "Word documents: a numbered action no longer puts its whole sentence into a dark banner. A long title keeps its first clause as the banner headline and the full text moves into the card body; an item with no detail rows is a numbered paragraph, not an empty banner. Longest banner in the proposal, communications, security and review documents is now 87 characters.",
+          "Platform findings: drive end-of-support and drive-firmware findings are one finding per cluster with the drive models added up across its nodes, instead of one line per node and per model (16 lines became 13 in the Technical Solution Proposal of a two-cluster customer).",
+        ],
+      },
+    ],
+  },
   {
     version: "5.6.342",
     date: "2026-10-17",
@@ -22228,6 +22247,21 @@ function _dfPlatformInsights(systems) {
     const dedupe = (rows, sigFn) => { const out = []; _byUk(rows).forEach(rs => { const bySig = new Map(); rs.forEach(r => { const k = sigFn(r); if (!bySig.has(k)) bySig.set(k, []); bySig.get(k).push(r); }); bySig.forEach(g => out.push({ ...g[0], system: g.length === (_nodesIn.get(g[0].uk) || 1) || (_nodesIn.get(g[0].uk) || 1) === 1 ? g[0].un : `${g[0].un} (${g.map(x => x.system).join(', ')})` })); }); return out; };
     const h = dedupe(histRows, r => [r.count, r.lastDate, r.lastFrom, r.lastTo].join('|')); histRows.length = 0; h.forEach(r => histRows.push(r));
     const f = dedupe(fileRows, r => [r.type, r.cur, r.rec].join('|')); fileRows.length = 0; f.forEach(r => fileRows.push(r)); }
+  { // drive findings: the drives of a cluster are listed by node, so one finding per drive model per node became a dozen lines; they are one finding per cluster, the models added up
+    const DT = new Set(['Drive model past end of support', 'Drive model nearing end of support', 'Drive firmware behind recommended']), g = new Map(), keep = [];
+    findings.forEach(f => {
+      if (!DT.has(f.title)) { keep.push(f); return; }
+      const k = [f.uk, f.severity, f.title].join('|'); let e = g.get(k); if (!e) { e = { f, notes: new Map(), nodes: new Set(), odd: [] }; g.set(k, e); }
+      e.nodes.add(f.system);
+      const m = String(f.detail).match(/^(\d+) x (\S+): (.*)$/); if (!m) { e.odd.push(f.detail); return; }
+      const lst = e.notes.get(m[3]) || new Map(); lst.set(m[2], (lst.get(m[2]) || 0) + (+m[1])); e.notes.set(m[3], lst);
+    });
+    g.forEach(e => {
+      const detail = [...e.notes.entries()].map(([note, models]) => `${[...models.entries()].map(([mo, n]) => `${n} x ${mo}`).join(', ')}: ${note}`).concat(e.odd).join(' ');
+      e.nodes.forEach(nd => keep.push({ ...e.f, system: nd, detail }));
+    });
+    findings.length = 0; keep.forEach(r => findings.push(r));
+  }
   { // findings: the same finding on every node is one line for the unit; on some nodes only, it names them
     const m = new Map(); findings.forEach(f => { const k = [f.uk, f.severity, f.title, f.detail].join('|'); let e = m.get(k); if (!e) { e = { ...f, _nodes: [] }; m.set(k, e); } e._nodes.push(f.system); });
     const out = [...m.values()].map(e => ({ ...e, system: _onlyNodes(e.un, [...new Set(e._nodes)], _nodesIn.get(e.uk) || 1) })); findings.length = 0; out.forEach(r => findings.push(r)); }
@@ -22714,21 +22748,53 @@ function _cfgReview(systems) {
   rows.forEach(r => { r.sevRank = r.sevRank ?? 9; });
   return { rows, checks, clusters: new Set(rows.map(r => r.ckey)).size, customers: new Set(rows.map(r => r.customer).filter(Boolean)).size };
 }
+function _cfgReviewHtml(v, cap) {
+  const e2 = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.74rem;', sub = 'color:var(--text-muted);font-size:0.68rem;';
+  return v.checks.map(c => `<details style="border:1px solid var(--border-color);border-radius:6px;margin-bottom:6px;"><summary style="cursor:pointer;padding:8px 10px;font-size:0.8rem;"><b>${e2(c.check.label)}</b> <span style="${sub}">${e2(c.check.group)} · ${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}${c.check.src === 'aria' ? ' · <b>ARIA comparison</b>' : ' · Active IQ finding'}</span></summary>`
+    + `<div style="padding:4px 10px 10px;"><div style="font-size:0.76rem;margin-bottom:6px;"><b>What to do:</b> ${e2(c.check.rec)}</div><div style="font-size:0.72rem;margin-bottom:6px;color:var(--text-secondary);"><b>Commands:</b> ${c.check.cmd.map(x => `<code>${e2(x)}</code>`).join(' &nbsp; ')}</div>`
+    + `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${['System', 'Customer', 'Severity', 'Evidence'].map(x => `<th style="${th}">${x}</th>`).join('')}</tr></thead><tbody>`
+    + c.rows.slice(0, cap).map(r => `<tr><td style="${td}"><a href="#" data-ckey="${e2(r.ckey)}" onclick="selectCluster(this.dataset.ckey);return false;">${e2(r.name)}</a>${r.nodeSpecific ? `<div style="${sub}">only on some nodes</div>` : ''}</td><td style="${td}">${e2(r.customer)}</td><td style="${td}">${e2(r.severity)}${r.days != null ? `<div style="${sub}">${r.days} days</div>` : ''}</td><td style="${td}">${e2(r.evidence)}${r.ack ? ` <span style="${sub}">(acknowledged)</span>` : ''}</td></tr>`).join('')
+    + `</tbody></table></div>${c.rows.length > cap ? `<div style="${sub}margin-top:4px;">and ${c.rows.length - cap} more; the complete list is in the Configuration Review document.</div>` : ''}</div></details>`).join('');
+}
+function _cfgIntroHtml(v) {
+  return `<div style="font-size:0.8rem;margin:8px 0 10px;"><b>${v.rows.length}</b> configuration finding${v.rows.length !== 1 ? 's' : ''} on <b>${v.clusters}</b> cluster, grid or array${v.clusters !== 1 ? 's' : ''} (${v.customers} customer${v.customers !== 1 ? 's' : ''}). Most are findings Active IQ raises, grouped with what to do and the command that shows each. <b>ARIA comparison</b> marks three that Active IQ does not raise and ARIA derives from the inventory Active IQ reports (partner cards, MTU, AutoSupport transport): confirm those on the array.</div>`;
+}
 function renderCfgReviewCard() {
   const card = document.getElementById('overviewCfgCard'); if (!card) return;
   const v = _cfgReview(getFilteredSystems(true) || []);
   if (!v.rows.length) { card.style.display = 'none'; return; }
   card.style.display = 'block';
-  const e2 = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const th = 'text-align:left;padding:5px 8px;font-size:0.66rem;color:var(--text-muted);text-transform:uppercase;border-bottom:1px solid var(--border-color);', td = 'padding:5px 8px;border-bottom:1px solid var(--wa-40);vertical-align:top;font-size:0.74rem;', sub = 'color:var(--text-muted);font-size:0.68rem;';
-  let h = `<div class="section-title" style="margin:0;">Configuration review</div><div style="font-size:0.8rem;margin:8px 0 10px;"><b>${v.rows.length}</b> configuration finding${v.rows.length !== 1 ? 's' : ''} on <b>${v.clusters}</b> cluster, grid or array${v.clusters !== 1 ? 's' : ''} (${v.customers} customer${v.customers !== 1 ? 's' : ''}). Most are findings Active IQ raises, grouped here with what to do and the command that shows each. <b>ARIA comparison</b> marks three that Active IQ does not raise and ARIA derives from the inventory Active IQ reports (partner cards, MTU, AutoSupport transport): confirm those on the array.</div>`;
-  h += v.checks.map(c => `<details style="border:1px solid var(--border-color);border-radius:6px;margin-bottom:6px;"><summary style="cursor:pointer;padding:8px 10px;font-size:0.8rem;"><b>${e2(c.check.label)}</b> <span style="${sub}">${e2(c.check.group)} · ${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}${c.check.src === 'aria' ? ' · <b>ARIA comparison</b>' : ' · Active IQ finding'}</span></summary>`
-    + `<div style="padding:4px 10px 10px;"><div style="font-size:0.76rem;margin-bottom:6px;"><b>What to do:</b> ${e2(c.check.rec)}</div><div style="font-size:0.72rem;margin-bottom:6px;color:var(--text-secondary);"><b>Commands:</b> ${c.check.cmd.map(x => `<code>${e2(x)}</code>`).join(' &nbsp; ')}</div>`
-    + `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;"><thead><tr>${['System', 'Customer', 'Severity', 'Evidence'].map(x => `<th style="${th}">${x}</th>`).join('')}</tr></thead><tbody>`
-    + c.rows.slice(0, 25).map(r => `<tr><td style="${td}"><a href="#" data-ckey="${e2(r.ckey)}" onclick="selectCluster(this.dataset.ckey);return false;">${e2(r.name)}</a>${r.nodeSpecific ? `<div style="${sub}">only on some nodes</div>` : ''}</td><td style="${td}">${e2(r.customer)}</td><td style="${td}">${e2(r.severity)}${r.days != null ? `<div style="${sub}">${r.days} days</div>` : ''}</td><td style="${td}">${e2(r.evidence)}${r.ack ? ` <span style="${sub}">(acknowledged)</span>` : ''}</td></tr>`).join('')
-    + `</tbody></table></div>${c.rows.length > 25 ? `<div style="${sub}margin-top:4px;">and ${c.rows.length - 25} more; the complete list is in the Risk &amp; Remediation Brief.</div>` : ''}</div></details>`).join('');
-  card.innerHTML = h;
+  card.innerHTML = `<div class="section-title" style="margin:0;">Configuration review</div>` + _cfgIntroHtml(v) + _cfgReviewHtml(v, 25);
   _ovFoldCard(card, `${v.rows.length} finding${v.rows.length !== 1 ? 's' : ''} on ${v.clusters} cluster${v.clusters !== 1 ? 's' : ''}, ${v.checks.length} kind${v.checks.length !== 1 ? 's' : ''}`);
+}
+// The Configuration Review document (Action Planner tab and the deliverable P): every finding, what to do, the commands, the clusters.
+function compileConfigReviewMd(systems, scopeTitle) {
+  const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0], v = _cfgReview(systems), unowned = _unownedDrives(systems);
+  let o = `# ${cust} -- Configuration Review\n\nPrepared ${today} from the configuration and inventory Active IQ holds for ${_dfScopeCountText(systems)}. It collects what is misconfigured or placed wrongly, says what to do about each, and gives the command that shows it on the array.\n\n`;
+  if (!v.rows.length) return o + `## 1. Summary\n\nNo configuration finding is open for the systems in scope: no card in an unsupported slot, no shelf cabling or failover problem, no cluster network or intercluster LIF issue, no Service Processor or AutoSupport transport issue, no unowned drives, and no difference between the cards of the two nodes of an HA pair.\n\n## What this review covers\n\nThe checks are listed in section "What this review does and does not cover" of the Configuration Review when a finding exists; run NetApp Config Advisor for a full validation of cabling and configuration.\n`;
+  const aiq = v.rows.filter(r => r.src === 'aiq').length, own = v.rows.filter(r => r.src === 'aria').length;
+  o += `## 1. Summary\n\n` + _wdTable(['Findings', 'Clusters, grids or arrays', 'Customers', 'From Active IQ', 'ARIA comparisons', 'With unowned drives'], [[v.rows.length, v.clusters, v.customers, aiq, own, unowned.length]]);
+  o += `Findings marked **Active IQ** are raised by Active IQ itself. Those marked **ARIA comparison** are derived by ARIA from the inventory Active IQ reports (HA partners with different cards in the same slot, ports of one broadcast domain with different MTUs, AutoSupport sent over plain HTTP): Active IQ does not raise them, so confirm each on the array before acting. A card's slot is not judged against the documentation by ARIA, because NetApp's slot rules differ by platform; only Active IQ's own unsupported-slot finding is used.\n\n`;
+  const order = v.checks.slice().sort((a, b) => a.worst - b.worst || ['High availability', 'Cluster network', 'Hardware', 'Disks', 'Management'].indexOf(a.check.group) - ['High availability', 'Cluster network', 'Hardware', 'Disks', 'Management'].indexOf(b.check.group) || b.rows.length - a.rows.length);
+  o += `## 2. What to fix first\n\nOrdered by the most severe finding, then by area (high availability and the cluster network come before the rest: they decide whether a takeover or a network change is safe).\n\n` + _wdTable(['#', 'Check', 'Area', 'Source', 'Clusters', 'Worst severity', 'Recommendation'],
+    order.map((c, i) => [i + 1, c.check.label, c.check.group, c.check.src === 'aria' ? 'ARIA comparison' : 'Active IQ', c.rows.length, c.rows.slice().sort((a, b) => a.sevRank - b.sevRank)[0].severity, c.check.rec]));
+  o += `## 3. Findings by area\n\n`;
+  _CFG_GROUPS.forEach(g => {
+    const cs = v.checks.filter(c => c.check.group === g); if (!cs.length) return;
+    o += `### ${g}\n\n`;
+    cs.forEach(c => {
+      o += `#### ${c.check.label} (${c.rows.length} cluster${c.rows.length !== 1 ? 's' : ''}; ${c.check.src === 'aria' ? 'ARIA comparison' : 'Active IQ finding'})\n\n**What to do:** ${c.check.rec}\n\n**Commands:**\n\n\`\`\`\n${c.check.cmd.join('\n')}\n\`\`\`\n\n`;
+      o += _wdTable(['System', 'Customer', 'Severity', 'Open', 'Evidence'], c.rows.slice().sort((a, b) => a.sevRank - b.sevRank || (b.days || 0) - (a.days || 0)).slice(0, 60).map(r => [r.name + (r.nodeCount > 1 ? ` (${r.nodeCount} nodes${r.nodeSpecific ? ', some only' : ''})` : ''), r.customer, r.severity + (r.ack ? ' (acknowledged)' : ''), r.days == null ? '' : r.days + ' days', r.evidence]));
+      if (c.rows.length > 60) o += `and ${c.rows.length - 60} more.\n\n`;
+    });
+  });
+  if (unowned.length) o += _dfUnownedText(systems, '## 4. Unowned drives in detail').replace(/\n+$/, '\n\n');
+  const by = new Map(); v.rows.forEach(r => { const e = by.get(r.ckey) || { name: r.name, customer: r.customer, nodeCount: r.nodeCount, n: 0, checks: [] }; e.n++; e.checks.push(_CFG_CHECKS.find(c => c.id === r.id).label); by.set(r.ckey, e); });
+  const multi = [...by.values()].filter(e => e.n >= 2).sort((a, b) => b.n - a.n).slice(0, 15);
+  if (multi.length) o += `## ${unowned.length ? 5 : 4}. Clusters with more than one finding\n\n` + _wdTable(['System', 'Customer', 'Findings', 'Which'], multi.map(e => [e.name + (e.nodeCount > 1 ? ` (${e.nodeCount} nodes)` : ''), e.customer, e.n, e.checks.join('; ')]));
+  o += `## What this review does and does not cover\n\n**Covered:** card in an unsupported slot, NS224 shelf cabling, takeover not possible, automatic giveback, two cluster LIFs on one port, a cluster network port offline, intercluster LIFs, a Service Processor with no address, AutoSupport over SMTP or HTTP, unowned drives, and the cards of the two nodes of an HA pair compared slot by slot.\n\n**Not covered, because Active IQ does not report it:** switch and host-side configuration, multipathing and MTU on the customer's network beyond what ONTAP lists, cable-level cabling of controllers, and every setting that is not in the AutoSupport data. Run NetApp Config Advisor on each cluster for a complete cabling and configuration validation, and confirm every ARIA comparison on the array.\n`;
+  return o;
 }
 // The review in the documents. kind: 'brief' (a table of the checks with the recommendation, and the evidence of ARIA's own comparisons), 'full' (also every
 // cluster), 'cli' (the commands). Markdown or plain text, following the document. A document with nothing to report is returned unchanged.
@@ -32583,6 +32649,7 @@ Reference: mysupport.netapp.com/matrix (NetApp Interoperability Matrix Tool)
     handoverBrief,
     riskRemediationBrief,
     securityBrief,
+    configurationReview: compileConfigReviewMd(targetSystems, scopeTitle),
     sustainabilityReport,
     // Headings deliberately say "90-Day Trend", not "Since Last Check-In/Review" --
     // this is a trend over harvest-sync history (system_snapshots, captured
@@ -37326,6 +37393,24 @@ function generateActionPlan() {
         <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Step-by-step remediation runbooks with exact ONTAP CLI syntax, multi-hop upgrade paths, and platform-specific checks (ASA SAN, E-Series).</p>
         <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.implementationPlans}</textarea>
       </div>
+
+      <div style="margin-bottom: 24px; background: var(--wa-10); border: 1px solid var(--border-color); padding: 18px; border-radius: var(--radius-sm);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h4 style="font-size: 0.95rem; color: var(--accent-cyan); margin: 0;">P. Configuration Review</h4>
+          <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadDeliverable('CONFIGURATION_REVIEW')">Download Review</button>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;">Misconfigurations and wrong placements: cards in unsupported slots, shelf cabling, failover, cluster network and intercluster LIFs, unowned drives, HA partners with different cards, AutoSupport transport. What to do about each and the command that shows it.</p>
+        <textarea style="width: 100%; height: 160px; background: var(--bk-250); border: 1px solid var(--border-color); color: var(--text-primary); font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: var(--radius-sm); resize: vertical;" readonly>${docs.configurationReview}</textarea>
+      </div>
+    </div>
+
+    <!-- Configuration Review -->
+    <div class="plan-section" data-section-index="29" style="display: none; margin-top: 32px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--accent-cyan); padding-bottom: 8px; margin-bottom: 16px;">
+        <h2 style="font-size: 1.15rem; margin: 0; border: none; padding: 0;">Configuration Review</h2>
+        <button class="action-btn secondary" style="font-size: 0.72rem; padding: 4px 10px;" onclick="downloadPlanSection(29)" data-tooltip="Download the Configuration Review as a document.">Download Review</button>
+      </div>
+      ${(() => { const _cv = _cfgReview(targetSystems); return _cv.rows.length ? _cfgIntroHtml(_cv) + _cfgReviewHtml(_cv, 200) : '<p style="font-size:0.85rem;color:var(--text-muted);">✓ No configuration finding is open for the systems in scope: no card in an unsupported slot, no shelf cabling or failover problem, no cluster network or intercluster LIF issue, no Service Processor or AutoSupport transport issue, no unowned drives, and no difference between the cards of the two nodes of an HA pair.</p>'; })()}
     </div>
 
     <!-- Deliverables Suite, tab 2 of 3: Customer & Sales (D-I) -->
@@ -37692,6 +37777,7 @@ function generateActionPlan() {
           <button class="plan-tab-btn" data-tab-index="3" onclick="switchPlanTab(3)" title="NetApp security bulletins and CVE advisories affecting your fleet. Includes severity ratings, affected systems, and remediation guidance.">Security Advisories ${allSecurityAdvisories.length > 0 ? `(${allSecurityAdvisories.length})` : ''}</button>
           <button class="plan-tab-btn" data-tab-index="5" onclick="switchPlanTab(5)" title="ONTAP, StorageGRID, and SANtricity upgrade recommendations. Compares current vs. recommended versions with urgency ratings.">OS Upgrades ${allUpgrades.length > 0 ? `(${allUpgrades.length})` : ''}</button>
           <button class="plan-tab-btn" data-tab-index="6" onclick="switchPlanTab(6)" title="Interconnect and cluster switch firmware validation. Flags switches running outdated firmware or missing recommended RCF files.">Switch Validation ${switchAlerts.length > 0 ? `(${switchAlerts.length})` : ''}</button>
+          <button class="plan-tab-btn" data-tab-index="29" onclick="switchPlanTab(29)" title="Misconfigurations: cards in unsupported slots, cabling, failover, cluster network, unowned drives, HA partners with different cards, AutoSupport transport. With what to do and the command for each.">Configuration ${(() => { const _cn = _cfgReview(targetSystems).rows.length; return _cn ? `(${_cn})` : ''; })()}</button>
         </div>
       </div>
       <div class="plan-tab-group">
@@ -38052,11 +38138,178 @@ function _wdTidyPlanMd(md, index, scopeSystems, scopeTitle) {
   }
   return out;
 }
+// ── Action Planner documents: Executive Summary, Operational Guidelines and Next Steps, Network Switch and Fabric Validation ──────────────────────────────
+// Each is built from the data of the scope (one entry per cluster, grid or array; one entry per physical switch), as Markdown: the text download is that
+// Markdown and the Word download converts it. Nothing here is generic filler: a section appears only when the scope has something to say, and a figure
+// Active IQ does not report is said to be not reported.
+function _apDocInputs(systems) {
+  const risks = [], upgrades = [], expiring = [], cases = [];
+  _dfUnitInputs(systems, risks, upgrades, expiring);
+  (systems || []).forEach(s => (s.supportCases || []).forEach(sc => cases.push({ systemName: s.systemName, serialNumber: s.serialNumber, ...sc })));
+  filterActiveCases(cases);
+  return { risks, upgrades, cases, openCases: cases.filter(c => !c._isClosed), contracts: _dfContractFacts(systems) };
+}
+const _apNames = (list, n) => { const a = (list || []).map(x => typeof x === 'string' ? x : (x.systemName || x.name || x.model || '')).filter(Boolean); return a.slice(0, n || 6).join(', ') + (a.length > (n || 6) ? `, and ${a.length - (n || 6)} more` : ''); };
+function compileExecutiveSummaryMd(systems, scopeTitle) {
+  const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0], inp = _apDocInputs(systems), units = getClusters(systems);
+  const sev = {}; inp.risks.forEach(r => { const k = String(r.severity || '').toLowerCase().replace(/ /g, '_'); sev[k] = (sev[k] || 0) + 1; });
+  const plan = _dfActionPlan(systems, inp.risks, inp.openCases), cap = computeFleetCapacitySummary(systems), arp = _dfArpFacts(systems), dr = computeFleetDRSummary(systems);
+  const rank = _dfSystemIssueRanking(systems), refresh = _dfRefreshPlan(systems), waves = _dfUpgradeWaves(systems), minSafe = _dfMinSafeSummary(systems), cr = _cfgReview(systems);
+  const kev = (typeof _kevCves !== 'undefined' && _kevCves && _kevCves.size) ? _kevExposure(systems) : null, cves = Object.values(_dfCveIndex(systems) || {});
+  const sm = _snapMirrorHealth(systems), unowned = _unownedDrives(systems), ct = inp.contracts;
+  const custs = new Set(systems.map(s => s.customerName).filter(Boolean)), sites = new Set(systems.map(s => s.siteName).filter(Boolean));
+  const rel = {}; units.filter(u => u.kind === 'cluster').forEach(u => { const k = u.release || 'not reported'; rel[k] = (rel[k] || 0) + 1; });
+  const hs = units.map(u => { const l = u.nodes.map(n => n.aiqHealthScore).filter(v => v != null && v !== '').map(Number); return l.length ? Math.min(...l) : null; }).filter(v => v != null);
+  const openBySev = {}; inp.openCases.forEach(c => { const k = c.severity || 'unrated'; openBySev[k] = (openBySev[k] || 0) + 1; });
+  const oldest = inp.openCases.map(c => Date.parse(c.createdDate || '')).filter(t => !isNaN(t)).sort((a, b) => a - b)[0];
+  const asupBad = systems.filter(s => { const a = s.autosupport || {}; return !(a.enabled === true && (a.lastReceivedDays == null || a.lastReceivedDays <= 7)); });
+  let o = `# ${cust} -- Executive Summary\n\nPrepared ${today} from the telemetry NetApp Active IQ holds for ${_dfScopeCountText(systems)}.\n\n`;
+  // 1. position
+  const crit = sev.critical || 0, high = sev.high || 0;
+  o += `## 1. Overall position\n\n`;
+  const lead = [];
+  if (crit || high) lead.push(`${crit} critical and ${high} high-severity finding${crit + high !== 1 ? 's' : ''} are open across ${_uN(rank.map(r => r.kind), rank.length)}`);
+  else lead.push('Active IQ reports no critical or high-severity findings');
+  if (ct.expired.length) lead.push(`${_dfPlural(ct.expired.length, 'support contract')} ${ct.expired.length === 1 ? 'has' : 'have'} lapsed`);
+  if (kev && kev.rows.length) lead.push(`${kev.rows.length} known exploited vulnerabilit${kev.rows.length === 1 ? 'y' : 'ies'} (CISA KEV) affect${kev.rows.length === 1 ? 's' : ''} the estate`);
+  if (cap.redCount) lead.push(`${_dfPlural(cap.redCount, 'system')} ${cap.redCount === 1 ? 'is' : 'are'} in the red capacity band`);
+  o += lead.join('; ') + '.' + (hs.length ? ` Active IQ's own health score averages ${Math.round(hs.reduce((a, b) => a + b, 0) / hs.length)} (lowest ${Math.min(...hs)}; ${hs.filter(v => v < 70).length} below 70).` : '') + '\n\n';
+  if (plan.length) o += `**What matters most:** ${plan.slice(0, 3).map((p, i) => `${i + 1}. ${p.action}${p.scope ? ' (' + p.scope + ')' : ''}`).join('  ')}\n\n`;
+  else o += `**What matters most:** no corrective action is needed at this time.\n\n`;
+  // 2. estate
+  const mix = _dfPlatformMix(systems).slice(0, 6), relTop = Object.entries(rel).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  o += `## 2. The estate at a glance\n\n` + _wdTable(['Measure', 'Value'], [
+    ['Systems', _dfScopeCountText(systems)], ['Customers and sites', `${custs.size} customer${custs.size !== 1 ? 's' : ''}, ${sites.size} site${sites.size !== 1 ? 's' : ''}`],
+    ['Platforms', mix.map(m => `${m.label} (${m.count})`).join(', ') || 'not reported'], ['ONTAP releases in use', relTop.map(([k, n]) => `${k} (${_dfPlural(n, 'cluster')})`).join(', ') || 'not reported'],
+    ['Capacity', cap.totalAvailTB ? `${_fmtCap(cap.totalPhysTB)} used of ${_fmtCap(cap.totalAvailTB)} (${cap.utilPct}%)${cap.savedTB ? `; ${_fmtCap(cap.savedTB)} saved by efficiency` : ''}` : 'not reported'],
+    ['Active IQ health score', hs.length ? `average ${Math.round(hs.reduce((a, b) => a + b, 0) / hs.length)}, lowest ${Math.min(...hs)}` : 'not reported']]);
+  // 3. decisions
+  o += `## 3. Decisions needed\n\n`;
+  if (!plan.length) o += `None: no corrective action is required at this time.\n\n`;
+  else {
+    o += _wdTable(['#', 'Decision', 'Scope', 'When', 'Owner'], plan.map((p, i) => [i + 1, p.action, p.scope || '', p.when || '', p.owner || '']));
+    plan.forEach((p, i) => { o += `**${i + 1}. ${p.action}.** ${p.why}${p.type ? ` *Disruption:* ${p.type}.` : ''}${p.systems && p.systems.length ? ` *Systems:* ${_apNames(p.systems, 8)}.` : ''}\n\n`; });
+  }
+  // 4. risk
+  o += `## 4. Risk and security\n\n` + _wdTable(['Critical', 'High', 'Medium', 'Low', 'Best practice'], [[sev.critical || 0, sev.high || 0, sev.medium || 0, sev.low || 0, sev.best_practice || 0]]);
+  o += `Counted once per cluster, grid or array. ${cves.length ? `Security advisories apply to this estate: ${cves.filter(c => c.sev === 'critical').length} critical, ${cves.filter(c => c.sev === 'high').length} high, ${cves.filter(c => c.sev !== 'critical' && c.sev !== 'high').length} other (${cves.length} in all).` : 'No security advisory applies to the systems in scope.'}${kev ? ` ${kev.rows.length ? `${kev.rows.length} CVE${kev.rows.length !== 1 ? 's' : ''} on CISA's known-exploited list ${kev.rows.length !== 1 ? 'apply' : 'applies'} (${kev.rows.slice(0, 5).map(r => r.id).join(', ')}).` : "None of CISA's known-exploited CVEs applies on the evidence Active IQ and NetApp's advisories give."}` : ''}\n\n`;
+  if (rank.length) o += `**Where the risk is concentrated** (worst first):\n\n` + _wdTable(['System', 'Customer', 'Critical', 'High', 'Critical/high CVEs', 'Open cases', 'Health'], rank.slice(0, 8).map(r => [r.systemName + (r.nodeCount > 1 ? ` (${r.nodeCount} nodes)` : ''), r.customerName, r.critRisks, r.highRisks, `${r.critCves}/${r.highCves}`, r.openCases, r.aiqHealthScore == null ? 'n/r' : r.aiqHealthScore]));
+  // 5. support and lifecycle
+  o += `## 5. Support, contracts and lifecycle\n\n`;
+  o += _wdTable(['Open support cases', 'Contracts active', 'Expiring within 90 days', 'Lapsed', 'Not reporting AutoSupport'], [[inp.openCases.length, ct.active.length, ct.expiring90.length, ct.expired.length, asupBad.length]]);
+  if (inp.openCases.length) o += `Open cases by severity: ${Object.entries(openBySev).sort().map(([k, n]) => `${k}: ${n}`).join(', ')}${oldest ? `; the oldest was opened ${_dfDate(new Date(oldest).toISOString())}` : ''}.\n\n`;
+  if (ct.expired.length || ct.expiring90.length) o += _wdTable(['System', 'Contract', 'Ends', 'Days'], [...ct.expired.map(e => [e.systemName, 'Lapsed', _dfDate(e.endDate), e.daysRemaining]), ...ct.expiring90.map(e => [e.systemName, 'Expiring', _dfDate(e.endDate), e.daysRemaining])].slice(0, 15));
+  if (refresh.length) o += `**Hardware end of support (within 36 months):** ` + refresh.map(r => `${r.model}, ${_dfPlural(r.n, 'system')}, support ends ${_dfDate(r.eos)}`).join('; ') + '.\n\n';
+  o += `**Software currency:** ${waves.wave1.length + waves.wave2.length ? `${_dfPlural(waves.wave1.length + waves.wave2.length, 'cluster')} should move to the recommended ONTAP release${waves.wave1.length ? `, ${waves.wave1.length} of them as a priority (${waves.wave1.slice(0, 4).map(c => c.name).join(', ')}${waves.wave1.length > 4 ? ', ...' : ''}: ${_dfWave1Reasons(waves.wave1)})` : ''}` : 'every ONTAP cluster is on the recommended release'}.${minSafe && minSafe.behindTotal ? ` ${minSafe.behindTotal} system${minSafe.behindTotal !== 1 ? 's' : ''} run below the minimum safe release for their line.` : ''}\n\n`;
+  // 6. capacity
+  o += `## 6. Capacity\n\n`;
+  o += cap.totalAvailTB ? `${_fmtCap(cap.totalPhysTB)} of ${_fmtCap(cap.totalAvailTB)} is used (${cap.utilPct}%). ${cap.redCount} system${cap.redCount !== 1 ? 's are' : ' is'} in the red band, ${cap.amberCount} amber, ${cap.greenCount} green.${cap.atRisk && cap.atRisk.length ? ` Closest to the limit: ${cap.atRisk.slice(0, 5).map(a => `${a.name} (${a.utilPct == null ? 'n/r' : a.utilPct + '%'}, runway ${_dfRunwayText(a.runway)})`).join('; ')}.` : ''}\n\n` : `Active IQ does not report capacity for the systems in scope.\n\n`;
+  // 7. protection
+  o += `## 7. Data protection and resilience\n\n` + _wdTable(['Measure', 'Result'], [
+    ['Ransomware protection (ARP)', arp.ontap ? `${arp.enabled} of ${arp.ontap} ONTAP clusters enabled${arp.disabled ? `, ${arp.disabled} disabled` : ''}${arp.unknown ? `, ${arp.unknown} not reported` : ''}` : 'no ONTAP systems'],
+    ['Replication', dr.ontapCount ? `${dr.unprotected.length} of ${dr.ontapCount} ONTAP systems have no SnapMirror or MetroCluster confirmed; ${dr.drCoveragePct}% covered` : 'no ONTAP systems'],
+    ['SnapMirror', sm.withRel || sm.rows.length ? `${sm.withRel} clusters report relationships; ${sm.rows.length} have a replication finding${sm.failing ? `, ${sm.failing} with updates failing` : ''}` : 'no relationships reported'],
+    ['High availability', dr.ontapCount ? `${dr.haCoveragePct}% of ONTAP systems have HA configured` : 'not applicable']]);
+  // 8. configuration
+  o += `## 8. Configuration\n\n`;
+  o += cr.rows.length ? `${cr.rows.length} configuration finding${cr.rows.length !== 1 ? 's' : ''} on ${cr.clusters} cluster${cr.clusters !== 1 ? 's' : ''}: ${cr.checks.slice(0, 6).map(c => `${c.check.label} (${c.rows.length})`).join('; ')}${cr.checks.length > 6 ? '; ...' : ''}. ${unowned.length ? `Unowned drives are present on ${_dfPlural(unowned.length, 'cluster')}: they cannot serve as spares or hold data. ` : ''}The Risk & Remediation Brief lists each with its recommendation.\n\n` : `No configuration finding (cards, failover, cluster network, AutoSupport transport, unowned drives) is open.\n\n`;
+  o += `## 9. Where to find the detail\n\nPrioritised risks with fix steps: Technical Risks. Security advisories and known exploited CVEs: Security Advisories and the Security Posture Brief. Upgrade order: Operational Guidelines and Next Steps and the OS Upgrade Roadmap. Cases: Support Cases. Switches: Network Switch and Fabric Validation. Per-system configuration: the As-Built Configuration Document.\n`;
+  return o;
+}
+function compileNextStepsMd(systems, scopeTitle) {
+  const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0], inp = _apDocInputs(systems), units = getClusters(systems);
+  const plan = _dfActionPlan(systems, inp.risks, inp.openCases), waves = _dfUpgradeWaves(systems), sw = _dfSwitchInventory(systems), cr = _cfgReview(systems);
+  const mcUnits = units.filter(u => u.nodes.some(n => n.isMetroCluster)), asa = units.filter(u => u.kind === 'cluster' && /\bASA\b/i.test(u.nodes[0].platform || u.nodes[0].model || '')), grids = units.filter(u => u.kind === 'grid'), arrays = units.filter(u => u.kind === 'array');
+  const hv = systems.flatMap(s => s.hypervisors || []), hasVM = hv.some(h => /vmware|esxi/i.test((h && (h.type || h.hypervisorType)) || '')) || systems.some(s => (s.vcenters || []).length), hasK8s = hv.some(h => /kubernetes|trident|k8s/i.test((h && (h.type || h.hypervisorType)) || ''));
+  const ontap = units.filter(u => u.kind === 'cluster');
+  let o = `# ${cust} -- Operational Guidelines and Next Steps\n\nPrepared ${today} for ${_dfScopeCountText(systems)}. The actions come from what Active IQ reports for these systems; the checks are the ones to run before and after each change.\n\n`;
+  // 1. priorities
+  o += `## 1. Priority actions\n\n`;
+  if (!plan.length) o += `No corrective action is required at this time. Keep to the review cadence in section 6.\n\n`;
+  else {
+    const startDay = p => { const m = String(p.when || '').match(/(\d+)\s*(?:-|to|\u2013)?\s*\d*\s*(day|week|month)?/i); if (!m) return 999; const n = +m[1], u = (m[2] || 'day').toLowerCase(); return u === 'month' ? n * 30 : u === 'week' ? n * 7 : n; };
+    const groups = [['Now: within 30 days', p => startDay(p) < 30], ['Next: 30 to 90 days', p => startDay(p) >= 30 && startDay(p) < 90], ['Later: beyond 90 days', p => startDay(p) >= 90]];
+    const ordered = []; let n = 0;
+    groups.forEach(([label, f]) => { const g = plan.filter(f); if (g.length) { o += `### ${label}\n\n` + _wdTable(['#', 'Action', 'Scope', 'When', 'Owner', 'Disruption'], g.map(p => { ordered.push(p); return [++n, p.action, p.scope || '', p.when || '', p.owner || '', p.type || '']; })); } });
+    o += `Why each matters:\n\n` + ordered.map((p, i) => `${i + 1}. **${p.action}.** ${p.why}${p.systems && p.systems.length ? ` Systems: ${_apNames(p.systems, 8)}.` : ''}`).join('\n') + '\n\n';
+  }
+  // 2. upgrade order
+  const wl = [...waves.wave1.map(c => ({ ...c, wave: 'First' })), ...waves.wave2.map(c => ({ ...c, wave: 'Then' }))];
+  o += `## 2. ONTAP upgrade order\n\n`;
+  if (!wl.length) o += `Every ONTAP cluster in scope is on the recommended release.\n\n`;
+  else {
+    o += `Upgrade the clusters marked First before the rest: they carry critical findings or run software that is past full support. A target stays on the release line the cluster already runs unless Active IQ requires a move; check each in the Upgrade Advisor in Active IQ before scheduling.\n\n`;
+    o += _wdTable(['Order', 'Cluster', 'Nodes', 'Running', 'Target', 'Why'], wl.slice(0, 40).map(c => [c.wave, c.name, c.nodes.length, [...c.vers].join(' / '), c.target || 'see Upgrade Advisor', c.reasons.join('; ') || 'not on the recommended release']));
+    if (wl.length > 40) o += `and ${wl.length - 40} more clusters.\n\n`;
+  }
+  // 3. before any change
+  o += `## 3. Before any change\n\nRun on every cluster in the change, and stop if any check shows a fault that is not understood:\n\n\`\`\`\ncluster show\nsystem health alert show\nstorage failover show\nnetwork interface show -is-home false\nsnapmirror show -fields state,status,healthy\nsystem configuration backup show\nsystem node autosupport invoke -node * -type all -message "MAINT=4h"\n\`\`\`\n\n`;
+  const pre = [];
+  if (ontap.length) pre.push(`**ONTAP clusters (${ontap.length}).** Validate the target release with \`cluster image validate -version <release>\`, confirm zero HA takeover blocks, and confirm the partner node is healthy before each takeover. Update one cluster at a time.`);
+  if (mcUnits.length) pre.push(`**MetroCluster (${_apNames(mcUnits, 6)}).** Upgrade one site at a time and run \`metrocluster check run\` then \`metrocluster check show\` before and after each. Do not start while a mediator or automatic switchover issue is open${cr.rows.some(r => r.id === 'takeover') ? ' (a takeover-not-possible finding is open in this scope)' : ''}.`);
+  if (asa.length) pre.push(`**ASA (${_apNames(asa, 6)}).** Confirm every LUN has active paths on both controllers (\`network interface show -role data\`) and that host multipathing is healthy before a controller is taken over.`);
+  if (grids.length) pre.push(`**StorageGRID (${_apNames(grids, 6)}).** Run the grid's upgrade pre-checks and order the nodes as NetApp's StorageGRID upgrade guide gives; do not start with a node or alert in error.`);
+  if (arrays.length) pre.push(`**E-Series (${_apNames(arrays, 6)}).** Confirm Recovery Guru shows no failure, check drive and controller firmware compatibility for the SANtricity release, and quiesce heavy I/O first.`);
+  if (hasVM) pre.push(`**VMware.** Confirm the hosts use round-robin multipathing (VMW_PSP_RR, IOPS limit 1) and that the datastores are healthy; do not take a node offline until VMs have a path through its partner.`);
+  if (hasK8s) pre.push(`**Kubernetes / Trident.** Coordinate any Trident upgrade with the ONTAP change; check persistent volume mounts afterwards.`);
+  if (sw.n && (sw.behind.length || sw.disc + sw.conn)) pre.push(`**Switches.** ${sw.behind.length ? `${_dfPlural(sw.behind.length, 'switch', 'switches')} below the firmware baseline: upgrade one switch at a time and confirm the cluster network and interconnect are healthy (\`network port show -ipspace Cluster\`, \`network interface show -role cluster\`) before its partner. ` : ''}${sw.disc + sw.conn ? `${_dfPlural(sw.disc + sw.conn, 'switch', 'switches')} not monitored by CSHM: enable monitoring first so the health check means something.` : ''}`);
+  if (cr.rows.length) pre.push(`**Configuration findings (${cr.rows.length} on ${cr.clusters} clusters).** Fix the HA and cluster-network findings (${cr.checks.filter(c => ['High availability', 'Cluster network'].includes(c.check.group)).map(c => c.check.label).join('; ') || 'none'}) before an upgrade: they are what make a takeover or a network change risky.`);
+  o += pre.length ? pre.map(x => '- ' + x).join('\n') + '\n\n' : '';
+  // 4. change control
+  o += `## 4. Change control\n\n- Raise one change per cluster (the Change Control and Dispatch Tickets deliverable has one per system): pre-checks, change, verification and rollback written out.\n- Agree the window with the customer, and the rollback point: with ONTAP that is before the first takeover.\n- Generate the plan in the Upgrade Advisor in Active IQ for the exact current and target releases, and attach it.\n- Take a configuration backup (\`system configuration backup show\`) and send an AutoSupport that marks the maintenance window.\n- Disk, firmware and switch changes go in the off-peak window agreed with the customer; one change at a time on a pair.\n\n`;
+  // 5. after
+  o += `## 5. After the change\n\n\`\`\`\nsystem health alert show\nstorage failover show\nnetwork interface show -is-home false\nevent log show -severity EMERGENCY,ALERT -time-range -1h\ncluster ping-cluster -node *\nsnapmirror show -fields state,lag-time,healthy\n\`\`\`\n\nThen: confirm the node reports the new release in Active IQ at the next AutoSupport, close the change, and re-run the harvest in ARIA so the finding clears from the plan.\n\n`;
+  // 6. cadence
+  o += `## 6. Review cadence\n\n| When | What |\n|---|---|\n| Weekly | Open cases, new critical findings, AutoSupport reporting, any known exploited CVE |\n| Monthly | The decisions in section 1, contract and capacity runway, change in risk trend |\n| Quarterly | Upgrade order and release targets, hardware refresh, switch firmware and RCF, the Success Plans |\n`;
+  return o;
+}
+function compileSwitchesMd(systems, scopeTitle) {
+  const cust = _wdCust(scopeTitle), today = new Date().toISOString().split('T')[0], v = _dfSwitchInventory(systems);
+  let o = `# ${cust} -- Network Switch and Fabric Validation\n\nPrepared ${today} from the Cluster Switch Health Monitor (CSHM) data that Active IQ holds for ${_dfScopeCountText(systems)}. Each physical switch is listed once, however many nodes connect to it.\n\n`;
+  if (!v.n) return o + `Active IQ reports no cluster switches for the ONTAP systems in scope. Switch data comes from CSHM and is empty when CSHM is not set up on the cluster. Enable it (\`system switch ethernet create -device <switch> -address <ip> -snmp-version SNMPv3 -community-or-username <user> -model <model> -type cluster-network\`) and the next harvest will show model, firmware, RCF and support contract.\n`;
+  const fwOk = e => e.check && e.check.status === 'current';
+  const need = v.list.map(e => {
+    const why = [], todo = [];
+    if (!e.monitored) { why.push(e.discovered ? 'discovered but not monitored' : 'seen only through port connectivity'); todo.push('enable CSHM monitoring'); }
+    if (e.check && e.check.status === 'behind') { why.push(e.check.text); todo.push('upgrade the firmware'); }
+    if (e.daysToContractEnd != null && e.daysToContractEnd < 0) { why.push('support contract ended'); todo.push('renew the switch support'); }
+    else if (e.daysToContractEnd != null && e.daysToContractEnd <= 180) { why.push(`support contract ends in ${e.daysToContractEnd} days`); todo.push('renew the switch support'); }
+    if (e.monitored && !e.rcf) { why.push('no RCF version reported'); todo.push('confirm the RCF applied'); }
+    return { e, why, todo };
+  }).filter(x => x.why.length);
+  const modelOf = e => { const m = [e.vendor, e.model].filter(Boolean).join(' '); return !m || m === e.name || /^(other|unknown)$/i.test(m) ? 'not identified' : m; };
+  o += `## 1. Summary\n\n` + _wdTable(['Switches', 'Monitored (CSHM)', 'Not monitored', 'Below firmware baseline', 'At or above baseline', 'Not assessed', 'SNMPv1/v2c', 'Contract ended', 'Need action'],
+    [[v.n, v.mon, v.disc + v.conn, v.behind.length, v.currentFw.length, v.notAssessed.length, v.weak.length, v.expired.length, need.length]]);
+  o += `Firmware is judged against the baselines ARIA keeps for the switch models NetApp supports in a cluster network; "not assessed" means Active IQ reports no firmware, or ARIA keeps no baseline for the model, so it is neither a pass nor a fail.${v.ontapNoSw ? ` ${_dfPlural(v.ontapNoSw, 'ONTAP system')} in scope ${v.ontapNoSw === 1 ? 'has' : 'have'} no switch records at all.` : ''}\n\n`;
+  o += `## 2. Switches that need action\n\n`;
+  if (!need.length) o += `None: every switch is monitored, has no firmware below its baseline and no support or RCF issue.${v.weak.length ? ' SNMP is the only open point (section 3).' : ''}\n\n`;
+  else {
+    o += _wdTable(['Switch', 'Model', 'Network', 'Clusters', 'Findings', 'Action'], need.slice(0, 60).map(({ e, why, todo }) => [e.name + (e.ip ? ` (${e.ip})` : ''), modelOf(e), e.type || '', [...e.clusters].join(', '), why.join('; '), todo.join('; ')]));
+    if (need.length > 60) o += `and ${need.length - 60} more.\n\n`;
+  }
+  // 3. what to do, only for the kinds present
+  const rec = [];
+  if (v.disc + v.conn) rec.push(`**Switches not monitored (${v.disc + v.conn}).** Active IQ holds no model, firmware, RCF or contract data for them, so nothing about them can be validated. Enable CSHM on each cluster: \`system switch ethernet show\` lists what ONTAP sees; \`system switch ethernet create -device <switch> -address <ip> -snmp-version SNMPv3 -community-or-username <user> -model <model> -type cluster-network\` adds one. Allow a day for AutoSupport to carry it to Active IQ.`);
+  if (v.behind.length) rec.push(`**Firmware below baseline (${v.behind.length}).** Take the firmware and RCF NetApp lists for the switch model and ONTAP release. Upgrade one switch at a time; before its partner, check \`network port show -ipspace Cluster\` and \`network interface show -role cluster\` and confirm the cluster and storage network are healthy.`);
+  if (v.weak.length) rec.push(`**SNMPv1/v2c (${v.weak.length} of ${v.snmpReported} reporting switches; the SNMP column of the inventory names them).** Community strings travel in clear text; NetApp recommends SNMPv3 for CSHM (\`system switch ethernet modify -device <switch> -snmp-version SNMPv3 -community-or-username <user>\`). A lower priority than the findings above: move to SNMPv3 when the switches are next touched.`);
+  if (v.expired.length || v.soon.length) rec.push(`**Switch support (${v.expired.length} ended, ${v.soon.length} ending within 180 days).** Cluster switches bought from NetApp carry their own support term, separate from the controllers: renew it so a failed switch is replaced.`);
+  if (v.noRcf.length) rec.push(`**RCF not reported (${v.noRcf.length}).** Check the reference configuration file on the switch against NetApp's RCF for its model and release.`);
+  if (rec.length) o += `## 3. What to do\n\n` + rec.map(x => '- ' + x).join('\n') + '\n\n';
+  // 4. inventory
+  o += `## ${rec.length ? 4 : 3}. Switch inventory\n\n` + _wdTable(['Switch', 'Vendor / model', 'Network', 'Firmware', 'Check', 'RCF', 'Monitoring', 'SNMP', 'Support ends', 'Clusters'],
+    v.list.slice().sort((x, y) => (y.monitored - x.monitored) || String(x.name).localeCompare(String(y.name), undefined, { numeric: true })).slice(0, 120).map(e => [e.name, modelOf(e), e.type || '', e.fw || 'not reported', e.check ? e.check.text : '', e.rcf || 'not reported', e.source, e.snmpLabel || 'not reported', e.contractEnd ? _dfDate(e.contractEnd) : 'not reported', [...e.clusters].join(', ')]));
+  if (v.list.length > 120) o += `and ${v.list.length - 120} more switches.\n\n`;
+  const models = Object.entries(v.byModel).sort((a, b) => b[1].n - a[1].n);
+  if (models.length > 1 || (models[0] && models[0][0] !== '(model not reported)')) o += `## ${rec.length ? 5 : 4}. Firmware and RCF by model\n\n` + _wdTable(['Model', 'Switches', 'Firmware versions in use', 'RCF versions in use'], models.map(([m, b]) => [m, b.n, [...b.fw].join(', ') || 'not reported', [...b.rcf].join(', ') || 'not reported']));
+  return o;
+}
 function downloadPlanSectionWord(index) {
   const body = document.getElementById('generatedPlanBody');
   const sec = body && body.querySelector(`.plan-section[data-section-index="${index}"]`);
   if (!sec) { alert('Generate an action plan first.'); return; }
   const { title: scopeTitle, systems: _scopeSys } = _planScopeSystems();
+  { const _apDoc = { '1': ['Executive Summary', compileExecutiveSummaryMd], '6': ['Network Switch and Fabric Validation', compileSwitchesMd], '8': ['Operational Guidelines and Next Steps', compileNextStepsMd], '29': ['Configuration Review', compileConfigReviewMd] }[String(index)];
+    if (_apDoc) { window.__dlScope = scopeTitle.replace(/_/g, ' '); triggerFileDownload(_dlFilename(_apDoc[0], scopeTitle.replace(/_/g, ' '), 'md'), _apDoc[1](_scopeSys, scopeTitle), { format: 'docx' }); return; } }
   if (String(index) === '18') {
     window.__dlScope = scopeTitle.replace(/_/g, ' ');
     triggerFileDownload(_dlFilename('Firmware Currency', scopeTitle.replace(/_/g, ' '), 'md'), compileFirmwareWordMd(_scopeSys, scopeTitle), { format: 'docx' });
@@ -38129,7 +38382,7 @@ function switchPlanTab(index) {
 // Download report of a specific Action Plan section as plain text
 function downloadPlanSection(index) {
   if (!window.__dlFmtOverride) return _askFormat(() => downloadPlanSection(index));
-  if (window.__dlFmtOverride === 'docx' && ['2', '3', '4', '5', '12'].includes(String(index)) && document.querySelector(`#generatedPlanBody .plan-section[data-section-index="${index}"]`)) return downloadPlanSectionWord(index);
+  if (window.__dlFmtOverride === 'docx' && ['1', '2', '3', '4', '5', '6', '8', '12', '29'].includes(String(index)) && document.querySelector(`#generatedPlanBody .plan-section[data-section-index="${index}"]`)) return downloadPlanSectionWord(index);
   const selectValue = document.getElementById("planTargetSelect").value;
   let targetSystems = [];
   let scopeTitle = "";
@@ -38202,19 +38455,7 @@ function downloadPlanSection(index) {
 
   if (index === 1) {
     filename = _dlFilename('Executive Summary', scopeTitle, 'txt');
-    text = `NETAPP EXECUTIVE SUMMARY REPORT
-Scope: ${scopeTitle}
-Date Generated: ${new Date().toISOString().split('T')[0]}
-Total Systems Audited: ${_dfScopeCountText(targetSystems)}
-
-METRICS SUMMARY:
-- Technical Risks: ${allRisks.length}
-- Security Advisories: ${allSecurityAdvisories.length}
-- Support Cases: ${(() => { const cc = _dfCaseCounts(allSupportCases); return `${cc.open} open, ${cc.closed} closed (${cc.total} total)`; })()}
-- Expiring Support Contracts: ${expiringContracts.length}
-- Active Field Actions: ${activeFAs.length}
-
-This document compiles the high-level metrics generated from telemetry data analyzed by NetApp Active IQ Digital Advisor.`;
+    text = compileExecutiveSummaryMd(targetSystems, scopeTitle);
   } else if (index === 2) {
     filename = _dlFilename('Prioritized Technical Risks and Remediation Steps', scopeTitle, 'txt');
     const _rkSevRank = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -38338,23 +38579,8 @@ ${(() => { const _s = targetSystems.find(x => x.systemName === u.systemName), _t
 ${hopsText}`;
   }).join("\n\n")}`;
   } else if (index === 6) {
-    filename = _dlFilename('Network Switch and Fabric Remediation', scopeTitle, 'txt');
-    const _swBySystem = new Map();
-    switchAlerts.forEach(sw => {
-      if (!_swBySystem.has(sw.systemName)) _swBySystem.set(sw.systemName, []);
-      _swBySystem.get(sw.systemName).push(sw);
-    });
-    text = `NETAPP NETWORK SWITCH & FABRIC VALIDATION CHECKLIST
-Scope: ${scopeTitle}
-
-${switchAlerts.length === 0 ? "✓ All interconnect and storage network fabric switches match validated firmware baselines." :
-  [..._swBySystem.entries()].map(([systemName, switches]) => `================================================================================
-SYSTEM: ${systemName}
-================================================================================
-${switches.map(sw => `Switch: ${sw.model} (${sw.type}) [Status: ${sw.status}]
-- Switch S/N: ${sw.serialNumber} | IP: ${sw.ipAddress}
-- Current Firmware: ${sw.firmware} | Firmware baseline: ${(() => { const _b = _dfSwBaseline(sw.model, sw.vendor, sw.firmware); return _b.recommended || 'none kept for this model'; })()} | RCF applied: ${sw.rcfVersion || 'not reported'} | Latest Supported: ${getSwitchLatestSupportedVersion(sw)}
-- Validation Drift Details: ${sw.validationDetails}`).join("\n\n")}`).join("\n\n")}`;
+    filename = _dlFilename('Network Switch and Fabric Validation', scopeTitle, 'txt');
+    text = compileSwitchesMd(targetSystems, scopeTitle);
   } else if (index === 7) {
     filename = _dlFilename('Site Logistics, Contacts and Customer Health', scopeTitle, 'txt');
     text = `NETAPP SITE LOGISTICS & CUSTOMER HEALTH REPORT
@@ -38386,17 +38612,10 @@ Date Generated: ${new Date().toISOString().split('T')[0]}
     }
   } else if (index === 8) {
     filename = _dlFilename('Operational Guidelines and Next Steps', scopeTitle, 'txt');
-    text = `NETAPP OPERATIONAL GUIDELINES & CHANGE CONTROL
-Scope: ${scopeTitle}
-
-A. CHANGE CONTROL PROCEDURES
-- GENERATE UPGRADE ADVISOR: Always run the Upgrade Advisor script inside Active IQ Digital Advisor.
-- PRE-UPGRADE CHECKLISTS: Run 'system health alert show' and verify replication path stability.
-- SWITCH FIRMWARE: Upgrade switch firmware strictly one switch at a time, validating fabric sync via 'switchshow' before upgrading the partner.
-
-B. 3RD-PARTY VIRTUALIZATION COMPLIANCE
-- VMware Multipathing: Confirm ESXi hosts utilize round robin policies with IOPS limit=1.
-- Astra Trident: Coordinate Trident upgrades alongside Kubernetes API migrations to avoid CSI mount failures.`;
+    text = compileNextStepsMd(targetSystems, scopeTitle);
+  } else if (index === 29) {
+    filename = _dlFilename('Configuration Review', scopeTitle, 'txt');
+    text = compileConfigReviewMd(targetSystems, scopeTitle);
   } else if (index === 12) {
     filename = _dlFilename('TAM Recommendations Report', scopeTitle, 'txt');
     const recs = _getScopedRecommendations(targetSystems).recs;
@@ -38634,7 +38853,7 @@ ${sepThin}\n`;
 // (downloadAllDeliverables() previously omitted VALUE_REPORT/CUSTOMER_REPORT,
 // the two deliverables added after it was last touched).
 const _DELIVERABLE_CATEGORIES = {
-  RISK: ['PROBLEM_STATEMENTS', 'TICKET', 'IMPLEMENTATION'],
+  RISK: ['PROBLEM_STATEMENTS', 'TICKET', 'IMPLEMENTATION', 'CONFIGURATION_REVIEW'],
   SALES: ['EMAIL', 'SOLUTION_PROPOSAL', 'SALES_PROPOSAL', 'RISK_REMEDIATION_BRIEF', 'SECURITY_BRIEF', 'SUSTAINABILITY_REPORT'],
   TAM: ['SUCCESS_PLAN', 'QBR_PACK', 'MSP_REPORT', 'HANDOVER_BRIEF', 'VALUE_REPORT', 'CUSTOMER_REPORT'],
 };
@@ -38753,6 +38972,8 @@ function downloadDeliverable(type) {
     triggerFileDownload(_dlFilename('Account Handover and Transition Brief', scopeLabel, 'txt'), docs.handoverBrief);
   } else if (type === 'RISK_REMEDIATION_BRIEF') {
     triggerFileDownload(_dlFilename('Risk and Remediation Brief', scopeLabel, 'txt'), docs.riskRemediationBrief || compileRiskRemediationBrief(targetSystems, allRisks, expiringContracts, allSupportCases, scopeTitle.replace(/_/g, ' ')));
+  } else if (type === 'CONFIGURATION_REVIEW') {
+    triggerFileDownload(_dlFilename('Configuration Review', scopeLabel, 'md'), docs.configurationReview || compileConfigReviewMd(targetSystems, scopeTitle.replace(/_/g, ' ')));
   } else if (type === 'SECURITY_BRIEF') {
     triggerFileDownload(_dlFilename('Security Posture Executive Brief', scopeLabel, 'txt'), docs.securityBrief || compileSecurityBrief(targetSystems, allRisks, expiringContracts, allSupportCases, scopeTitle.replace(/_/g, ' ')));
   } else if (type === 'CUSTOMER_REPORT') {
@@ -39080,6 +39301,15 @@ const _DX_CARD_RANK = { Resolution: 0, 'Fixed In': 0.2, 'Upgrade To': 1, Firmwar
 function _dxSplitTop(s) { const items = []; let depth = 0, cur = ''; for (const ch of s) { if (ch === '(') depth++; if (ch === ')') depth--; if (ch === ',' && depth === 0) { items.push(cur.trim()); cur = ''; } else cur += ch; } if (cur.trim()) items.push(cur.trim()); return items.filter(Boolean); }
 // returns { block, next } or null. m = the matched start line: {n, sev, cls, title, label}
 // long titles: the trailing parenthetical (counts / system lists) moves into a Scope row so the title bar stays one or two lines
+// A card's banner holds a short headline: a sentence longer than about 85 characters keeps its first clause (to a dash, colon, semicolon, full stop or comma)
+// there and goes in full into the card body.
+function _dxHeadline(t) {
+  t = String(t || '');
+  if (t.length <= 85) return { head: t, rest: '' };
+  const m = t.slice(0, 130).match(/^(.{28,85}?)(?:\s+[\u2014\u2013-]\s+|:\s+|;\s+|\.\s+|,\s+)/);
+  if (m) return { head: m[1].replace(/[\s,;:.]+$/, ''), rest: t };
+  return { head: t.slice(0, 82).replace(/\s+\S*$/, '') + '\u2026', rest: t };
+}
 function _dxSplitTitle(title) {
   const t = String(title).replace(/^FIX:\s*/i, '').trim();
   if (t.endsWith(')')) {
@@ -39530,6 +39760,11 @@ function _dxRender(doc) {
       case 'h': x += _dxP('Heading' + b.lvl, b._toc ? `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TC "${_xe(_dxTocText(b, _tocFlat).replace(/"/g, "'"))}" \\f ${b._tocId} \\l 2 </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:bookmarkStart w:id="${b._toc}" w:name="_Toc${100000 + b._toc}"/>${_dxRun(_dxHeadText(b.text))}<w:bookmarkEnd w:id="${b._toc}"/>` : _dxRun(_dxHeadText(b.text)), { brk: b.brk && !firstBrk, keepNext: true }); if (b.brk) firstBrk = false; break;
       case 'table': x += _docxTable(b.rows, b); break;
       case 'fix': {   // one card per corrective action: a navy title bar, then a label / detail row per field
+        if (!(b.rows || []).length) {   // a one-line item has no fields to put under a banner: a numbered paragraph, severity first
+          x += _dxP('NumItem', _dxRun((b.n || '') + '.', { b: 1, color: _DX.ACC }) + '<w:r><w:tab/></w:r>' + (b.sev ? _dxRun(b.sev + '  ', { b: 1, color: _DX.NAVY, sz: 17 }) : '') + _docxRuns((b.label ? b.label + '  \u00b7  ' : '') + b.title));
+          break;
+        }
+        { const hl = _dxHeadline(b.title); if (hl.rest) { b.rows = [['Detail', [hl.rest]], ...b.rows]; b.title = hl.head; } }
         const W1 = 1900, W2 = _DX.W - W1, cls = b.cls ? b.cls.charAt(0) + b.cls.slice(1).toLowerCase() : '';
         const paras = (lines, bold, keep) => lines.map(t => `<w:p><w:pPr><w:pStyle w:val="TableText"/>${keep ? '<w:keepNext/>' : ''}${/^• /.test(t) ? '<w:ind w:left="170" w:hanging="170"/>' : ''}</w:pPr>${_docxRuns(t, bold ? '<w:b/>' : '')}</w:p>`).join('');
         x += `<w:tbl><w:tblPr><w:tblW w:w="${_DX.W}" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="8" w:space="0" w:color="${_DX.NAVY}"/><w:bottom w:val="single" w:sz="8" w:space="0" w:color="${_DX.NAVY}"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="${_DX.RULE}"/></w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="30" w:type="dxa"/><w:left w:w="110" w:type="dxa"/><w:bottom w:w="30" w:type="dxa"/><w:right w:w="110" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="${W1}"/><w:gridCol w:w="${W2}"/></w:tblGrid>` +

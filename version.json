@@ -1,8 +1,8 @@
 {
-  "version": "5.6.342",
+  "version": "5.6.343",
   "major": 5,
   "minor": 6,
-  "patch": 342,
+  "patch": 343,
   "date": "2026-10-17",
-  "notes": "Unowned drives as risk and recommendation in the deliverables; new Configuration review with ARIA comparisons"
+  "notes": "Harvest no longer saves an incomplete systems list; Configuration Review tab and deliverable; three Action Planner documents rebuilt; Word banners"
 }

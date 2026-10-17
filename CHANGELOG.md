@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.6.343 (2026-10-17)
+
+### Added
+- Fixed: a harvest could be saved as complete when its systems list had stopped early. If the request for page 2 or later of the systems query timed out, dropped, hit a proxy error page or got a 429/5xx answer, the paging loop ended quietly and the partial fleet was saved over the good cache (255 systems of 1,697 in one real harvest, shown until the next harvest). Such a page is now retried (3, 6 and 12 seconds apart); if it still fails the harvest is marked incomplete, the systems of the previous harvest that it lacks are kept and marked, and the warning in Settings says so. Ten tests cover it.
+- New Configuration Review tab in the Action Planner (its tab shows the number of findings) and a new deliverable, P. Configuration Review: every misconfiguration and wrong placement with what to do, the commands, and the clusters; findings are grouped by area (high availability, cluster network, hardware, disks, management), ordered by severity, with the unowned drives in detail and the clusters that have more than one finding. Word and text downloads like the other documents.
+- Rebuilt from the customer's own data, as proper documents in Word and text: the Executive Summary (overall position, estate at a glance, decisions needed with owner and timing, risk and security with where the risk is concentrated, support, contracts and lifecycle, capacity, data protection, configuration; it was five counts and a sentence), Operational Guidelines and Next Steps (the priority actions grouped now / next / later, the ONTAP upgrade order, the checks before and after a change with the cluster-specific cautions for MetroCluster, ASA, StorageGRID, E-Series, VMware, Kubernetes and switches, change control and the review cadence; it was a fixed block of generic text that named VMware and Trident whether or not the customer had them) and Network Switch and Fabric Validation (each physical switch once instead of once per node, with a summary, the switches that need action and what to do, the inventory and firmware by model).
+- Word documents: a numbered action no longer puts its whole sentence into a dark banner. A long title keeps its first clause as the banner headline and the full text moves into the card body; an item with no detail rows is a numbered paragraph, not an empty banner. Longest banner in the proposal, communications, security and review documents is now 87 characters.
+- Platform findings: drive end-of-support and drive-firmware findings are one finding per cluster with the drive models added up across its nodes, instead of one line per node and per model (16 lines became 13 in the Technical Solution Proposal of a two-cluster customer).
+
 ## 5.6.342 (2026-10-17)
 
 ### Added

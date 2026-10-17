@@ -1023,6 +1023,40 @@ def _raise_firmware_to_evidence(systems_out):
     return changed
 
 
+def _gql_page(token, query_text, tries=4, pause=3.0, sleep=None):
+    """One page of a paged GraphQL query. A timeout, a dropped connection, a proxy error page or a 429/5xx answer is retried (pause, then twice
+    as long, ...) up to `tries` times before it is reported. Returns (status, response, failed): failed is True when the last answer was still such an
+    error and carried no systems. Errors that Active IQ itself reports about the query (a null field on one system, no privilege) are not retried."""
+    sleep = sleep or time.sleep
+    st, resp = 0, None
+    for attempt in range(max(1, tries)):
+        st, resp = _gql(token, query_text)
+        if not isinstance(resp, dict):
+            failed = True
+        else:
+            got = ((resp.get("data") or {}).get("systems") or {}).get("systems")
+            msgs = [str(e.get("message", "")) for e in (resp.get("errors") or []) if isinstance(e, dict)]
+            failed = (not got) and (st == 0 or st in (429, 500, 502, 503, 504) or any(m.startswith("Non-JSON response") for m in msgs))
+        if not failed:
+            return st, resp, False
+        if attempt + 1 < tries:
+            wait = pause * (2 ** attempt)
+            print(f"  [HARVEST] Systems page failed (HTTP {st}); retry {attempt + 1}/{tries - 1} in {wait:.0f}s", flush=True)
+            sleep(wait)
+    return st, resp, True
+
+
+def _keep_unseen_systems(systems, previous):
+    """A harvest whose systems list ended early (a page kept failing) is a partial one. Returns `systems` plus the systems of the previous harvest
+    that it lacks (by serial number), each marked, and how many were added."""
+    seen = {x.get("serialNumber") for x in (systems or []) if isinstance(x, dict)}
+    kept = []
+    for x in previous or []:
+        if isinstance(x, dict) and x.get("serialNumber") and x.get("serialNumber") not in seen:
+            y = dict(x); y["_keptFromPreviousHarvest"] = True; kept.append(y)
+    return list(systems or []) + kept, len(kept)
+
+
 def _harvest_guard(db, account_id, label, result, prev_result, notes=None):
     """A harvest that comes back much smaller than the one before is almost always a partial one (a failed lookup, a rate limit, a dropped
     connection), not customers that vanished. Customer and site lists are reference data keyed by id, so entries the new harvest lacks are
@@ -2555,6 +2589,7 @@ def _do_full_harvest(watchlist_ids=None, account=None):
         # here before.
         _early_watchlists = []  # list of watchlist id strings
         _harvest_notes = []     # problems this harvest ran into; saved as warnings so a partial result is never silent
+        _paging_failures = []   # systems pages that kept failing after retries: the systems list ended early
         # One failed call here used to be logged and forgotten, and a watchlist-scoped account then fetched its customers with the wrong scope
         # (fewer customers, no error). Try three times before giving up, and record it if it never worked.
         _wl_problem = ''
@@ -2620,7 +2655,12 @@ def _do_full_harvest(watchlist_ids=None, account=None):
                 if page == 1:
                     scope_label = scope_wl_id or "unfiltered"
                     print(f"  [HARVEST] Systems query (scope={scope_label}) attempt...", flush=True)
-                _, sys_resp = _gql(token, query_text)
+                _st, sys_resp, _page_failed = _gql_page(token, query_text)
+                if _page_failed and page > 1:
+                    # a later page that keeps failing used to end the list quietly and the partial fleet was saved as if complete
+                    _paging_failures.append(f"{scope_wl_id or 'unfiltered'} page {page}: HTTP {_st}")
+                    print(f"  [HARVEST] Systems page {page} kept failing (HTTP {_st}); the list ends here with {len(systems)} systems", flush=True)
+                    break
                 # Guard: _gql may return None on network failure
                 if not isinstance(sys_resp, dict):
                     print(f"  [HARVEST] Systems GQL: non-dict response (network error?), stopping pagination", flush=True)
@@ -5305,6 +5345,13 @@ def _do_full_harvest(watchlist_ids=None, account=None):
 
             _acct_id = account.get("id") if account else "default"
             _acct_label = (account.get("label") or account.get("id")) if account else "Default Account"
+            if _paging_failures:
+                _kept_n = 0
+                if prev_result:
+                    result["systems"], _kept_n = _keep_unseen_systems(result.get("systems"), prev_result.get("systems"))
+                    result["totalSystems"] = len(result["systems"])
+                _harvest_notes.append(f"the systems list ended early ({'; '.join(_paging_failures[:3])}), so the harvest is incomplete; "
+                                      + (f"{_kept_n} systems of the previous harvest that this one lacks were kept" if _kept_n else "the previous harvest had nothing further to keep"))
             _harvest_guard(db, _acct_id or "default", _acct_label or "default", result, prev_result, _harvest_notes)
             if account:
                 _save_harvest_account(db, _acct_id or "default", _acct_label or "default", result, duration_ms)
